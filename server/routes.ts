@@ -3,8 +3,11 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./database";
 import { 
-  insertEventSchema, 
+  insertUserSchema,
+  insertEventSchema,
+  insertEventParticipantSchema, 
   insertEquipmentSchema, 
+  insertSystemSchema,
   insertStreamSchema, 
   insertNotificationSchema,
   insertEquipmentReservationSchema,
@@ -220,6 +223,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/systems", async (req, res) => {
+    try {
+      const systemData = insertSystemSchema.parse(req.body);
+      const system = await storage.createSystem(systemData);
+      res.json(system);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create system" });
+    }
+  });
+
   app.put("/api/systems/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -230,6 +243,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(system);
     } catch (error) {
       res.status(500).json({ message: "Failed to update system" });
+    }
+  });
+
+  // IP ping functionality
+  app.post("/api/systems/ping", async (req, res) => {
+    try {
+      const { ip } = req.body;
+      if (!ip) {
+        return res.status(400).json({ message: "IP address is required" });
+      }
+
+      const startTime = Date.now();
+      const isOnline = await checkIP(ip);
+      const responseTime = Date.now() - startTime;
+
+      res.json({
+        ip,
+        isOnline,
+        responseTime: isOnline ? responseTime : undefined,
+        error: isOnline ? undefined : "Host is unreachable"
+      });
+    } catch (error) {
+      console.error("Error pinging IP:", error);
+      res.status(500).json({ 
+        ip: req.body.ip,
+        isOnline: false,
+        error: "Failed to ping host"
+      });
     }
   });
 

@@ -1,268 +1,185 @@
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Server, Globe, Trash2, CheckCircle, XCircle, Clock } from "lucide-react";
-import { insertObsConnectionSchema } from "../../../shared/schema";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Server, Search, Filter, Plus, Globe, Settings, Edit, Activity } from "lucide-react";
+import { SystemForm } from "@/components/forms/system-form";
 import { useToast } from "@/hooks/use-toast";
-import { z } from "zod";
-
-type ObsConnection = {
-  id: number;
-  name: string;
-  host: string;
-  port: number;
-  password: string;
-  status: string;
-  streamStatus: string;
-  createdAt: string;
-};
-
-const obsFormSchema = insertObsConnectionSchema.extend({
-  password: z.string().min(1, "Пароль обязателен")
-});
 
 export default function Servers() {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [selectedSystem, setSelectedSystem] = useState<any>(null);
   const { toast } = useToast();
 
-  const { data: servers = [], isLoading } = useQuery<ObsConnection[]>({
-    queryKey: ["/api/obs-connections"]
+  const { data: systems = [], isLoading } = useQuery({
+    queryKey: ["/api/systems"],
   });
 
-  const createMutation = useMutation({
-    mutationFn: (data: z.infer<typeof obsFormSchema>) =>
-      apiRequest("/api/obs-connections", "POST", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/obs-connections"] });
-      toast({
-        title: "Успешно",
-        description: "OBS подключение создано",
-      });
-    },
+  const filteredSystems = (systems as any[]).filter((item: any) => {
+    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         item.ipAddress?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === "all" || item.status === statusFilter;
+    
+    return matchesSearch && matchesStatus;
   });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) =>
-      apiRequest(`/api/obs-connections/${id}`, "DELETE"),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/obs-connections"] });
-      toast({
-        title: "Успешно",
-        description: "OBS подключение удалено",
-      });
-    },
-  });
-
-  const form = useForm<z.infer<typeof obsFormSchema>>({
-    resolver: zodResolver(obsFormSchema),
-    defaultValues: {
-      name: "",
-      host: "",
-      port: 4455,
-      password: "",
-      status: "disconnected",
-      streamStatus: "stopped"
-    },
-  });
-
-  const onSubmit = (data: z.infer<typeof obsFormSchema>) => {
-    createMutation.mutate(data);
-    form.reset();
-  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "connected":
-        return "bg-green-100 text-green-800 border-green-200";
-      case "disconnected":
-        return "bg-red-100 text-red-800 border-red-200";
-      case "connecting":
-        return "bg-yellow-100 text-yellow-800 border-yellow-200";
-      default:
-        return "bg-gray-100 text-gray-800 border-gray-200";
+      case "online": return "bg-green-100 text-green-800";
+      case "offline": return "bg-red-100 text-red-800";
+      case "maintenance": return "bg-yellow-100 text-yellow-800";
+      default: return "bg-gray-100 text-gray-800";
     }
   };
 
-  const getStatusIcon = (status: string) => {
+  const getStatusText = (status: string) => {
     switch (status) {
-      case "connected":
-        return <CheckCircle className="w-4 h-4" />;
-      case "disconnected":
-        return <XCircle className="w-4 h-4" />;
-      case "connecting":
-        return <Clock className="w-4 h-4" />;
-      default:
-        return <XCircle className="w-4 h-4" />;
+      case "online": return "Онлайн";
+      case "offline": return "Офлайн";
+      case "maintenance": return "Обслуживание";
+      default: return status;
     }
   };
 
   if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Управление серверами</h2>
-          <p className="text-gray-600">Управление OBS подключениями и серверами</p>
-        </div>
-        <div className="animate-pulse space-y-4">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="h-32 bg-gray-200 rounded-lg"></div>
-          ))}
-        </div>
-      </div>
-    );
+    return <div>Загрузка серверов...</div>;
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Управление серверами</h2>
-          <p className="text-gray-600">Управление OBS подключениями и серверами</p>
-        </div>
-        
-        <Dialog>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="w-4 h-4 mr-2" />
-              Добавить OBS
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Добавить OBS подключение</DialogTitle>
-            </DialogHeader>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Название</FormLabel>
-                      <FormControl>
-                        <Input placeholder="OBS Studio - Главный" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="host"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>IP адрес</FormLabel>
-                      <FormControl>
-                        <Input placeholder="192.168.1.100" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="port"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Порт</FormLabel>
-                      <FormControl>
-                        <Input type="number" placeholder="4455" {...field} onChange={(e) => field.onChange(parseInt(e.target.value))} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="password"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Пароль</FormLabel>
-                      <FormControl>
-                        <Input type="password" placeholder="obs-password" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? "Добавление..." : "Добавить"}
-                </Button>
-              </form>
-            </Form>
-          </DialogContent>
-        </Dialog>
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-semibold text-gray-900">Управление серверами</h2>
+        <Button onClick={() => {
+          setSelectedSystem(null);
+          setIsFormOpen(true);
+        }}>
+          <Plus className="w-4 h-4 mr-2" />
+          Добавить сервер
+        </Button>
       </div>
 
-      <div className="grid gap-6">
-        {servers.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12">
-              <Server className="w-12 h-12 text-gray-400 mb-4" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">Нет подключений</h3>
-              <p className="text-gray-600 text-center mb-4">
-                Добавьте первое OBS подключение для начала работы
-              </p>
-            </CardContent>
-          </Card>
+      {/* Filters */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Filter className="w-5 h-5 mr-2" />
+            Фильтры
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+              <Input
+                placeholder="Поиск по названию или IP..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="Статус" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все статусы</SelectItem>
+                <SelectItem value="online">Онлайн</SelectItem>
+                <SelectItem value="offline">Офлайн</SelectItem>
+                <SelectItem value="maintenance">Обслуживание</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button variant="outline" onClick={() => {
+              setSearchTerm("");
+              setStatusFilter("all");
+            }}>
+              Сбросить фильтры
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Systems Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredSystems.length === 0 ? (
+          <div className="col-span-full text-center py-12">
+            <Server className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+            <p className="text-gray-500">Серверы не найдены</p>
+          </div>
         ) : (
-          servers.map((server) => (
-            <Card key={server.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
+          filteredSystems.map((item: any) => (
+            <Card key={item.id} className="hover:shadow-lg transition-shadow">
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-3">
-                    <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <Server className="w-6 h-6 text-blue-600" />
+                    <div className="w-12 h-12 bg-primary bg-opacity-10 rounded-lg flex items-center justify-center text-primary">
+                      <Server className="w-6 h-6" />
                     </div>
                     <div>
-                      <CardTitle className="text-lg">{server.name}</CardTitle>
-                      <div className="flex items-center space-x-2 mt-1">
-                        <Globe className="w-4 h-4 text-gray-400" />
-                        <span className="text-sm text-gray-600">{server.host}:{server.port}</span>
-                      </div>
+                      <CardTitle className="text-lg">{item.name}</CardTitle>
+                      <p className="text-sm text-gray-500">{item.type}</p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Badge className={getStatusColor(server.status)}>
-                      {getStatusIcon(server.status)}
-                      <span className="ml-1">
-                        {server.status === "connected" ? "Подключен" : 
-                         server.status === "connecting" ? "Подключение" : "Отключен"}
-                      </span>
+                    <Badge className={getStatusColor(item.status)}>
+                      {getStatusText(item.status)}
                     </Badge>
-                    <Button
-                      variant="ghost"
+                    <Button 
+                      variant="ghost" 
                       size="sm"
-                      onClick={() => deleteMutation.mutate(server.id)}
-                      disabled={deleteMutation.isPending}
+                      onClick={() => {
+                        setSelectedSystem(item);
+                        setIsFormOpen(true);
+                      }}
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Edit className="w-4 h-4" />
                     </Button>
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <Label className="text-gray-500">Статус подключения</Label>
-                    <p className="font-medium">
-                      {server.status === "connected" ? "Подключен" : 
-                       server.status === "connecting" ? "Подключение..." : "Отключен"}
-                    </p>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-500">IP адрес:</span>
+                    <span className="text-sm font-mono">{item.ipAddress}</span>
                   </div>
-                  <div>
-                    <Label className="text-gray-500">Статус стрима</Label>
-                    <p className="font-medium">
-                      {server.streamStatus === "streaming" ? "Идет стрим" : 
-                       server.streamStatus === "starting" ? "Запуск..." : "Остановлен"}
-                    </p>
+                  
+                  {item.port && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-500">Порт:</span>
+                      <span className="text-sm font-mono">{item.port}</span>
+                    </div>
+                  )}
+                  
+                  {item.specifications && (
+                    <div>
+                      <span className="text-sm text-gray-500">Характеристики:</span>
+                      <p className="text-sm mt-1">{item.specifications}</p>
+                    </div>
+                  )}
+                  
+                  {item.lastChecked && (
+                    <div className="flex items-center justify-between text-xs text-gray-400">
+                      <span>Последняя проверка:</span>
+                      <span>{new Date(item.lastChecked).toLocaleString("ru-RU")}</span>
+                    </div>
+                  )}
+                  
+                  <div className="flex space-x-2 mt-4">
+                    <Button variant="outline" size="sm" className="flex-1">
+                      <Activity className="w-4 h-4 mr-1" />
+                      Мониторинг
+                    </Button>
+                    <Button variant="outline" size="sm" className="flex-1">
+                      <Settings className="w-4 h-4 mr-1" />
+                      Настройки
+                    </Button>
                   </div>
                 </div>
               </CardContent>
@@ -270,6 +187,13 @@ export default function Servers() {
           ))
         )}
       </div>
+
+      {/* System Form */}
+      <SystemForm
+        isOpen={isFormOpen}
+        onClose={() => setIsFormOpen(false)}
+        system={selectedSystem}
+      />
     </div>
   );
 }

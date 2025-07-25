@@ -3,6 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { 
   users, events, equipment, systems, streams, notifications,
   equipmentReservations, telegramUsers, obsConnections, analyticsEvents,
+  eventParticipants,
   type User, type InsertUser,
   type Event, type InsertEvent,
   type Equipment, type InsertEquipment,
@@ -12,7 +13,8 @@ import {
   type EquipmentReservation, type InsertEquipmentReservation,
   type TelegramUser, type InsertTelegramUser,
   type ObsConnection, type InsertObsConnection,
-  type AnalyticsEvent, type InsertAnalyticsEvent
+  type AnalyticsEvent, type InsertAnalyticsEvent,
+  type EventParticipant, type InsertEventParticipant
 } from "@shared/schema";
 import { eq, and, gte, lte, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
@@ -23,10 +25,17 @@ export const db = drizzle(client);
 
 export interface IStorage {
   // Users
+  getUsers(): Promise<User[]>;
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, user: Partial<User>): Promise<User | undefined>;
+  deleteUser(id: string): Promise<boolean>;
+  
+  // Event Participants
+  getEventParticipants(eventId: string): Promise<EventParticipant[]>;
+  createEventParticipant(participant: InsertEventParticipant): Promise<EventParticipant>;
+  deleteEventParticipant(eventId: string, userId: string): Promise<boolean>;
   
   // Events
   getEvents(): Promise<Event[]>;
@@ -111,13 +120,38 @@ export class PostgreSQLStorage implements IStorage {
     return result[0];
   }
 
+  async getUsers(): Promise<User[]> {
+    return await db.select().from(users).where(eq(users.active, true)).orderBy(users.name);
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    await db.update(users).set({ active: false }).where(eq(users.id, id));
+    return true;
+  }
+
+  // Event Participants
+  async getEventParticipants(eventId: string): Promise<EventParticipant[]> {
+    return await db.select().from(eventParticipants).where(eq(eventParticipants.eventId, eventId));
+  }
+
+  async createEventParticipant(participant: InsertEventParticipant): Promise<EventParticipant> {
+    const result = await db.insert(eventParticipants).values(participant).returning();
+    return result[0];
+  }
+
+  async deleteEventParticipant(eventId: string, userId: string): Promise<boolean> {
+    await db.delete(eventParticipants)
+      .where(and(eq(eventParticipants.eventId, eventId), eq(eventParticipants.userId, userId)));
+    return true;
+  }
+
   // Events
   async getEvents(): Promise<Event[]> {
     return await db.select().from(events).orderBy(events.startTime);
   }
 
   async getEventsByUser(userId: string): Promise<Event[]> {
-    return await db.select().from(events).where(eq(events.userId, userId)).orderBy(events.startTime);
+    return await db.select().from(events).where(eq(events.organizerId, userId)).orderBy(events.startTime);
   }
 
   async getEventsByDateRange(start: Date, end: Date): Promise<Event[]> {

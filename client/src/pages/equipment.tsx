@@ -1,29 +1,35 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Package, Search, Filter, Plus, Mic, Camera, Lightbulb, Monitor, Gavel } from "lucide-react";
+import { Package, Search, Filter, Plus, Mic, Camera, Lightbulb, Monitor, Gavel, Edit, MapPin } from "lucide-react";
+import { EquipmentForm } from "@/components/forms/equipment-form";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Equipment() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [selectedEquipment, setSelectedEquipment] = useState<any>(null);
+  const { toast } = useToast();
 
-  const { data: equipment, isLoading } = useQuery({
+  const { data: equipment = [], isLoading } = useQuery({
     queryKey: ["/api/equipment"],
   });
 
-  const filteredEquipment = equipment?.filter((item: any) => {
+  const filteredEquipment = equipment.filter((item: any) => {
     const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          item.model?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === "all" || item.status === statusFilter;
     const matchesType = typeFilter === "all" || item.type === typeFilter;
     
     return matchesSearch && matchesStatus && matchesType;
-  }) || [];
+  });
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -73,7 +79,10 @@ export default function Equipment() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-semibold text-gray-900">Склад техники</h2>
-        <Button>
+        <Button onClick={() => {
+          setSelectedEquipment(null);
+          setIsFormOpen(true);
+        }}>
           <Plus className="w-4 h-4 mr-2" />
           Добавить оборудование
         </Button>
@@ -84,7 +93,7 @@ export default function Equipment() {
         <CardHeader>
           <CardTitle className="flex items-center">
             <Filter className="w-5 h-5 mr-2" />
-            Фильтры и поиск
+            Фильтры
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -158,9 +167,21 @@ export default function Equipment() {
                       <p className="text-sm text-gray-500">{getTypeText(item.type)}</p>
                     </div>
                   </div>
-                  <Badge className={getStatusColor(item.status)}>
-                    {getStatusText(item.status)}
-                  </Badge>
+                  <div className="flex items-center space-x-2">
+                    <Badge className={getStatusColor(item.status)}>
+                      {getStatusText(item.status)}
+                    </Badge>
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => {
+                        setSelectedEquipment(item);
+                        setIsFormOpen(true);
+                      }}
+                    >
+                      <Edit className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -175,9 +196,15 @@ export default function Equipment() {
                       <span className="text-gray-500">Серийный номер:</span> {item.serialNumber}
                     </div>
                   )}
-                  {item.location && (
+                  {item.inventoryNumber && (
                     <div>
-                      <span className="text-gray-500">Местоположение:</span> {item.location}
+                      <span className="text-gray-500">Инв. номер:</span> {item.inventoryNumber}
+                    </div>
+                  )}
+                  {item.location && (
+                    <div className="flex items-center">
+                      <MapPin className="w-3 h-3 mr-1 text-gray-500" />
+                      <span className="text-gray-500">Место:</span> {item.location}
                     </div>
                   )}
                   {item.lastUsed && (
@@ -187,27 +214,18 @@ export default function Equipment() {
                     </div>
                   )}
                 </div>
-                
-                <div className="mt-4 flex space-x-2">
-                  <Button variant="outline" size="sm" className="flex-1">
-                    Редактировать
-                  </Button>
-                  {item.status === "available" && (
-                    <Button size="sm" className="flex-1">
-                      Взять в использование
-                    </Button>
-                  )}
-                  {item.status === "in-use" && (
-                    <Button variant="secondary" size="sm" className="flex-1">
-                      Вернуть на склад
-                    </Button>
-                  )}
-                </div>
               </CardContent>
             </Card>
           ))
         )}
       </div>
+
+      {/* Equipment Form */}
+      <EquipmentForm
+        isOpen={isFormOpen}
+        onClose={() => setIsFormOpen(false)}
+        equipment={selectedEquipment}
+      />
     </div>
   );
 }

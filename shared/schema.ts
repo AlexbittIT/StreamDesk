@@ -8,7 +8,12 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   name: text("name").notNull(),
+  email: text("email"),
+  phone: text("phone"),
+  position: text("position"), // должность
+  department: text("department"), // отдел
   role: text("role").notNull().default("employee"), // admin, employee
+  active: boolean("active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -19,9 +24,20 @@ export const events = pgTable("events", {
   startTime: timestamp("start_time").notNull(),
   endTime: timestamp("end_time").notNull(),
   location: text("location").notNull(),
-  userId: varchar("user_id").references(() => users.id),
+  customLocation: text("custom_location"), // возможность вписать свое место
+  organizerId: varchar("organizer_id").references(() => users.id).notNull(), // создатель события
   status: text("status").notNull().default("scheduled"), // scheduled, active, completed, cancelled
   type: text("type").notNull().default("stream"), // stream, recording, maintenance, meeting
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Таблица участников событий
+export const eventParticipants = pgTable("event_participants", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id").references(() => events.id).notNull(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  role: text("role").default("participant"), // organizer, participant, presenter
+  status: text("status").default("invited"), // invited, accepted, declined, maybe
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -31,6 +47,9 @@ export const equipment = pgTable("equipment", {
   type: text("type").notNull(), // microphone, camera, lighting, computer, other
   model: text("model"),
   serialNumber: text("serial_number"),
+  inventoryNumber: text("inventory_number"), // инвентарный номер
+  specifications: jsonb("specifications"), // характеристики оборудования
+  notes: text("notes"), // примечания
   status: text("status").notNull().default("available"), // available, in-use, maintenance, broken
   location: text("location"), // room/event where it's currently used
   assignedTo: varchar("assigned_to").references(() => users.id),
@@ -132,6 +151,11 @@ export const insertEventSchema = createInsertSchema(events).omit({
   createdAt: true,
 });
 
+export const insertEventParticipantSchema = createInsertSchema(eventParticipants).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertEquipmentSchema = createInsertSchema(equipment).omit({
   id: true,
   createdAt: true,
@@ -175,6 +199,9 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 
 export type Event = typeof events.$inferSelect;
 export type InsertEvent = z.infer<typeof insertEventSchema>;
+
+export type EventParticipant = typeof eventParticipants.$inferSelect;
+export type InsertEventParticipant = z.infer<typeof insertEventParticipantSchema>;
 
 export type Equipment = typeof equipment.$inferSelect;
 export type InsertEquipment = z.infer<typeof insertEquipmentSchema>;
