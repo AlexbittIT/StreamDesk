@@ -1,8 +1,74 @@
-import type { Express } from "express";
+import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import { storage } from "./storage";
-import { insertEventSchema, insertEquipmentSchema, insertStreamSchema, insertNotificationSchema } from "@shared/schema";
+import { storage } from "./database";
+import { 
+  insertEventSchema, 
+  insertEquipmentSchema, 
+  insertStreamSchema, 
+  insertNotificationSchema,
+  insertEquipmentReservationSchema,
+  insertTelegramUserSchema,
+  insertObsConnectionSchema,
+  insertAnalyticsEventSchema 
+} from "@shared/schema";
+import multer from "multer";
+import path from "path";
+import fs from "fs/promises";
+import net from "net";
+
+// Configure multer for file uploads
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: async (req, file, cb) => {
+      const uploadDir = path.join(process.cwd(), 'uploads');
+      try {
+        await fs.mkdir(uploadDir, { recursive: true });
+      } catch (error) {
+        console.error('Error creating upload directory:', error);
+      }
+      cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    }
+  }),
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(null, false);
+    }
+  },
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB
+  }
+});
+
+// Helper function to check IP connectivity
+async function checkIP(ip: string, port: number = 80): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(3000);
+    
+    socket.on('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    
+    socket.on('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    
+    socket.on('error', () => {
+      resolve(false);
+    });
+    
+    socket.connect(port, ip);
+  });
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Authentication routes
@@ -261,6 +327,234 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(notification);
     } catch (error) {
       res.status(400).json({ message: "Invalid notification data" });
+    }
+  });
+
+  app.patch("/api/notifications/:id/read", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.markNotificationRead(id);
+      if (!success) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark notification as read" });
+    }
+  });
+
+  // Equipment Photo Upload
+  app.post("/api/equipment/:id/photos", upload.single('photo'), async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      if (!req.file) {
+        return res.status(400).json({ message: "No photo file provided" });
+      }
+
+      const photoUrl = `/uploads/${req.file.filename}`;
+      const equipment = await storage.uploadEquipmentPhoto(id, photoUrl);
+      
+      if (!equipment) {
+        return res.status(404).json({ message: "Equipment not found" });
+      }
+
+      res.json(equipment);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to upload photo" });
+    }
+  });
+
+  // Serve uploaded files
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+  // Equipment Reservations
+  app.get("/api/equipment-reservations", async (req, res) => {
+    try {
+      const { equipmentId } = req.query;
+      let reservations;
+      
+      if (equipmentId) {
+        reservations = await storage.getEquipmentReservationsByEquipment(equipmentId as string);
+      } else {
+        reservations = await storage.getEquipmentReservations();
+      }
+      
+      res.json(reservations);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch equipment reservations" });
+    }
+  });
+
+  app.post("/api/equipment-reservations", async (req, res) => {
+    try {
+      const reservationData = insertEquipmentReservationSchema.parse(req.body);
+      
+      // Check for conflicts
+      const conflicts = await storage.checkEquipmentConflicts(
+        reservationData.equipmentId!,
+        new Date(reservationData.startTime),
+        new Date(reservationData.endTime)
+      );
+      
+      if (conflicts.length > 0) {
+        return res.status(409).json({ 
+          message: "Equipment is already reserved for this time period",
+          conflicts 
+        });
+      }
+      
+      const reservation = await storage.createEquipmentReservation(reservationData);
+      res.json(reservation);
+    } catch (error) {
+      res.status(400).json({ message: "Invalid reservation data" });
+    }
+  });
+
+  // System Management
+  app.post("/api/systems", async (req, res) => {
+    try {
+      const systemData = req.body;
+      const system = await storage.createSystem(systemData);
+      res.json(system);
+    } catch (error) {
+      res.status(400).json({ message: "Invalid system data" });
+    }
+  });
+
+  app.delete("/api/systems/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const deleted = await storage.deleteSystem(id);
+      if (!deleted) {
+        return res.status(404).json({ message: "System not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete system" });
+    }
+  });
+
+  app.post("/api/systems/:id/ping", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const system = await storage.getSystemById(id);
+      
+      if (!system || !system.ipAddress) {
+        return res.status(404).json({ message: "System not found or no IP address" });
+      }
+
+      const isOnline = await checkIP(system.ipAddress);
+      const status = isOnline ? "online" : "offline";
+      
+      const updatedSystem = await storage.pingSystem(id, status);
+      res.json({ system: updatedSystem, status });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to ping system" });
+    }
+  });
+
+  // Telegram Authentication
+  app.post("/api/auth/telegram", async (req, res) => {
+    try {
+      const telegramData = insertTelegramUserSchema.parse(req.body);
+      
+      // Check if telegram user already exists
+      let telegramUser = await storage.getTelegramUserByTelegramId(telegramData.telegramId);
+      
+      if (!telegramUser) {
+        telegramUser = await storage.createTelegramUser(telegramData);
+      }
+      
+      res.json(telegramUser);
+    } catch (error) {
+      res.status(400).json({ message: "Invalid telegram data" });
+    }
+  });
+
+  app.post("/api/auth/telegram/link", async (req, res) => {
+    try {
+      const { telegramId, userId } = req.body;
+      const telegramUser = await storage.linkTelegramUser(telegramId, userId);
+      
+      if (!telegramUser) {
+        return res.status(404).json({ message: "Telegram user not found" });
+      }
+      
+      res.json(telegramUser);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to link telegram user" });
+    }
+  });
+
+  // OBS Studio Integration
+  app.get("/api/obs/connections", async (req, res) => {
+    try {
+      const connections = await storage.getObsConnections();
+      res.json(connections);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch OBS connections" });
+    }
+  });
+
+  app.post("/api/obs/connections", async (req, res) => {
+    try {
+      const obsData = insertObsConnectionSchema.parse(req.body);
+      const connection = await storage.createObsConnection(obsData);
+      res.json(connection);
+    } catch (error) {
+      res.status(400).json({ message: "Invalid OBS connection data" });
+    }
+  });
+
+  app.put("/api/obs/connections/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const connection = await storage.updateObsConnection(id, req.body);
+      if (!connection) {
+        return res.status(404).json({ message: "OBS connection not found" });
+      }
+      res.json(connection);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update OBS connection" });
+    }
+  });
+
+  app.delete("/api/obs/connections/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const deleted = await storage.deleteObsConnection(id);
+      if (!deleted) {
+        return res.status(404).json({ message: "OBS connection not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete OBS connection" });
+    }
+  });
+
+  // Analytics
+  app.get("/api/analytics", async (req, res) => {
+    try {
+      const { entityType, startDate, endDate } = req.query;
+      const events = await storage.getAnalyticsEvents(
+        entityType as string,
+        startDate ? new Date(startDate as string) : undefined,
+        endDate ? new Date(endDate as string) : undefined
+      );
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch analytics" });
+    }
+  });
+
+  app.post("/api/analytics", async (req, res) => {
+    try {
+      const analyticsData = insertAnalyticsEventSchema.parse(req.body);
+      const event = await storage.createAnalyticsEvent(analyticsData);
+      res.json(event);
+    } catch (error) {
+      res.status(400).json({ message: "Invalid analytics data" });
     }
   });
 

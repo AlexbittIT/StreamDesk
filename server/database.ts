@@ -1,0 +1,354 @@
+import { drizzle } from "drizzle-orm/neon-http";
+import { neon } from "@neondatabase/serverless";
+import { 
+  users, events, equipment, systems, streams, notifications,
+  equipmentReservations, telegramUsers, obsConnections, analyticsEvents,
+  type User, type InsertUser,
+  type Event, type InsertEvent,
+  type Equipment, type InsertEquipment,
+  type System, type InsertSystem,
+  type Stream, type InsertStream,
+  type Notification, type InsertNotification,
+  type EquipmentReservation, type InsertEquipmentReservation,
+  type TelegramUser, type InsertTelegramUser,
+  type ObsConnection, type InsertObsConnection,
+  type AnalyticsEvent, type InsertAnalyticsEvent
+} from "@shared/schema";
+import { eq, and, gte, lte, sql } from "drizzle-orm";
+import { randomUUID } from "crypto";
+
+const connectionString = process.env.DATABASE_URL!;
+const client = neon(connectionString);
+export const db = drizzle(client);
+
+export interface IStorage {
+  // Users
+  getUser(id: string): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+  updateUser(id: string, user: Partial<User>): Promise<User | undefined>;
+  
+  // Events
+  getEvents(): Promise<Event[]>;
+  getEventsByUser(userId: string): Promise<Event[]>;
+  getEventsByDateRange(start: Date, end: Date): Promise<Event[]>;
+  createEvent(event: InsertEvent): Promise<Event>;
+  updateEvent(id: string, event: Partial<Event>): Promise<Event | undefined>;
+  deleteEvent(id: string): Promise<boolean>;
+  
+  // Equipment
+  getEquipment(): Promise<Equipment[]>;
+  getEquipmentById(id: string): Promise<Equipment | undefined>;
+  getEquipmentByStatus(status: string): Promise<Equipment[]>;
+  createEquipment(equipment: InsertEquipment): Promise<Equipment>;
+  updateEquipment(id: string, equipment: Partial<Equipment>): Promise<Equipment | undefined>;
+  deleteEquipment(id: string): Promise<boolean>;
+  uploadEquipmentPhoto(equipmentId: string, photoUrl: string): Promise<Equipment | undefined>;
+  
+  // Systems
+  getSystems(): Promise<System[]>;
+  getSystemById(id: string): Promise<System | undefined>;
+  getSystemsByStatus(status: string): Promise<System[]>;
+  createSystem(system: InsertSystem): Promise<System>;
+  updateSystem(id: string, system: Partial<System>): Promise<System | undefined>;
+  deleteSystem(id: string): Promise<boolean>;
+  pingSystem(id: string, status: string): Promise<System | undefined>;
+  
+  // Streams
+  getStreams(): Promise<Stream[]>;
+  getActiveStreams(): Promise<Stream[]>;
+  getStreamById(id: string): Promise<Stream | undefined>;
+  getStreamsByUser(userId: string): Promise<Stream[]>;
+  createStream(stream: InsertStream): Promise<Stream>;
+  updateStream(id: string, stream: Partial<Stream>): Promise<Stream | undefined>;
+  
+  // Notifications
+  getNotificationsByUser(userId: string): Promise<Notification[]>;
+  createNotification(notification: InsertNotification): Promise<Notification>;
+  markNotificationRead(id: string): Promise<boolean>;
+  
+  // Equipment Reservations
+  getEquipmentReservations(): Promise<EquipmentReservation[]>;
+  getEquipmentReservationsByEquipment(equipmentId: string): Promise<EquipmentReservation[]>;
+  createEquipmentReservation(reservation: InsertEquipmentReservation): Promise<EquipmentReservation>;
+  checkEquipmentConflicts(equipmentId: string, startTime: Date, endTime: Date): Promise<EquipmentReservation[]>;
+  
+  // Telegram Users
+  getTelegramUserByTelegramId(telegramId: string): Promise<TelegramUser | undefined>;
+  createTelegramUser(telegramUser: InsertTelegramUser): Promise<TelegramUser>;
+  linkTelegramUser(telegramId: string, userId: string): Promise<TelegramUser | undefined>;
+  
+  // OBS Connections
+  getObsConnections(): Promise<ObsConnection[]>;
+  createObsConnection(obsConnection: InsertObsConnection): Promise<ObsConnection>;
+  updateObsConnection(id: string, obsConnection: Partial<ObsConnection>): Promise<ObsConnection | undefined>;
+  deleteObsConnection(id: string): Promise<boolean>;
+  
+  // Analytics
+  createAnalyticsEvent(analyticsEvent: InsertAnalyticsEvent): Promise<AnalyticsEvent>;
+  getAnalyticsEvents(entityType?: string, startDate?: Date, endDate?: Date): Promise<AnalyticsEvent[]>;
+}
+
+export class PostgreSQLStorage implements IStorage {
+  // Users
+  async getUser(id: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.username, username)).limit(1);
+    return result[0];
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const result = await db.insert(users).values(insertUser).returning();
+    return result[0];
+  }
+
+  async updateUser(id: string, userData: Partial<User>): Promise<User | undefined> {
+    const result = await db.update(users).set(userData).where(eq(users.id, id)).returning();
+    return result[0];
+  }
+
+  // Events
+  async getEvents(): Promise<Event[]> {
+    return await db.select().from(events).orderBy(events.startTime);
+  }
+
+  async getEventsByUser(userId: string): Promise<Event[]> {
+    return await db.select().from(events).where(eq(events.userId, userId)).orderBy(events.startTime);
+  }
+
+  async getEventsByDateRange(start: Date, end: Date): Promise<Event[]> {
+    return await db.select().from(events)
+      .where(and(gte(events.startTime, start), lte(events.startTime, end)))
+      .orderBy(events.startTime);
+  }
+
+  async createEvent(insertEvent: InsertEvent): Promise<Event> {
+    const result = await db.insert(events).values(insertEvent).returning();
+    return result[0];
+  }
+
+  async updateEvent(id: string, eventData: Partial<Event>): Promise<Event | undefined> {
+    const result = await db.update(events).set(eventData).where(eq(events.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteEvent(id: string): Promise<boolean> {
+    const result = await db.delete(events).where(eq(events.id, id));
+    return result.rowCount > 0;
+  }
+
+  // Equipment
+  async getEquipment(): Promise<Equipment[]> {
+    return await db.select().from(equipment).orderBy(equipment.name);
+  }
+
+  async getEquipmentById(id: string): Promise<Equipment | undefined> {
+    const result = await db.select().from(equipment).where(eq(equipment.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getEquipmentByStatus(status: string): Promise<Equipment[]> {
+    return await db.select().from(equipment).where(eq(equipment.status, status)).orderBy(equipment.name);
+  }
+
+  async createEquipment(insertEquipment: InsertEquipment): Promise<Equipment> {
+    const result = await db.insert(equipment).values(insertEquipment).returning();
+    return result[0];
+  }
+
+  async updateEquipment(id: string, equipmentData: Partial<Equipment>): Promise<Equipment | undefined> {
+    const result = await db.update(equipment).set(equipmentData).where(eq(equipment.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteEquipment(id: string): Promise<boolean> {
+    const result = await db.delete(equipment).where(eq(equipment.id, id));
+    return result.rowCount > 0;
+  }
+
+  async uploadEquipmentPhoto(equipmentId: string, photoUrl: string): Promise<Equipment | undefined> {
+    const currentEquipment = await this.getEquipmentById(equipmentId);
+    if (!currentEquipment) return undefined;
+    
+    const currentPhotos = (currentEquipment.photos as string[]) || [];
+    const newPhotos = [...currentPhotos, photoUrl];
+    
+    return await this.updateEquipment(equipmentId, { photos: newPhotos });
+  }
+
+  // Systems
+  async getSystems(): Promise<System[]> {
+    return await db.select().from(systems).orderBy(systems.name);
+  }
+
+  async getSystemById(id: string): Promise<System | undefined> {
+    const result = await db.select().from(systems).where(eq(systems.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getSystemsByStatus(status: string): Promise<System[]> {
+    return await db.select().from(systems).where(eq(systems.status, status)).orderBy(systems.name);
+  }
+
+  async createSystem(insertSystem: InsertSystem): Promise<System> {
+    const result = await db.insert(systems).values(insertSystem).returning();
+    return result[0];
+  }
+
+  async updateSystem(id: string, systemData: Partial<System>): Promise<System | undefined> {
+    const result = await db.update(systems).set(systemData).where(eq(systems.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteSystem(id: string): Promise<boolean> {
+    const result = await db.delete(systems).where(eq(systems.id, id));
+    return result.rowCount > 0;
+  }
+
+  async pingSystem(id: string, status: string): Promise<System | undefined> {
+    return await this.updateSystem(id, { status, lastPing: new Date() });
+  }
+
+  // Streams
+  async getStreams(): Promise<Stream[]> {
+    return await db.select().from(streams).orderBy(streams.createdAt);
+  }
+
+  async getActiveStreams(): Promise<Stream[]> {
+    return await db.select().from(streams).where(eq(streams.status, "live")).orderBy(streams.startTime);
+  }
+
+  async getStreamById(id: string): Promise<Stream | undefined> {
+    const result = await db.select().from(streams).where(eq(streams.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getStreamsByUser(userId: string): Promise<Stream[]> {
+    return await db.select().from(streams).where(eq(streams.userId, userId)).orderBy(streams.createdAt);
+  }
+
+  async createStream(insertStream: InsertStream): Promise<Stream> {
+    const result = await db.insert(streams).values(insertStream).returning();
+    return result[0];
+  }
+
+  async updateStream(id: string, streamData: Partial<Stream>): Promise<Stream | undefined> {
+    const result = await db.update(streams).set(streamData).where(eq(streams.id, id)).returning();
+    return result[0];
+  }
+
+  // Notifications
+  async getNotificationsByUser(userId: string): Promise<Notification[]> {
+    return await db.select().from(notifications)
+      .where(eq(notifications.userId, userId))
+      .orderBy(sql`${notifications.createdAt} DESC`);
+  }
+
+  async createNotification(insertNotification: InsertNotification): Promise<Notification> {
+    const result = await db.insert(notifications).values(insertNotification).returning();
+    return result[0];
+  }
+
+  async markNotificationRead(id: string): Promise<boolean> {
+    const result = await db.update(notifications).set({ read: true }).where(eq(notifications.id, id));
+    return result.rowCount > 0;
+  }
+
+  // Equipment Reservations
+  async getEquipmentReservations(): Promise<EquipmentReservation[]> {
+    return await db.select().from(equipmentReservations).orderBy(equipmentReservations.startTime);
+  }
+
+  async getEquipmentReservationsByEquipment(equipmentId: string): Promise<EquipmentReservation[]> {
+    return await db.select().from(equipmentReservations)
+      .where(eq(equipmentReservations.equipmentId, equipmentId))
+      .orderBy(equipmentReservations.startTime);
+  }
+
+  async createEquipmentReservation(insertReservation: InsertEquipmentReservation): Promise<EquipmentReservation> {
+    const result = await db.insert(equipmentReservations).values(insertReservation).returning();
+    return result[0];
+  }
+
+  async checkEquipmentConflicts(equipmentId: string, startTime: Date, endTime: Date): Promise<EquipmentReservation[]> {
+    return await db.select().from(equipmentReservations)
+      .where(
+        and(
+          eq(equipmentReservations.equipmentId, equipmentId),
+          eq(equipmentReservations.status, "active"),
+          sql`${equipmentReservations.startTime} < ${endTime}`,
+          sql`${equipmentReservations.endTime} > ${startTime}`
+        )
+      );
+  }
+
+  // Telegram Users
+  async getTelegramUserByTelegramId(telegramId: string): Promise<TelegramUser | undefined> {
+    const result = await db.select().from(telegramUsers).where(eq(telegramUsers.telegramId, telegramId)).limit(1);
+    return result[0];
+  }
+
+  async createTelegramUser(insertTelegramUser: InsertTelegramUser): Promise<TelegramUser> {
+    const result = await db.insert(telegramUsers).values(insertTelegramUser).returning();
+    return result[0];
+  }
+
+  async linkTelegramUser(telegramId: string, userId: string): Promise<TelegramUser | undefined> {
+    const result = await db.update(telegramUsers).set({ userId }).where(eq(telegramUsers.telegramId, telegramId)).returning();
+    return result[0];
+  }
+
+  // OBS Connections
+  async getObsConnections(): Promise<ObsConnection[]> {
+    return await db.select().from(obsConnections).orderBy(obsConnections.name);
+  }
+
+  async createObsConnection(insertObsConnection: InsertObsConnection): Promise<ObsConnection> {
+    const result = await db.insert(obsConnections).values(insertObsConnection).returning();
+    return result[0];
+  }
+
+  async updateObsConnection(id: string, obsConnectionData: Partial<ObsConnection>): Promise<ObsConnection | undefined> {
+    const result = await db.update(obsConnections).set(obsConnectionData).where(eq(obsConnections.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteObsConnection(id: string): Promise<boolean> {
+    const result = await db.delete(obsConnections).where(eq(obsConnections.id, id));
+    return result.rowCount > 0;
+  }
+
+  // Analytics
+  async createAnalyticsEvent(insertAnalyticsEvent: InsertAnalyticsEvent): Promise<AnalyticsEvent> {
+    const result = await db.insert(analyticsEvents).values(insertAnalyticsEvent).returning();
+    return result[0];
+  }
+
+  async getAnalyticsEvents(entityType?: string, startDate?: Date, endDate?: Date): Promise<AnalyticsEvent[]> {
+    let query = db.select().from(analyticsEvents);
+    
+    const conditions = [];
+    if (entityType) {
+      conditions.push(eq(analyticsEvents.entityType, entityType));
+    }
+    if (startDate) {
+      conditions.push(gte(analyticsEvents.timestamp, startDate));
+    }
+    if (endDate) {
+      conditions.push(lte(analyticsEvents.timestamp, endDate));
+    }
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
+    }
+
+    return await query.orderBy(sql`${analyticsEvents.timestamp} DESC`);
+  }
+}
+
+// Initialize storage
+export const storage = new PostgreSQLStorage();

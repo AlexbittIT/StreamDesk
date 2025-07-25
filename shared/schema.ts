@@ -35,6 +35,7 @@ export const equipment = pgTable("equipment", {
   location: text("location"), // room/event where it's currently used
   assignedTo: varchar("assigned_to").references(() => users.id),
   lastUsed: timestamp("last_used"),
+  photos: jsonb("photos").default('[]'), // array of photo URLs
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -78,6 +79,48 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const equipmentReservations = pgTable("equipment_reservations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  equipmentId: varchar("equipment_id").references(() => equipment.id),
+  userId: varchar("user_id").references(() => users.id),
+  eventId: varchar("event_id").references(() => events.id),
+  startTime: timestamp("start_time").notNull(),
+  endTime: timestamp("end_time").notNull(),
+  status: text("status").notNull().default("active"), // active, completed, cancelled
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const telegramUsers = pgTable("telegram_users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  telegramId: text("telegram_id").notNull().unique(),
+  username: text("username"),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  userId: varchar("user_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const obsConnections = pgTable("obs_connections", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  host: text("host").notNull(),
+  port: integer("port").notNull().default(4455),
+  password: text("password"),
+  status: text("status").notNull().default("disconnected"), // connected, disconnected, error
+  lastPing: timestamp("last_ping"),
+  streamStatus: text("stream_status").default("stopped"), // streaming, recording, stopped
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const analyticsEvents = pgTable("analytics_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventType: text("event_type").notNull(), // system_status, stream_start, stream_end, equipment_used
+  entityId: varchar("entity_id"), // ID системы, стрима или оборудования
+  entityType: text("entity_type").notNull(), // system, stream, equipment
+  data: jsonb("data").notNull(),
+  timestamp: timestamp("timestamp").defaultNow(),
+});
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -109,6 +152,23 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
   createdAt: true,
 });
 
+export const insertEquipmentReservationSchema = createInsertSchema(equipmentReservations).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertTelegramUserSchema = createInsertSchema(telegramUsers).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertObsConnectionSchema = createInsertSchema(obsConnections).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertAnalyticsEventSchema = createInsertSchema(analyticsEvents);
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -127,3 +187,15 @@ export type InsertStream = z.infer<typeof insertStreamSchema>;
 
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+
+export type EquipmentReservation = typeof equipmentReservations.$inferSelect;
+export type InsertEquipmentReservation = z.infer<typeof insertEquipmentReservationSchema>;
+
+export type TelegramUser = typeof telegramUsers.$inferSelect;
+export type InsertTelegramUser = z.infer<typeof insertTelegramUserSchema>;
+
+export type ObsConnection = typeof obsConnections.$inferSelect;
+export type InsertObsConnection = z.infer<typeof insertObsConnectionSchema>;
+
+export type AnalyticsEvent = typeof analyticsEvents.$inferSelect;
+export type InsertAnalyticsEvent = z.infer<typeof insertAnalyticsEventSchema>;

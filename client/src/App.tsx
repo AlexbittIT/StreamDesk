@@ -10,6 +10,8 @@ import Calendar from "@/pages/calendar";
 import Equipment from "@/pages/equipment";
 import Monitoring from "@/pages/monitoring";
 import Streams from "@/pages/streams";
+import Servers from "@/pages/servers";
+import Notifications from "@/pages/notifications";
 import Settings from "@/pages/settings";
 import NotFound from "@/pages/not-found";
 
@@ -24,6 +26,8 @@ function Router() {
       <Route path="/equipment" component={Equipment} />
       <Route path="/monitoring" component={Monitoring} />
       <Route path="/streams" component={Streams} />
+      <Route path="/servers" component={Servers} />
+      <Route path="/notifications" component={Notifications} />
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>

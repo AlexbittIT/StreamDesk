@@ -6,6 +6,8 @@ import {
   Package, 
   Monitor, 
   Video, 
+  Server,
+  Bell,
   Settings,
   RadioTower,
   User
@@ -23,6 +25,8 @@ const navigation = [
   { name: "Склад техники", href: "/equipment", icon: Package },
   { name: "Мониторинг системы", href: "/monitoring", icon: Monitor },
   { name: "Статистика стримов", href: "/streams", icon: Video },
+  { name: "Управление серверами", href: "/servers", icon: Server },
+  { name: "Уведомления", href: "/notifications", icon: Bell },
   { name: "Настройки", href: "/settings", icon: Settings },
 ];
 

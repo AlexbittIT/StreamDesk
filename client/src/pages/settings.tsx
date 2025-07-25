@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Settings as SettingsIcon, User, Bell, Shield, Palette, Globe } from "lucide-react";
+import { TelegramAuth } from "@/components/auth/telegram-auth";
 
 export default function Settings() {
   return (
@@ -221,15 +222,21 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="integrations">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Globe className="w-5 h-5 mr-2" />
-                Интеграции
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-6">
+          <div className="space-y-6">
+            {/* Telegram Integration */}
+            <TelegramAuth onSuccess={(telegramUser) => {
+              console.log('Telegram user connected:', telegramUser);
+            }} />
+            
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Globe className="w-5 h-5 mr-2" />
+                  Платформы стриминга
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-6">
                 {/* YouTube Integration */}
                 <div className="border border-gray-200 rounded-lg p-4">
                   <div className="flex items-center justify-between mb-4">
@@ -291,11 +298,12 @@ export default function Settings() {
                 </div>
               </div>
 
-              <div className="flex justify-end">
-                <Button>Сохранить интеграции</Button>
-              </div>
-            </CardContent>
-          </Card>
+                <div className="flex justify-end">
+                  <Button>Сохранить интеграции</Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>
