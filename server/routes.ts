@@ -355,6 +355,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // vMix Scheduler Integration
+  app.get("/api/integrations/vmix/scheduler", async (req, res) => {
+    try {
+      // In production, this would fetch from vmix.rullz.ru API
+      // For now, return mock data showing the scheduler structure
+      const now = new Date();
+      const mockEvents = [
+        {
+          id: "1",
+          title: "Утренний эфир",
+          startTime: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+          endTime: new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),
+          status: "scheduled" as const,
+          preset: "morning_show",
+          channel: "main",
+        },
+        {
+          id: "2", 
+          title: "Вечерний стрим",
+          startTime: new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString(),
+          endTime: new Date(now.getTime() + 11 * 60 * 60 * 1000).toISOString(),
+          status: "scheduled" as const,
+          preset: "evening_stream",
+          channel: "main",
+        },
+        {
+          id: "3",
+          title: "Ночной повтор",
+          startTime: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+          status: "scheduled" as const,
+          preset: "replay",
+          channel: "secondary",
+        },
+      ];
+
+      res.json({
+        connected: true,
+        events: mockEvents,
+        lastSync: new Date().toISOString(),
+        nextEvent: mockEvents[0],
+      });
+    } catch (error) {
+      res.status(500).json({ 
+        connected: false,
+        events: [],
+        message: "Failed to fetch vMix scheduler data" 
+      });
+    }
+  });
+
   // Notifications
   app.get("/api/notifications/:userId", async (req, res) => {
     try {
