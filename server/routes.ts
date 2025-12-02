@@ -13,12 +13,17 @@ import {
   insertEquipmentReservationSchema,
   insertTelegramUserSchema,
   insertObsConnectionSchema,
-  insertAnalyticsEventSchema 
+  insertAnalyticsEventSchema,
+  insertTaskSchema,
+  insertTaskCommentSchema,
+  insertTaskHistorySchema,
+  insertRoleSchema
 } from "@shared/schema";
 import multer from "multer";
 import path from "path";
 import fs from "fs/promises";
 import net from "net";
+import crypto from "crypto";
 
 // Configure multer for file uploads
 const upload = multer({
@@ -596,6 +601,403 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(event);
     } catch (error) {
       res.status(400).json({ message: "Invalid analytics data" });
+    }
+  });
+
+  // ============= TASKS API =============
+  app.get("/api/tasks", async (req, res) => {
+    try {
+      const { assigneeId, creatorId, status } = req.query;
+      let tasks;
+      
+      if (assigneeId) {
+        tasks = await storage.getTasksByAssignee(assigneeId as string);
+      } else if (creatorId) {
+        tasks = await storage.getTasksByCreator(creatorId as string);
+      } else if (status) {
+        tasks = await storage.getTasksByStatus(status as string);
+      } else {
+        tasks = await storage.getTasks();
+      }
+      
+      res.json(tasks);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch tasks" });
+    }
+  });
+
+  app.get("/api/tasks/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const task = await storage.getTaskById(id);
+      if (!task) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      res.json(task);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch task" });
+    }
+  });
+
+  app.post("/api/tasks", async (req, res) => {
+    try {
+      const taskData = insertTaskSchema.parse(req.body);
+      const task = await storage.createTask(taskData);
+      
+      // Create history entry
+      await storage.createTaskHistory({
+        taskId: task.id,
+        userId: taskData.creatorId,
+        action: "created",
+        newValue: task
+      });
+      
+      res.json(task);
+    } catch (error) {
+      console.error("Error creating task:", error);
+      res.status(400).json({ message: "Invalid task data" });
+    }
+  });
+
+  app.put("/api/tasks/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const oldTask = await storage.getTaskById(id);
+      if (!oldTask) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      
+      const task = await storage.updateTask(id, req.body);
+      
+      // Create history entry
+      if (req.body.userId) {
+        await storage.createTaskHistory({
+          taskId: id,
+          userId: req.body.userId,
+          action: "updated",
+          oldValue: oldTask,
+          newValue: task
+        });
+      }
+      
+      res.json(task);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update task" });
+    }
+  });
+
+  app.delete("/api/tasks/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const deleted = await storage.deleteTask(id);
+      if (!deleted) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete task" });
+    }
+  });
+
+  // Task Comments
+  app.get("/api/tasks/:taskId/comments", async (req, res) => {
+    try {
+      const { taskId } = req.params;
+      const comments = await storage.getTaskComments(taskId);
+      res.json(comments);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch comments" });
+    }
+  });
+
+  app.post("/api/tasks/:taskId/comments", async (req, res) => {
+    try {
+      const { taskId } = req.params;
+      const commentData = insertTaskCommentSchema.parse({ ...req.body, taskId });
+      const comment = await storage.createTaskComment(commentData);
+      res.json(comment);
+    } catch (error) {
+      res.status(400).json({ message: "Invalid comment data" });
+    }
+  });
+
+  app.delete("/api/tasks/:taskId/comments/:commentId", async (req, res) => {
+    try {
+      const { commentId } = req.params;
+      const deleted = await storage.deleteTaskComment(commentId);
+      if (!deleted) {
+        return res.status(404).json({ message: "Comment not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete comment" });
+    }
+  });
+
+  // Task History
+  app.get("/api/tasks/:taskId/history", async (req, res) => {
+    try {
+      const { taskId } = req.params;
+      const history = await storage.getTaskHistory(taskId);
+      res.json(history);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch task history" });
+    }
+  });
+
+  // ============= ROLES API =============
+  app.get("/api/roles", async (req, res) => {
+    try {
+      const roles = await storage.getRoles();
+      res.json(roles);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch roles" });
+    }
+  });
+
+  app.get("/api/roles/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const role = await storage.getRoleById(id);
+      if (!role) {
+        return res.status(404).json({ message: "Role not found" });
+      }
+      res.json(role);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch role" });
+    }
+  });
+
+  app.post("/api/roles", async (req, res) => {
+    try {
+      const roleData = insertRoleSchema.parse(req.body);
+      const role = await storage.createRole(roleData);
+      res.json(role);
+    } catch (error) {
+      res.status(400).json({ message: "Invalid role data" });
+    }
+  });
+
+  app.put("/api/roles/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existingRole = await storage.getRoleById(id);
+      if (!existingRole) {
+        return res.status(404).json({ message: "Role not found" });
+      }
+      if (existingRole.isSystem) {
+        return res.status(403).json({ message: "Cannot modify system role" });
+      }
+      const role = await storage.updateRole(id, req.body);
+      res.json(role);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update role" });
+    }
+  });
+
+  app.delete("/api/roles/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const existingRole = await storage.getRoleById(id);
+      if (!existingRole) {
+        return res.status(404).json({ message: "Role not found" });
+      }
+      if (existingRole.isSystem) {
+        return res.status(403).json({ message: "Cannot delete system role" });
+      }
+      await storage.deleteRole(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete role" });
+    }
+  });
+
+  // ============= BARCODE SCANNER =============
+  app.get("/api/equipment/barcode/:barcode", async (req, res) => {
+    try {
+      const { barcode } = req.params;
+      const equipmentItem = await storage.getEquipmentByBarcode(barcode);
+      if (!equipmentItem) {
+        return res.status(404).json({ message: "Equipment not found with this barcode" });
+      }
+      res.json(equipmentItem);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to find equipment" });
+    }
+  });
+
+  // ============= TELEGRAM AUTH =============
+  // Verify Telegram Login Widget data
+  function verifyTelegramAuth(data: any, botToken: string): boolean {
+    const { hash, ...authData } = data;
+    const dataCheckString = Object.keys(authData)
+      .sort()
+      .map(key => `${key}=${authData[key]}`)
+      .join('\n');
+    
+    const secretKey = crypto.createHash('sha256').update(botToken).digest();
+    const hmac = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+    
+    return hmac === hash;
+  }
+
+  app.post("/api/auth/telegram/login", async (req, res) => {
+    try {
+      const telegramData = req.body;
+      const botToken = process.env.TELEGRAM_BOT_TOKEN;
+      
+      // For development, skip verification if no bot token
+      const isVerified = botToken ? verifyTelegramAuth(telegramData, botToken) : true;
+      
+      if (!isVerified) {
+        return res.status(401).json({ message: "Invalid Telegram auth data" });
+      }
+
+      const telegramId = String(telegramData.id);
+      
+      // Check if user exists by telegram ID
+      let user = await storage.getUserByTelegramId(telegramId);
+      
+      if (!user) {
+        // Check if telegram user record exists
+        let telegramUser = await storage.getTelegramUserByTelegramId(telegramId);
+        
+        if (!telegramUser) {
+          // Create telegram user record
+          telegramUser = await storage.createTelegramUser({
+            telegramId,
+            username: telegramData.username,
+            firstName: telegramData.first_name,
+            lastName: telegramData.last_name,
+            photoUrl: telegramData.photo_url,
+            authDate: new Date(telegramData.auth_date * 1000)
+          });
+        } else {
+          // Update telegram user record
+          await storage.updateTelegramUser(telegramId, {
+            username: telegramData.username,
+            firstName: telegramData.first_name,
+            lastName: telegramData.last_name,
+            photoUrl: telegramData.photo_url,
+            authDate: new Date(telegramData.auth_date * 1000)
+          });
+        }
+
+        // Create a new user account
+        const name = [telegramData.first_name, telegramData.last_name].filter(Boolean).join(' ');
+        user = await storage.createUser({
+          username: telegramData.username || `tg_${telegramId}`,
+          password: crypto.randomBytes(32).toString('hex'), // Random password for Telegram users
+          name: name || `Telegram User ${telegramId}`,
+          telegramId,
+          avatar: telegramData.photo_url,
+          role: 'employee',
+          active: true
+        });
+
+        // Link telegram user to the new user
+        await storage.linkTelegramUser(telegramId, user.id);
+      } else {
+        // Update last login
+        await storage.updateUser(user.id, { lastLogin: new Date() });
+      }
+
+      res.json({ 
+        user: { 
+          id: user.id, 
+          username: user.username, 
+          name: user.name, 
+          role: user.role,
+          avatar: user.avatar,
+          permissions: user.permissions
+        } 
+      });
+    } catch (error) {
+      console.error("Telegram auth error:", error);
+      res.status(500).json({ message: "Failed to authenticate with Telegram" });
+    }
+  });
+
+  // Get telegram users for admin
+  app.get("/api/telegram-users", async (req, res) => {
+    try {
+      const users = await storage.getUsers();
+      const telegramUsers = users.filter(u => u.telegramId);
+      res.json(telegramUsers);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch telegram users" });
+    }
+  });
+
+  // ============= USERS MANAGEMENT =============
+  app.get("/api/users", async (req, res) => {
+    try {
+      const users = await storage.getUsers();
+      res.json(users.map(u => ({ ...u, password: undefined })));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
+  app.get("/api/users/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const user = await storage.getUser(id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.json({ ...user, password: undefined });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
+  app.post("/api/users", async (req, res) => {
+    try {
+      const userData = insertUserSchema.parse(req.body);
+      const user = await storage.createUser(userData);
+      res.json({ ...user, password: undefined });
+    } catch (error) {
+      res.status(400).json({ message: "Invalid user data" });
+    }
+  });
+
+  app.put("/api/users/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { password, ...userData } = req.body;
+      const user = await storage.updateUser(id, userData);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.json({ ...user, password: undefined });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
+  app.delete("/api/users/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      await storage.deleteUser(id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete user" });
+    }
+  });
+
+  // Update user role and permissions
+  app.put("/api/users/:id/permissions", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { role, permissions } = req.body;
+      const user = await storage.updateUser(id, { role, permissions });
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.json({ ...user, password: undefined });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update user permissions" });
     }
   });
 

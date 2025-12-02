@@ -44,8 +44,10 @@ export function EquipmentForm({ isOpen, onClose, equipment }: EquipmentFormProps
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: z.infer<typeof equipmentFormSchema>) =>
-      apiRequest("/api/equipment", "POST", { ...data, photos }),
+    mutationFn: async (data: z.infer<typeof equipmentFormSchema>) => {
+      const response = await apiRequest("POST", "/api/equipment", { ...data, photos });
+      return response.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/equipment"] });
       toast({
@@ -66,8 +68,10 @@ export function EquipmentForm({ isOpen, onClose, equipment }: EquipmentFormProps
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: z.infer<typeof equipmentFormSchema>) =>
-      apiRequest(`/api/equipment/${equipment.id}`, "PUT", { ...data, photos }),
+    mutationFn: async (data: z.infer<typeof equipmentFormSchema>) => {
+      const response = await apiRequest("PUT", `/api/equipment/${equipment.id}`, { ...data, photos });
+      return response.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/equipment"] });
       toast({

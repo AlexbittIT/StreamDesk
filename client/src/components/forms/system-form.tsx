@@ -43,8 +43,10 @@ export function SystemForm({ isOpen, onClose, system }: SystemFormProps) {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: z.infer<typeof systemFormSchema>) =>
-      apiRequest("/api/systems", "POST", data),
+    mutationFn: async (data: z.infer<typeof systemFormSchema>) => {
+      const response = await apiRequest("POST", "/api/systems", data);
+      return response.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/systems"] });
       toast({
@@ -64,8 +66,10 @@ export function SystemForm({ isOpen, onClose, system }: SystemFormProps) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: z.infer<typeof systemFormSchema>) =>
-      apiRequest(`/api/systems/${system.id}`, "PUT", data),
+    mutationFn: async (data: z.infer<typeof systemFormSchema>) => {
+      const response = await apiRequest("PUT", `/api/systems/${system.id}`, data);
+      return response.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/systems"] });
       toast({
@@ -96,7 +100,8 @@ export function SystemForm({ isOpen, onClose, system }: SystemFormProps) {
 
     setIsPinging(true);
     try {
-      const result: any = await apiRequest(`/api/systems/ping`, "POST", { ip: ipAddress });
+      const response = await apiRequest("POST", "/api/systems/ping", { ip: ipAddress });
+      const result: any = await response.json();
       setPingResult(result);
       
       if (result.isOnline) {

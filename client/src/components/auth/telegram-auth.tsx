@@ -38,13 +38,16 @@ export function TelegramAuth({ onSuccess }: TelegramAuthProps) {
   });
 
   const connectMutation = useMutation({
-    mutationFn: (data: {
+    mutationFn: async (data: {
       telegramId: string;
       username: string;
       firstName: string;
       lastName?: string;
       phone?: string;
-    }) => apiRequest("/api/telegram-users", "POST", data),
+    }) => {
+      const response = await apiRequest("POST", "/api/telegram-users", data);
+      return response.json();
+    },
     onSuccess: (telegramUser) => {
       queryClient.invalidateQueries({ queryKey: ["/api/telegram-users"] });
       toast({
@@ -69,7 +72,7 @@ export function TelegramAuth({ onSuccess }: TelegramAuthProps) {
   });
 
   const disconnectMutation = useMutation({
-    mutationFn: (id: number) => apiRequest(`/api/telegram-users/${id}`, "DELETE"),
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/telegram-users/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/telegram-users"] });
       toast({

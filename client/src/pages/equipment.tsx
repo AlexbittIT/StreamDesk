@@ -5,17 +5,20 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Package, Search, Filter, Plus, Mic, Camera, Lightbulb, Monitor, Gavel, Edit, MapPin } from "lucide-react";
+import { Package, Search, Filter, Plus, Mic, Camera, Lightbulb, Monitor, Gavel, Edit, MapPin, ScanBarcode } from "lucide-react";
 import { EquipmentForm } from "@/components/forms/equipment-form";
+import { BarcodeScanner } from "@/components/equipment/barcode-scanner";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import type { Equipment } from "@shared/schema";
 
-export default function Equipment() {
+export default function EquipmentPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedEquipment, setSelectedEquipment] = useState<any>(null);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
   const { toast } = useToast();
 
   const { data: equipment = [], isLoading } = useQuery({
@@ -77,15 +80,25 @@ export default function Equipment() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <h2 className="text-2xl font-semibold text-gray-900">Склад техники</h2>
-        <Button onClick={() => {
-          setSelectedEquipment(null);
-          setIsFormOpen(true);
-        }}>
-          <Plus className="w-4 h-4 mr-2" />
-          Добавить оборудование
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="outline" 
+            onClick={() => setIsScannerOpen(true)}
+            data-testid="button-scan-barcode"
+          >
+            <ScanBarcode className="w-4 h-4 mr-2" />
+            Сканировать
+          </Button>
+          <Button onClick={() => {
+            setSelectedEquipment(null);
+            setIsFormOpen(true);
+          }} data-testid="button-add-equipment">
+            <Plus className="w-4 h-4 mr-2" />
+            Добавить оборудование
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -225,6 +238,20 @@ export default function Equipment() {
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
         equipment={selectedEquipment}
+      />
+
+      {/* Barcode Scanner */}
+      <BarcodeScanner
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onEquipmentFound={(foundEquipment: Equipment) => {
+          setSelectedEquipment(foundEquipment);
+          setIsFormOpen(true);
+          toast({ 
+            title: "Найдено", 
+            description: `Оборудование "${foundEquipment.name}" найдено по штрих-коду` 
+          });
+        }}
       />
     </div>
   );

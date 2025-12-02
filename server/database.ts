@@ -3,7 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { 
   users, events, equipment, systems, streams, notifications,
   equipmentReservations, telegramUsers, obsConnections, analyticsEvents,
-  eventParticipants,
+  eventParticipants, tasks, taskComments, taskHistory, roles,
   type User, type InsertUser,
   type Event, type InsertEvent,
   type Equipment, type InsertEquipment,
@@ -14,10 +14,13 @@ import {
   type TelegramUser, type InsertTelegramUser,
   type ObsConnection, type InsertObsConnection,
   type AnalyticsEvent, type InsertAnalyticsEvent,
-  type EventParticipant, type InsertEventParticipant
+  type EventParticipant, type InsertEventParticipant,
+  type Task, type InsertTask,
+  type TaskComment, type InsertTaskComment,
+  type TaskHistory, type InsertTaskHistory,
+  type Role, type InsertRole
 } from "@shared/schema";
-import { eq, and, gte, lte, sql } from "drizzle-orm";
-import { randomUUID } from "crypto";
+import { eq, and, gte, lte, sql, or, isNull } from "drizzle-orm";
 
 const connectionString = process.env.DATABASE_URL!;
 const client = neon(connectionString);
@@ -28,6 +31,7 @@ export interface IStorage {
   getUsers(): Promise<User[]>;
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByTelegramId(telegramId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, user: Partial<User>): Promise<User | undefined>;
   deleteUser(id: string): Promise<boolean>;
@@ -49,6 +53,7 @@ export interface IStorage {
   getEquipment(): Promise<Equipment[]>;
   getEquipmentById(id: string): Promise<Equipment | undefined>;
   getEquipmentByStatus(status: string): Promise<Equipment[]>;
+  getEquipmentByBarcode(barcode: string): Promise<Equipment | undefined>;
   createEquipment(equipment: InsertEquipment): Promise<Equipment>;
   updateEquipment(id: string, equipment: Partial<Equipment>): Promise<Equipment | undefined>;
   deleteEquipment(id: string): Promise<boolean>;
@@ -85,6 +90,7 @@ export interface IStorage {
   // Telegram Users
   getTelegramUserByTelegramId(telegramId: string): Promise<TelegramUser | undefined>;
   createTelegramUser(telegramUser: InsertTelegramUser): Promise<TelegramUser>;
+  updateTelegramUser(telegramId: string, data: Partial<TelegramUser>): Promise<TelegramUser | undefined>;
   linkTelegramUser(telegramId: string, userId: string): Promise<TelegramUser | undefined>;
   
   // OBS Connections
@@ -96,6 +102,33 @@ export interface IStorage {
   // Analytics
   createAnalyticsEvent(analyticsEvent: InsertAnalyticsEvent): Promise<AnalyticsEvent>;
   getAnalyticsEvents(entityType?: string, startDate?: Date, endDate?: Date): Promise<AnalyticsEvent[]>;
+  
+  // Tasks
+  getTasks(): Promise<Task[]>;
+  getTaskById(id: string): Promise<Task | undefined>;
+  getTasksByAssignee(assigneeId: string): Promise<Task[]>;
+  getTasksByCreator(creatorId: string): Promise<Task[]>;
+  getTasksByStatus(status: string): Promise<Task[]>;
+  createTask(task: InsertTask): Promise<Task>;
+  updateTask(id: string, task: Partial<Task>): Promise<Task | undefined>;
+  deleteTask(id: string): Promise<boolean>;
+  
+  // Task Comments
+  getTaskComments(taskId: string): Promise<TaskComment[]>;
+  createTaskComment(comment: InsertTaskComment): Promise<TaskComment>;
+  deleteTaskComment(id: string): Promise<boolean>;
+  
+  // Task History
+  getTaskHistory(taskId: string): Promise<TaskHistory[]>;
+  createTaskHistory(history: InsertTaskHistory): Promise<TaskHistory>;
+  
+  // Roles
+  getRoles(): Promise<Role[]>;
+  getRoleById(id: string): Promise<Role | undefined>;
+  getRoleByName(name: string): Promise<Role | undefined>;
+  createRole(role: InsertRole): Promise<Role>;
+  updateRole(id: string, role: Partial<Role>): Promise<Role | undefined>;
+  deleteRole(id: string): Promise<boolean>;
 }
 
 export class PostgreSQLStorage implements IStorage {
@@ -107,6 +140,11 @@ export class PostgreSQLStorage implements IStorage {
 
   async getUserByUsername(username: string): Promise<User | undefined> {
     const result = await db.select().from(users).where(eq(users.username, username)).limit(1);
+    return result[0];
+  }
+
+  async getUserByTelegramId(telegramId: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.telegramId, telegramId)).limit(1);
     return result[0];
   }
 
@@ -172,7 +210,7 @@ export class PostgreSQLStorage implements IStorage {
 
   async deleteEvent(id: string): Promise<boolean> {
     const result = await db.delete(events).where(eq(events.id, id));
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Equipment
@@ -189,6 +227,11 @@ export class PostgreSQLStorage implements IStorage {
     return await db.select().from(equipment).where(eq(equipment.status, status)).orderBy(equipment.name);
   }
 
+  async getEquipmentByBarcode(barcode: string): Promise<Equipment | undefined> {
+    const result = await db.select().from(equipment).where(eq(equipment.barcode, barcode)).limit(1);
+    return result[0];
+  }
+
   async createEquipment(insertEquipment: InsertEquipment): Promise<Equipment> {
     const result = await db.insert(equipment).values(insertEquipment).returning();
     return result[0];
@@ -201,7 +244,7 @@ export class PostgreSQLStorage implements IStorage {
 
   async deleteEquipment(id: string): Promise<boolean> {
     const result = await db.delete(equipment).where(eq(equipment.id, id));
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   async uploadEquipmentPhoto(equipmentId: string, photoUrl: string): Promise<Equipment | undefined> {
@@ -240,7 +283,7 @@ export class PostgreSQLStorage implements IStorage {
 
   async deleteSystem(id: string): Promise<boolean> {
     const result = await db.delete(systems).where(eq(systems.id, id));
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   async pingSystem(id: string, status: string): Promise<System | undefined> {
@@ -289,7 +332,7 @@ export class PostgreSQLStorage implements IStorage {
 
   async markNotificationRead(id: string): Promise<boolean> {
     const result = await db.update(notifications).set({ read: true }).where(eq(notifications.id, id));
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Equipment Reservations
@@ -331,6 +374,11 @@ export class PostgreSQLStorage implements IStorage {
     return result[0];
   }
 
+  async updateTelegramUser(telegramId: string, data: Partial<TelegramUser>): Promise<TelegramUser | undefined> {
+    const result = await db.update(telegramUsers).set(data).where(eq(telegramUsers.telegramId, telegramId)).returning();
+    return result[0];
+  }
+
   async linkTelegramUser(telegramId: string, userId: string): Promise<TelegramUser | undefined> {
     const result = await db.update(telegramUsers).set({ userId }).where(eq(telegramUsers.telegramId, telegramId)).returning();
     return result[0];
@@ -353,7 +401,7 @@ export class PostgreSQLStorage implements IStorage {
 
   async deleteObsConnection(id: string): Promise<boolean> {
     const result = await db.delete(obsConnections).where(eq(obsConnections.id, id));
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   // Analytics
@@ -377,12 +425,114 @@ export class PostgreSQLStorage implements IStorage {
     }
 
     if (conditions.length > 0) {
-      query = query.where(and(...conditions));
+      query = query.where(and(...conditions)) as any;
     }
 
     return await query.orderBy(sql`${analyticsEvents.timestamp} DESC`);
   }
+
+  // Tasks
+  async getTasks(): Promise<Task[]> {
+    return await db.select().from(tasks).orderBy(sql`${tasks.createdAt} DESC`);
+  }
+
+  async getTaskById(id: string): Promise<Task | undefined> {
+    const result = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getTasksByAssignee(assigneeId: string): Promise<Task[]> {
+    return await db.select().from(tasks)
+      .where(eq(tasks.assigneeId, assigneeId))
+      .orderBy(sql`${tasks.createdAt} DESC`);
+  }
+
+  async getTasksByCreator(creatorId: string): Promise<Task[]> {
+    return await db.select().from(tasks)
+      .where(eq(tasks.creatorId, creatorId))
+      .orderBy(sql`${tasks.createdAt} DESC`);
+  }
+
+  async getTasksByStatus(status: string): Promise<Task[]> {
+    return await db.select().from(tasks)
+      .where(eq(tasks.status, status))
+      .orderBy(sql`${tasks.createdAt} DESC`);
+  }
+
+  async createTask(insertTask: InsertTask): Promise<Task> {
+    const result = await db.insert(tasks).values(insertTask).returning();
+    return result[0];
+  }
+
+  async updateTask(id: string, taskData: Partial<Task>): Promise<Task | undefined> {
+    const dataWithTimestamp = { ...taskData, updatedAt: new Date() };
+    const result = await db.update(tasks).set(dataWithTimestamp).where(eq(tasks.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteTask(id: string): Promise<boolean> {
+    const result = await db.delete(tasks).where(eq(tasks.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Task Comments
+  async getTaskComments(taskId: string): Promise<TaskComment[]> {
+    return await db.select().from(taskComments)
+      .where(eq(taskComments.taskId, taskId))
+      .orderBy(taskComments.createdAt);
+  }
+
+  async createTaskComment(insertComment: InsertTaskComment): Promise<TaskComment> {
+    const result = await db.insert(taskComments).values(insertComment).returning();
+    return result[0];
+  }
+
+  async deleteTaskComment(id: string): Promise<boolean> {
+    const result = await db.delete(taskComments).where(eq(taskComments.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Task History
+  async getTaskHistory(taskId: string): Promise<TaskHistory[]> {
+    return await db.select().from(taskHistory)
+      .where(eq(taskHistory.taskId, taskId))
+      .orderBy(sql`${taskHistory.createdAt} DESC`);
+  }
+
+  async createTaskHistory(insertHistory: InsertTaskHistory): Promise<TaskHistory> {
+    const result = await db.insert(taskHistory).values(insertHistory).returning();
+    return result[0];
+  }
+
+  // Roles
+  async getRoles(): Promise<Role[]> {
+    return await db.select().from(roles).orderBy(roles.name);
+  }
+
+  async getRoleById(id: string): Promise<Role | undefined> {
+    const result = await db.select().from(roles).where(eq(roles.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getRoleByName(name: string): Promise<Role | undefined> {
+    const result = await db.select().from(roles).where(eq(roles.name, name)).limit(1);
+    return result[0];
+  }
+
+  async createRole(insertRole: InsertRole): Promise<Role> {
+    const result = await db.insert(roles).values(insertRole).returning();
+    return result[0];
+  }
+
+  async updateRole(id: string, roleData: Partial<Role>): Promise<Role | undefined> {
+    const result = await db.update(roles).set(roleData).where(eq(roles.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteRole(id: string): Promise<boolean> {
+    const result = await db.delete(roles).where(eq(roles.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
 }
 
-// Initialize storage
 export const storage = new PostgreSQLStorage();

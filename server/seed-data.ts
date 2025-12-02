@@ -117,6 +117,16 @@ export async function seedDatabase() {
       await storage.createEquipment(item);
     }
 
+    // First, create an admin user for seed data
+    const adminUser = await storage.createUser({
+      username: "admin",
+      password: "admin123",
+      name: "Администратор",
+      email: "admin@streamstudio.local",
+      role: "admin",
+      permissions: ["admin:panel", "users:manage", "roles:manage", "tasks:view", "tasks:create", "tasks:edit", "tasks:delete", "tasks:assign", "equipment:view", "equipment:create", "equipment:edit", "equipment:delete", "equipment:reserve", "events:view", "events:create", "events:edit", "events:delete", "streams:view", "streams:manage", "systems:view", "systems:manage", "settings:manage"],
+    });
+
     // Create sample events
     const events = [
       {
@@ -127,7 +137,7 @@ export async function seedDatabase() {
         location: "Подкаст зона",
         startTime: new Date(Date.now() + 2 * 60 * 60 * 1000), // через 2 часа
         endTime: new Date(Date.now() + 4 * 60 * 60 * 1000), // через 4 часа
-        userId: null
+        organizerId: adminUser.id
       },
       {
         title: "Прямой эфир с экспертами",
@@ -137,7 +147,7 @@ export async function seedDatabase() {
         location: "Студия А",
         startTime: new Date(Date.now() + 24 * 60 * 60 * 1000), // завтра
         endTime: new Date(Date.now() + 26 * 60 * 60 * 1000),
-        userId: null
+        organizerId: adminUser.id
       },
       {
         title: "Техническое обслуживание",
@@ -147,7 +157,7 @@ export async function seedDatabase() {
         location: "Техническая",
         startTime: new Date(Date.now() + 72 * 60 * 60 * 1000), // через 3 дня
         endTime: new Date(Date.now() + 76 * 60 * 60 * 1000),
-        userId: null
+        organizerId: adminUser.id
       }
     ];
 

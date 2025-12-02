@@ -90,13 +90,14 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
         location: useCustomLocation ? data.customLocation : data.location,
       };
       
-      const newEvent = await apiRequest("/api/events", "POST", eventData);
+      const response = await apiRequest("POST", "/api/events", eventData);
+      const newEvent = await response.json();
       
       // Добавляем участников
       if (selectedParticipants.length > 0) {
         await Promise.all(
           selectedParticipants.map(userId =>
-            apiRequest("/api/event-participants", "POST", {
+            apiRequest("POST", "/api/event-participants", {
               eventId: newEvent.id,
               userId,
               role: "participant",
@@ -136,7 +137,8 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
         location: useCustomLocation ? data.customLocation : data.location,
       };
       
-      return apiRequest(`/api/events/${event.id}`, "PUT", eventData);
+      const response = await apiRequest("PUT", `/api/events/${event.id}`, eventData);
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/events"] });

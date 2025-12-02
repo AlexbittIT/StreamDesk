@@ -10,10 +10,14 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   email: text("email"),
   phone: text("phone"),
-  position: text("position"), // должность
-  department: text("department"), // отдел
-  role: text("role").notNull().default("employee"), // admin, employee
+  position: text("position"),
+  department: text("department"),
+  role: text("role").notNull().default("employee"), // admin, manager, employee
+  permissions: jsonb("permissions").default('[]'), // массив разрешений
+  telegramId: text("telegram_id").unique(), // привязка к Telegram
+  avatar: text("avatar"), // URL аватара
   active: boolean("active").default(true),
+  lastLogin: timestamp("last_login"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -24,67 +28,67 @@ export const events = pgTable("events", {
   startTime: timestamp("start_time").notNull(),
   endTime: timestamp("end_time").notNull(),
   location: text("location").notNull(),
-  customLocation: text("custom_location"), // возможность вписать свое место
-  organizerId: varchar("organizer_id").references(() => users.id).notNull(), // создатель события
-  status: text("status").notNull().default("scheduled"), // scheduled, active, completed, cancelled
-  type: text("type").notNull().default("stream"), // stream, recording, maintenance, meeting
+  customLocation: text("custom_location"),
+  organizerId: varchar("organizer_id").references(() => users.id).notNull(),
+  status: text("status").notNull().default("scheduled"),
+  type: text("type").notNull().default("stream"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Таблица участников событий
 export const eventParticipants = pgTable("event_participants", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   eventId: varchar("event_id").references(() => events.id).notNull(),
   userId: varchar("user_id").references(() => users.id).notNull(),
-  role: text("role").default("participant"), // organizer, participant, presenter
-  status: text("status").default("invited"), // invited, accepted, declined, maybe
+  role: text("role").default("participant"),
+  status: text("status").default("invited"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const equipment = pgTable("equipment", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  type: text("type").notNull(), // microphone, camera, lighting, computer, other
+  type: text("type").notNull(),
   model: text("model"),
   serialNumber: text("serial_number"),
-  inventoryNumber: text("inventory_number"), // инвентарный номер
-  specifications: jsonb("specifications"), // характеристики оборудования
-  notes: text("notes"), // примечания
-  status: text("status").notNull().default("available"), // available, in-use, maintenance, broken
-  location: text("location"), // room/event where it's currently used
+  inventoryNumber: text("inventory_number"),
+  barcode: text("barcode").unique(), // штрих-код для сканирования
+  specifications: jsonb("specifications"),
+  notes: text("notes"),
+  status: text("status").notNull().default("available"),
+  location: text("location"),
   assignedTo: varchar("assigned_to").references(() => users.id),
   lastUsed: timestamp("last_used"),
-  photos: jsonb("photos").default('[]'), // array of photo URLs
+  photos: jsonb("photos").default('[]'),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const systems = pgTable("systems", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  type: text("type").notNull(), // computer, server, network
+  type: text("type").notNull(),
   location: text("location").notNull(),
   ipAddress: text("ip_address"),
-  status: text("status").notNull().default("offline"), // online, offline, maintenance
+  status: text("status").notNull().default("offline"),
   lastPing: timestamp("last_ping"),
-  specifications: jsonb("specifications"), // CPU, RAM, etc.
+  specifications: jsonb("specifications"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const streams = pgTable("streams", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   title: text("title").notNull(),
-  platform: text("platform").notNull(), // youtube, vk, twitch
+  platform: text("platform").notNull(),
   streamKey: text("stream_key"),
   bitrate: integer("bitrate"),
   fps: integer("fps"),
   resolution: text("resolution"),
-  status: text("status").notNull().default("offline"), // offline, live, preparing, ended
+  status: text("status").notNull().default("offline"),
   viewerCount: integer("viewer_count").default(0),
   startTime: timestamp("start_time"),
   endTime: timestamp("end_time"),
   userId: varchar("user_id").references(() => users.id),
   systemId: varchar("system_id").references(() => systems.id),
-  metadata: jsonb("metadata"), // platform-specific data
+  metadata: jsonb("metadata"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -93,7 +97,7 @@ export const notifications = pgTable("notifications", {
   userId: varchar("user_id").references(() => users.id),
   title: text("title").notNull(),
   message: text("message").notNull(),
-  type: text("type").notNull().default("info"), // info, warning, error, success
+  type: text("type").notNull().default("info"),
   read: boolean("read").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -105,7 +109,7 @@ export const equipmentReservations = pgTable("equipment_reservations", {
   eventId: varchar("event_id").references(() => events.id),
   startTime: timestamp("start_time").notNull(),
   endTime: timestamp("end_time").notNull(),
-  status: text("status").notNull().default("active"), // active, completed, cancelled
+  status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -115,6 +119,8 @@ export const telegramUsers = pgTable("telegram_users", {
   username: text("username"),
   firstName: text("first_name"),
   lastName: text("last_name"),
+  photoUrl: text("photo_url"),
+  authDate: timestamp("auth_date"),
   userId: varchar("user_id").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -125,19 +131,75 @@ export const obsConnections = pgTable("obs_connections", {
   host: text("host").notNull(),
   port: integer("port").notNull().default(4455),
   password: text("password"),
-  status: text("status").notNull().default("disconnected"), // connected, disconnected, error
+  status: text("status").notNull().default("disconnected"),
   lastPing: timestamp("last_ping"),
-  streamStatus: text("stream_status").default("stopped"), // streaming, recording, stopped
+  streamStatus: text("stream_status").default("stopped"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const analyticsEvents = pgTable("analytics_events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  eventType: text("event_type").notNull(), // system_status, stream_start, stream_end, equipment_used
-  entityId: varchar("entity_id"), // ID системы, стрима или оборудования
-  entityType: text("entity_type").notNull(), // system, stream, equipment
+  eventType: text("event_type").notNull(),
+  entityId: varchar("entity_id"),
+  entityType: text("entity_type").notNull(),
   data: jsonb("data").notNull(),
   timestamp: timestamp("timestamp").defaultNow(),
+});
+
+// Таблица задач для таск-менеджера
+export const tasks = pgTable("tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("todo"), // todo, in_progress, review, done, cancelled
+  priority: text("priority").notNull().default("medium"), // low, medium, high, urgent
+  creatorId: varchar("creator_id").references(() => users.id).notNull(),
+  assigneeId: varchar("assignee_id").references(() => users.id),
+  dueDate: timestamp("due_date"),
+  startDate: timestamp("start_date"),
+  completedAt: timestamp("completed_at"),
+  category: text("category"), // production, equipment, stream, admin, other
+  tags: jsonb("tags").default('[]'),
+  attachments: jsonb("attachments").default('[]'),
+  parentTaskId: varchar("parent_task_id"), // для подзадач
+  estimatedHours: integer("estimated_hours"),
+  actualHours: integer("actual_hours"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Комментарии к задачам
+export const taskComments = pgTable("task_comments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taskId: varchar("task_id").references(() => tasks.id).notNull(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  content: text("content").notNull(),
+  attachments: jsonb("attachments").default('[]'),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// История изменений задач
+export const taskHistory = pgTable("task_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taskId: varchar("task_id").references(() => tasks.id).notNull(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  action: text("action").notNull(), // created, updated, status_changed, assigned, commented
+  oldValue: jsonb("old_value"),
+  newValue: jsonb("new_value"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Роли и права доступа
+export const roles = pgTable("roles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  description: text("description"),
+  permissions: jsonb("permissions").notNull().default('[]'),
+  color: text("color").default("#6B7280"), // цвет для отображения
+  isSystem: boolean("is_system").default(false), // системные роли нельзя удалить
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Insert schemas
@@ -193,6 +255,28 @@ export const insertObsConnectionSchema = createInsertSchema(obsConnections).omit
 
 export const insertAnalyticsEventSchema = createInsertSchema(analyticsEvents);
 
+export const insertTaskSchema = createInsertSchema(tasks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertTaskCommentSchema = createInsertSchema(taskComments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertTaskHistorySchema = createInsertSchema(taskHistory).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertRoleSchema = createInsertSchema(roles).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -226,3 +310,57 @@ export type InsertObsConnection = z.infer<typeof insertObsConnectionSchema>;
 
 export type AnalyticsEvent = typeof analyticsEvents.$inferSelect;
 export type InsertAnalyticsEvent = z.infer<typeof insertAnalyticsEventSchema>;
+
+export type Task = typeof tasks.$inferSelect;
+export type InsertTask = z.infer<typeof insertTaskSchema>;
+
+export type TaskComment = typeof taskComments.$inferSelect;
+export type InsertTaskComment = z.infer<typeof insertTaskCommentSchema>;
+
+export type TaskHistory = typeof taskHistory.$inferSelect;
+export type InsertTaskHistory = z.infer<typeof insertTaskHistorySchema>;
+
+export type Role = typeof roles.$inferSelect;
+export type InsertRole = z.infer<typeof insertRoleSchema>;
+
+// Константы для разрешений
+export const PERMISSIONS = {
+  // Задачи
+  TASKS_VIEW: 'tasks:view',
+  TASKS_CREATE: 'tasks:create',
+  TASKS_EDIT: 'tasks:edit',
+  TASKS_DELETE: 'tasks:delete',
+  TASKS_ASSIGN: 'tasks:assign',
+  
+  // Оборудование
+  EQUIPMENT_VIEW: 'equipment:view',
+  EQUIPMENT_CREATE: 'equipment:create',
+  EQUIPMENT_EDIT: 'equipment:edit',
+  EQUIPMENT_DELETE: 'equipment:delete',
+  EQUIPMENT_RESERVE: 'equipment:reserve',
+  
+  // События
+  EVENTS_VIEW: 'events:view',
+  EVENTS_CREATE: 'events:create',
+  EVENTS_EDIT: 'events:edit',
+  EVENTS_DELETE: 'events:delete',
+  
+  // Стримы
+  STREAMS_VIEW: 'streams:view',
+  STREAMS_MANAGE: 'streams:manage',
+  
+  // Системы
+  SYSTEMS_VIEW: 'systems:view',
+  SYSTEMS_MANAGE: 'systems:manage',
+  
+  // Пользователи
+  USERS_VIEW: 'users:view',
+  USERS_MANAGE: 'users:manage',
+  ROLES_MANAGE: 'roles:manage',
+  
+  // Админ
+  ADMIN_PANEL: 'admin:panel',
+  SETTINGS_MANAGE: 'settings:manage',
+} as const;
+
+export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];

@@ -27,7 +27,7 @@ export default function Notifications() {
 
   const markAsReadMutation = useMutation({
     mutationFn: (id: number) =>
-      apiRequest(`/api/notifications/${id}/read`, "PUT"),
+      apiRequest("PUT", `/api/notifications/${id}/read`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
     },
@@ -35,7 +35,7 @@ export default function Notifications() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) =>
-      apiRequest(`/api/notifications/${id}`, "DELETE"),
+      apiRequest("DELETE", `/api/notifications/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
       toast({
@@ -47,7 +47,7 @@ export default function Notifications() {
 
   const markAllAsReadMutation = useMutation({
     mutationFn: () =>
-      apiRequest("/api/notifications/mark-all-read", "PUT"),
+      apiRequest("PUT", "/api/notifications/mark-all-read"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
       toast({

@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -13,6 +13,9 @@ import Streams from "@/pages/streams";
 import Servers from "@/pages/servers";
 import Notifications from "@/pages/notifications";
 import Settings from "@/pages/settings";
+import Tasks from "@/pages/tasks";
+import Admin from "@/pages/admin";
+import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
 
 import Sidebar from "@/components/layout/sidebar";
@@ -29,6 +32,8 @@ function Router() {
       <Route path="/servers" component={Servers} />
       <Route path="/notifications" component={Notifications} />
       <Route path="/settings" component={Settings} />
+      <Route path="/tasks" component={Tasks} />
+      <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -37,29 +42,50 @@ function Router() {
 function App() {
   const [user, setUser] = useState<any>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [location] = useLocation();
 
   useEffect(() => {
-    // Simple auth check - in real app would use proper session management
     const savedUser = localStorage.getItem('streamstudio_user');
     if (savedUser) {
       setUser(JSON.parse(savedUser));
-    } else {
-      // Auto-login as admin for demo
-      const adminUser = { id: "1", username: "admin", name: "Администратор", role: "admin" };
-      setUser(adminUser);
-      localStorage.setItem('streamstudio_user', JSON.stringify(adminUser));
     }
+    setIsLoading(false);
   }, []);
 
+  const handleLogin = (userData: any) => {
+    setUser(userData);
+    localStorage.setItem('streamstudio_user', JSON.stringify(userData));
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('streamstudio_user');
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
   if (!user) {
-    return <div>Loading...</div>;
+    return (
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Login onLogin={handleLogin} />
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
   }
 
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <div className="min-h-screen bg-gray-50 font-inter">
-          {/* Mobile nav overlay */}
           {mobileNavOpen && (
             <div 
               className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
@@ -67,20 +93,20 @@ function App() {
             />
           )}
           
-          {/* Sidebar */}
           <Sidebar 
             user={user} 
             isOpen={mobileNavOpen}
             onClose={() => setMobileNavOpen(false)}
+            onLogout={handleLogout}
           />
           
-          {/* Main content */}
           <div className="lg:ml-72">
             <Header 
               onMobileMenuClick={() => setMobileNavOpen(true)}
               user={user}
+              onLogout={handleLogout}
             />
-            <main className="p-6">
+            <main className="p-4 sm:p-6">
               <Router />
             </main>
           </div>
