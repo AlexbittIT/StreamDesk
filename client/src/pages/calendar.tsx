@@ -35,11 +35,11 @@ export default function Calendar() {
 
   const getEventTypeColor = (type: string) => {
     switch (type) {
-      case "stream": return "bg-red-100 text-red-800";
-      case "meeting": return "bg-blue-100 text-blue-800";
-      case "production": return "bg-green-100 text-green-800";
-      case "maintenance": return "bg-yellow-100 text-yellow-800";
-      default: return "bg-gray-100 text-gray-800";
+      case "stream": return "bg-red-500/20 text-red-600 dark:text-red-400";
+      case "meeting": return "bg-blue-500/20 text-blue-600 dark:text-blue-400";
+      case "production": return "bg-green-500/20 text-green-600 dark:text-green-400";
+      case "maintenance": return "bg-yellow-500/20 text-yellow-600 dark:text-yellow-400";
+      default: return "bg-muted text-muted-foreground";
     }
   };
 
@@ -60,7 +60,7 @@ export default function Calendar() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold text-gray-900">Календарь событий</h2>
+        <h2 className="text-2xl font-semibold text-foreground">Календарь событий</h2>
         <div className="flex space-x-2">
           <Button 
             variant={viewMode === "week" ? "default" : "outline"}
@@ -150,12 +150,12 @@ export default function Calendar() {
                         <div className="flex items-start justify-between">
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate">{event.title}</p>
-                            <div className="flex items-center text-xs text-gray-500 mt-1">
+                            <div className="flex items-center text-xs text-muted-foreground mt-1">
                               <Clock className="w-3 h-3 mr-1" />
-                              {format(parseISO(event.startDate), "HH:mm")}
+                              {format(new Date(event.startTime), "HH:mm")}
                             </div>
                             {event.location && (
-                              <div className="flex items-center text-xs text-gray-500 mt-1">
+                              <div className="flex items-center text-xs text-muted-foreground mt-1">
                                 <MapPin className="w-3 h-3 mr-1" />
                                 {event.location}
                               </div>
@@ -211,7 +211,7 @@ export default function Calendar() {
             <CardContent>
               <div className="space-y-3">
                 {getEventsForDate(selectedDate).length === 0 ? (
-                  <p className="text-gray-500 text-center py-8">На этот день события не запланированы</p>
+                  <p className="text-muted-foreground text-center py-8">На этот день события не запланированы</p>
                 ) : (
                   getEventsForDate(selectedDate).map((event: any) => (
                     <Card key={event.id} className="hover:shadow-md transition-shadow cursor-pointer">
@@ -219,10 +219,10 @@ export default function Calendar() {
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
                             <CardTitle className="text-lg">{event.title}</CardTitle>
-                            <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
+                            <div className="flex items-center space-x-4 mt-2 text-sm text-muted-foreground">
                               <div className="flex items-center">
                                 <Clock className="w-4 h-4 mr-1" />
-                                {format(parseISO(event.startDate), "HH:mm")} - {format(parseISO(event.endDate), "HH:mm")}
+                                {format(new Date(event.startTime), "HH:mm")} - {format(new Date(event.endTime), "HH:mm")}
                               </div>
                               {event.location && (
                                 <div className="flex items-center">
@@ -258,7 +258,7 @@ export default function Calendar() {
                       </CardHeader>
                       {event.description && (
                         <CardContent>
-                          <p className="text-sm text-gray-600">{event.description}</p>
+                          <p className="text-sm text-muted-foreground">{event.description}</p>
                         </CardContent>
                       )}
                     </Card>

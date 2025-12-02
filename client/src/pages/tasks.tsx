@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   Plus, Search, Filter, CheckCircle2, Clock, AlertCircle, 
   Circle, User, Calendar, MessageSquare, MoreVertical,
-  ArrowUp, ArrowRight, ArrowDown, Trash2, Edit, Eye
+  ArrowUp, ArrowRight, ArrowDown, Trash2, Edit, Eye, GripVertical
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -23,6 +23,7 @@ import { insertTaskSchema, type Task, type User as UserType } from "@shared/sche
 import { z } from "zod";
 import { format, formatDistanceToNow, isPast } from "date-fns";
 import { ru } from "date-fns/locale";
+import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
 
 const taskFormSchema = insertTaskSchema.extend({
   dueDate: z.string().optional(),
@@ -32,15 +33,15 @@ const taskFormSchema = insertTaskSchema.extend({
 type TaskFormData = z.infer<typeof taskFormSchema>;
 
 const statusConfig = {
-  todo: { label: "К выполнению", icon: Circle, color: "bg-gray-100 text-gray-800", bg: "bg-gray-50" },
-  in_progress: { label: "В работе", icon: Clock, color: "bg-blue-100 text-blue-800", bg: "bg-blue-50" },
-  review: { label: "На проверке", icon: Eye, color: "bg-yellow-100 text-yellow-800", bg: "bg-yellow-50" },
-  done: { label: "Готово", icon: CheckCircle2, color: "bg-green-100 text-green-800", bg: "bg-green-50" },
-  cancelled: { label: "Отменено", icon: AlertCircle, color: "bg-red-100 text-red-800", bg: "bg-red-50" },
+  todo: { label: "К выполнению", icon: Circle, color: "bg-muted text-muted-foreground", bg: "bg-muted/50" },
+  in_progress: { label: "В работе", icon: Clock, color: "bg-blue-500/20 text-blue-600 dark:text-blue-400", bg: "bg-blue-500/10" },
+  review: { label: "На проверке", icon: Eye, color: "bg-yellow-500/20 text-yellow-600 dark:text-yellow-400", bg: "bg-yellow-500/10" },
+  done: { label: "Готово", icon: CheckCircle2, color: "bg-green-500/20 text-green-600 dark:text-green-400", bg: "bg-green-500/10" },
+  cancelled: { label: "Отменено", icon: AlertCircle, color: "bg-red-500/20 text-red-600 dark:text-red-400", bg: "bg-red-500/10" },
 };
 
 const priorityConfig = {
-  low: { label: "Низкий", icon: ArrowDown, color: "text-gray-500" },
+  low: { label: "Низкий", icon: ArrowDown, color: "text-muted-foreground" },
   medium: { label: "Средний", icon: ArrowRight, color: "text-blue-500" },
   high: { label: "Высокий", icon: ArrowUp, color: "text-orange-500" },
   urgent: { label: "Срочный", icon: AlertCircle, color: "text-red-500" },
@@ -164,70 +165,96 @@ export default function Tasks() {
     updateMutation.mutate({ id: taskId, data: updates });
   };
 
-  const TaskCard = ({ task }: { task: Task }) => {
-    const config = statusConfig[task.status as keyof typeof statusConfig];
+  const handleDragEnd = (result: DropResult) => {
+    const { destination, source, draggableId } = result;
+    
+    if (!destination) return;
+    if (destination.droppableId === source.droppableId && destination.index === source.index) return;
+    
+    const newStatus = destination.droppableId;
+    handleStatusChange(draggableId, newStatus);
+    
+    toast({
+      title: "Статус изменён",
+      description: `Задача перемещена в "${statusConfig[newStatus as keyof typeof statusConfig]?.label}"`,
+    });
+  };
+
+  const DraggableTaskCard = ({ task, index }: { task: Task; index: number }) => {
     const priorityConf = priorityConfig[task.priority as keyof typeof priorityConfig];
     const isOverdue = task.dueDate && isPast(new Date(task.dueDate)) && task.status !== "done";
     const assigneeName = getUserName(task.assigneeId);
 
     return (
-      <Card 
-        className={`mb-3 hover:shadow-md transition-all cursor-pointer ${isOverdue ? 'border-red-300' : ''}`}
-        data-testid={`task-card-${task.id}`}
-      >
-        <CardContent className="p-4">
-          <div className="flex items-start justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <priorityConf.icon className={`w-4 h-4 ${priorityConf.color}`} />
-              <span className="text-xs text-gray-500">{priorityConf.label}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              {task.category && (
-                <Badge variant="outline" className="text-xs">
-                  {categoryOptions.find(c => c.value === task.category)?.label || task.category}
-                </Badge>
-              )}
-              <Button 
-                variant="ghost" 
-                size="sm"
-                onClick={() => setSelectedTask(task)}
-                data-testid={`task-edit-${task.id}`}
-              >
-                <MoreVertical className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-          
-          <h4 className="font-medium text-gray-900 mb-2 line-clamp-2">{task.title}</h4>
-          
-          {task.description && (
-            <p className="text-sm text-gray-600 mb-3 line-clamp-2">{task.description}</p>
-          )}
-          
-          <div className="flex items-center justify-between text-xs text-gray-500">
-            <div className="flex items-center gap-3">
-              {task.dueDate && (
-                <div className={`flex items-center gap-1 ${isOverdue ? 'text-red-500' : ''}`}>
-                  <Calendar className="w-3 h-3" />
-                  {format(new Date(task.dueDate), "d MMM", { locale: ru })}
+      <Draggable draggableId={task.id} index={index}>
+        {(provided, snapshot) => (
+          <div
+            ref={provided.innerRef}
+            {...provided.draggableProps}
+            {...provided.dragHandleProps}
+            className={`mb-3 cursor-grab active:cursor-grabbing ${snapshot.isDragging ? 'rotate-2 scale-105' : ''}`}
+          >
+            <Card 
+              className={`hover:shadow-md transition-all ${isOverdue ? 'border-red-300' : ''} ${snapshot.isDragging ? 'shadow-lg ring-2 ring-primary' : ''}`}
+              data-testid={`task-card-${task.id}`}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <GripVertical className="w-4 h-4 text-muted-foreground" />
+                    <priorityConf.icon className={`w-4 h-4 ${priorityConf.color}`} />
+                    <span className="text-xs text-muted-foreground">{priorityConf.label}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {task.category && (
+                      <Badge variant="outline" className="text-xs">
+                        {categoryOptions.find(c => c.value === task.category)?.label || task.category}
+                      </Badge>
+                    )}
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => setSelectedTask(task)}
+                      data-testid={`task-edit-${task.id}`}
+                    >
+                      <MoreVertical className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
-              )}
-            </div>
-            
-            {assigneeName && (
-              <div className="flex items-center gap-1">
-                <Avatar className="w-5 h-5">
-                  <AvatarImage src={getUserAvatar(task.assigneeId) || undefined} />
-                  <AvatarFallback className="text-[8px]">
-                    {assigneeName.split(' ').map(n => n[0]).join('')}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="truncate max-w-[80px]">{assigneeName}</span>
-              </div>
-            )}
+                
+                <h4 className="font-medium text-foreground mb-2 line-clamp-2">{task.title}</h4>
+                
+                {task.description && (
+                  <p className="text-sm text-muted-foreground mb-3 line-clamp-2">{task.description}</p>
+                )}
+                
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <div className="flex items-center gap-3">
+                    {task.dueDate && (
+                      <div className={`flex items-center gap-1 ${isOverdue ? 'text-red-500' : ''}`}>
+                        <Calendar className="w-3 h-3" />
+                        {format(new Date(task.dueDate), "d MMM", { locale: ru })}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {assigneeName && (
+                    <div className="flex items-center gap-1">
+                      <Avatar className="w-5 h-5">
+                        <AvatarImage src={getUserAvatar(task.assigneeId) || undefined} />
+                        <AvatarFallback className="text-[8px]">
+                          {assigneeName.split(' ').map(n => n[0]).join('')}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="truncate max-w-[80px]">{assigneeName}</span>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </div>
-        </CardContent>
-      </Card>
+        )}
+      </Draggable>
     );
   };
 
@@ -245,16 +272,27 @@ export default function Tasks() {
           </div>
         </div>
         
-        <div className="space-y-2 min-h-[200px]">
-          {columnTasks.map(task => (
-            <TaskCard key={task.id} task={task} />
-          ))}
-          {columnTasks.length === 0 && (
-            <div className="text-center py-8 text-gray-400 text-sm">
-              Нет задач
+        <Droppable droppableId={status}>
+          {(provided, snapshot) => (
+            <div
+              ref={provided.innerRef}
+              {...provided.droppableProps}
+              className={`space-y-2 min-h-[200px] transition-colors rounded-lg ${
+                snapshot.isDraggingOver ? 'bg-primary/10 ring-2 ring-primary ring-dashed' : ''
+              }`}
+            >
+              {columnTasks.map((task, index) => (
+                <DraggableTaskCard key={task.id} task={task} index={index} />
+              ))}
+              {provided.placeholder}
+              {columnTasks.length === 0 && !snapshot.isDraggingOver && (
+                <div className="text-center py-8 text-muted-foreground text-sm">
+                  Нет задач
+                </div>
+              )}
             </div>
           )}
-        </div>
+        </Droppable>
       </div>
     );
   };
@@ -270,7 +308,7 @@ export default function Tasks() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <h2 className="text-2xl font-semibold text-gray-900">Таск-менеджер</h2>
+        <h2 className="text-2xl font-semibold text-foreground">Таск-менеджер</h2>
         <div className="flex items-center gap-2">
           <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as "kanban" | "list")}>
             <TabsList>
@@ -456,7 +494,7 @@ export default function Tasks() {
         <CardContent className="py-4">
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Поиск задач..."
                 value={searchTerm}
@@ -493,15 +531,17 @@ export default function Tasks() {
 
       {/* Kanban Board */}
       {viewMode === "kanban" && (
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {["todo", "in_progress", "review", "done"].map(status => (
-            <KanbanColumn 
-              key={status} 
-              status={status} 
-              tasks={tasksByStatus[status as keyof typeof tasksByStatus]} 
-            />
-          ))}
-        </div>
+        <DragDropContext onDragEnd={handleDragEnd}>
+          <div className="flex gap-4 overflow-x-auto pb-4">
+            {["todo", "in_progress", "review", "done"].map(status => (
+              <KanbanColumn 
+                key={status} 
+                status={status} 
+                tasks={tasksByStatus[status as keyof typeof tasksByStatus]} 
+              />
+            ))}
+          </div>
+        </DragDropContext>
       )}
 
       {/* List View */}
@@ -510,7 +550,7 @@ export default function Tasks() {
           <CardContent className="p-0">
             <div className="divide-y">
               {filteredTasks.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
+                <div className="text-center py-12 text-muted-foreground">
                   Задачи не найдены
                 </div>
               ) : (
@@ -522,15 +562,15 @@ export default function Tasks() {
                   return (
                     <div 
                       key={task.id} 
-                      className="flex items-center justify-between p-4 hover:bg-gray-50"
+                      className="flex items-center justify-between p-4 hover:bg-muted/50"
                       data-testid={`task-row-${task.id}`}
                     >
                       <div className="flex items-center gap-4 flex-1 min-w-0">
                         <priorityConf.icon className={`w-5 h-5 flex-shrink-0 ${priorityConf.color}`} />
                         <div className="min-w-0 flex-1">
-                          <h4 className="font-medium text-gray-900 truncate">{task.title}</h4>
+                          <h4 className="font-medium text-foreground truncate">{task.title}</h4>
                           {task.description && (
-                            <p className="text-sm text-gray-500 truncate">{task.description}</p>
+                            <p className="text-sm text-muted-foreground truncate">{task.description}</p>
                           )}
                         </div>
                       </div>
@@ -546,12 +586,12 @@ export default function Tasks() {
                                 {assigneeName.split(' ').map(n => n[0]).join('')}
                               </AvatarFallback>
                             </Avatar>
-                            <span className="text-sm text-gray-600 hidden md:inline">{assigneeName}</span>
+                            <span className="text-sm text-muted-foreground hidden md:inline">{assigneeName}</span>
                           </div>
                         )}
                         
                         {task.dueDate && (
-                          <span className="text-sm text-gray-500 hidden lg:inline">
+                          <span className="text-sm text-muted-foreground hidden lg:inline">
                             {format(new Date(task.dueDate), "d MMM", { locale: ru })}
                           </span>
                         )}
@@ -598,13 +638,13 @@ export default function Tasks() {
               <div>
                 <h3 className="text-lg font-semibold">{selectedTask.title}</h3>
                 {selectedTask.description && (
-                  <p className="text-gray-600 mt-2">{selectedTask.description}</p>
+                  <p className="text-muted-foreground mt-2">{selectedTask.description}</p>
                 )}
               </div>
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm text-gray-500">Статус</label>
+                  <label className="text-sm text-muted-foreground">Статус</label>
                   <Select 
                     value={selectedTask.status} 
                     onValueChange={(value) => {
@@ -624,19 +664,19 @@ export default function Tasks() {
                 </div>
                 
                 <div>
-                  <label className="text-sm text-gray-500">Приоритет</label>
+                  <label className="text-sm text-muted-foreground">Приоритет</label>
                   <p className="font-medium">
                     {priorityConfig[selectedTask.priority as keyof typeof priorityConfig]?.label}
                   </p>
                 </div>
                 
                 <div>
-                  <label className="text-sm text-gray-500">Исполнитель</label>
+                  <label className="text-sm text-muted-foreground">Исполнитель</label>
                   <p className="font-medium">{getUserName(selectedTask.assigneeId) || "Не назначен"}</p>
                 </div>
                 
                 <div>
-                  <label className="text-sm text-gray-500">Дедлайн</label>
+                  <label className="text-sm text-muted-foreground">Дедлайн</label>
                   <p className="font-medium">
                     {selectedTask.dueDate 
                       ? format(new Date(selectedTask.dueDate), "d MMMM yyyy, HH:mm", { locale: ru })

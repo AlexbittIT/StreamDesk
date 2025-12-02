@@ -123,6 +123,15 @@ The application is designed for easy deployment on platforms like Replit, with a
 
 ## Recent Changes: Latest modifications with dates
 
+### December 2, 2025 - Dark Mode and Drag-and-Drop Implementation
+- ✓ Fixed dark mode text visibility across Task Manager page (replaced hardcoded gray colors with theme-aware CSS variables)
+- ✓ Fixed dark mode colors for Calendar event type badges
+- ✓ Implemented drag-and-drop for Task Manager Kanban board using @hello-pangea/dnd library
+- ✓ Tasks can now be dragged between status columns (todo, in_progress, review, done)
+- ✓ Visual feedback during drag with card scaling, rotation, and ring highlight
+- ✓ Toast notifications appear when task status changes via drag
+- ✓ API automatically updates task status when dropped in new column
+
 ### January 25, 2025 - Complete Forms and CRUD Implementation
 - ✓ Created fully functional equipment management with photo uploads, specifications, and inventory tracking
 - ✓ Implemented event creation forms with participant selection and custom location support  
