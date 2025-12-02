@@ -54,30 +54,44 @@ export default function Calendar() {
   };
 
   if (isLoading) {
-    return <div>Загрузка календаря...</div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold text-foreground">Календарь событий</h2>
-        <div className="flex space-x-2">
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">Календарь событий</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-lg bg-slate-100 dark:bg-slate-800 p-1">
+            <Button 
+              variant={viewMode === "week" ? "default" : "ghost"}
+              size="sm"
+              className={viewMode === "week" ? "" : "text-slate-600 dark:text-slate-400"}
+              onClick={() => setViewMode("week")}
+            >
+              Неделя
+            </Button>
+            <Button 
+              variant={viewMode === "day" ? "default" : "ghost"}
+              size="sm"
+              className={viewMode === "day" ? "" : "text-slate-600 dark:text-slate-400"}
+              onClick={() => setViewMode("day")}
+            >
+              День
+            </Button>
+          </div>
           <Button 
-            variant={viewMode === "week" ? "default" : "outline"}
-            onClick={() => setViewMode("week")}
+            className="bg-primary hover:bg-primary/90 text-white shadow-sm"
+            onClick={() => {
+              setSelectedEvent(null);
+              setIsFormOpen(true);
+            }}
           >
-            Неделя
-          </Button>
-          <Button 
-            variant={viewMode === "day" ? "default" : "outline"}
-            onClick={() => setViewMode("day")}
-          >
-            День
-          </Button>
-          <Button onClick={() => {
-            setSelectedEvent(null);
-            setIsFormOpen(true);
-          }}>
             <Plus className="w-4 h-4 mr-2" />
             Новое событие
           </Button>
@@ -86,89 +100,94 @@ export default function Calendar() {
 
       {viewMode === "week" ? (
         <div className="space-y-4">
-          {/* Week Header */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <CalendarIcon className="w-5 h-5 mr-2" />
-                  {format(weekStart, "d MMMM", { locale: ru })} - {format(weekEnd, "d MMMM yyyy", { locale: ru })}
-                </div>
-                <div className="flex space-x-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => setSelectedDate(new Date(selectedDate.getTime() - 7 * 24 * 60 * 60 * 1000))}
-                  >
-                    ← Пред
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => setSelectedDate(new Date())}
-                  >
-                    Сегодня
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => setSelectedDate(new Date(selectedDate.getTime() + 7 * 24 * 60 * 60 * 1000))}
-                  >
-                    След →
-                  </Button>
-                </div>
-              </CardTitle>
-            </CardHeader>
-          </Card>
+          {/* Week Navigation */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
+              <CalendarIcon className="w-5 h-5 text-primary" />
+              <span className="font-semibold">
+                {format(weekStart, "d MMMM", { locale: ru })} - {format(weekEnd, "d MMMM yyyy", { locale: ru })}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                size="sm"
+                className="border-slate-300 dark:border-slate-600"
+                onClick={() => setSelectedDate(new Date(selectedDate.getTime() - 7 * 24 * 60 * 60 * 1000))}
+              >
+                ← Пред
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm"
+                className="border-slate-300 dark:border-slate-600"
+                onClick={() => setSelectedDate(new Date())}
+              >
+                Сегодня
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm"
+                className="border-slate-300 dark:border-slate-600"
+                onClick={() => setSelectedDate(new Date(selectedDate.getTime() + 7 * 24 * 60 * 60 * 1000))}
+              >
+                След →
+              </Button>
+            </div>
+          </div>
 
           {/* Week View */}
-          <div className="grid grid-cols-7 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
             {weekDays.map((day, index) => {
               const dayEvents = getEventsForDate(day);
               const isToday = isSameDay(day, new Date());
               
               return (
-                <Card key={index} className={`min-h-[300px] ${isToday ? 'ring-2 ring-primary' : ''}`}>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium">
+                <div 
+                  key={index} 
+                  className={`
+                    min-h-[180px] rounded-xl p-3
+                    bg-white dark:bg-slate-800/90
+                    border border-slate-200 dark:border-slate-700
+                    ${isToday ? 'ring-2 ring-primary shadow-md' : ''}
+                    overflow-hidden
+                  `}
+                >
+                  {/* Day Header */}
+                  <div className="mb-2 pb-2 border-b border-slate-100 dark:border-slate-700">
+                    <div className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">
                       {format(day, "EEE", { locale: ru })}
-                      <div className={`text-lg ${isToday ? 'text-primary font-bold' : ''}`}>
-                        {format(day, "d")}
-                      </div>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {dayEvents.map((event: any) => (
-                      <div
-                        key={event.id}
-                        className="p-2 rounded border-l-4 border-primary bg-primary/5 cursor-pointer hover:bg-primary/10 transition-colors"
-                        onClick={() => {
-                          setSelectedEvent(event);
-                          setIsFormOpen(true);
-                        }}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{event.title}</p>
-                            <div className="flex items-center text-xs text-muted-foreground mt-1">
-                              <Clock className="w-3 h-3 mr-1" />
-                              {format(new Date(event.startTime), "HH:mm")}
-                            </div>
-                            {event.location && (
-                              <div className="flex items-center text-xs text-muted-foreground mt-1">
-                                <MapPin className="w-3 h-3 mr-1" />
-                                {event.location}
-                              </div>
-                            )}
+                    </div>
+                    <div className={`text-xl font-bold ${isToday ? 'text-primary' : 'text-slate-900 dark:text-white'}`}>
+                      {format(day, "d")}
+                    </div>
+                  </div>
+                  
+                  {/* Events */}
+                  <div className="space-y-1.5 overflow-y-auto max-h-[120px]">
+                    {dayEvents.length === 0 ? (
+                      <p className="text-xs text-slate-400 dark:text-slate-500 text-center py-2">Нет событий</p>
+                    ) : (
+                      dayEvents.map((event: any) => (
+                        <div
+                          key={event.id}
+                          className="p-2 rounded-lg bg-slate-50 dark:bg-slate-700/50 border-l-3 border-primary cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                          onClick={() => {
+                            setSelectedEvent(event);
+                            setIsFormOpen(true);
+                          }}
+                          style={{ borderLeftWidth: '3px' }}
+                        >
+                          <p className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">{event.title}</p>
+                          <div className="flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            <Clock className="w-2.5 h-2.5" />
+                            {format(new Date(event.startTime), "HH:mm")}
                           </div>
-                          <Badge className={getEventTypeColor(event.type)}>
-                            {getEventTypeText(event.type)}
-                          </Badge>
                         </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
+                      ))
+                    )}
+                  </div>
+                </div>
               );
             })}
           </div>

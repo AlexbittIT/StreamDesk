@@ -1,19 +1,21 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState, useMemo, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Progress } from "@/components/ui/progress";
 import { 
-  Plus, Search, Filter, CheckCircle2, Clock, AlertCircle, 
-  Circle, User, Calendar, MessageSquare, MoreVertical,
-  ArrowUp, ArrowRight, ArrowDown, Trash2, Edit, Eye, GripVertical
+  Plus, Search, CheckCircle2, Clock, AlertCircle, 
+  Circle, Calendar, MoreVertical, X,
+  ArrowUp, ArrowRight, ArrowDown, Trash2, Eye, GripVertical,
+  Play, Pause, Timer, Users, Paperclip
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -21,7 +23,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertTaskSchema, type Task, type User as UserType } from "@shared/schema";
 import { z } from "zod";
-import { format, formatDistanceToNow, isPast } from "date-fns";
+import { format, formatDistanceToNow, isPast, differenceInDays, differenceInHours, addDays } from "date-fns";
 import { ru } from "date-fns/locale";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
 
@@ -33,18 +35,92 @@ const taskFormSchema = insertTaskSchema.extend({
 type TaskFormData = z.infer<typeof taskFormSchema>;
 
 const statusConfig = {
-  todo: { label: "К выполнению", icon: Circle, color: "bg-muted text-muted-foreground", bg: "bg-muted/50" },
-  in_progress: { label: "В работе", icon: Clock, color: "bg-blue-500/20 text-blue-600 dark:text-blue-400", bg: "bg-blue-500/10" },
-  review: { label: "На проверке", icon: Eye, color: "bg-yellow-500/20 text-yellow-600 dark:text-yellow-400", bg: "bg-yellow-500/10" },
-  done: { label: "Готово", icon: CheckCircle2, color: "bg-green-500/20 text-green-600 dark:text-green-400", bg: "bg-green-500/10" },
-  cancelled: { label: "Отменено", icon: AlertCircle, color: "bg-red-500/20 text-red-600 dark:text-red-400", bg: "bg-red-500/10" },
+  todo: { 
+    label: "К выполнению", 
+    icon: Circle, 
+    color: "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300", 
+    bg: "bg-slate-50 dark:bg-slate-900/50",
+    border: "border-slate-200 dark:border-slate-700"
+  },
+  in_progress: { 
+    label: "В работе", 
+    icon: Play, 
+    color: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300", 
+    bg: "bg-blue-50/50 dark:bg-blue-950/30",
+    border: "border-blue-200 dark:border-blue-800"
+  },
+  review: { 
+    label: "На проверке", 
+    icon: Eye, 
+    color: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300", 
+    bg: "bg-amber-50/50 dark:bg-amber-950/30",
+    border: "border-amber-200 dark:border-amber-800"
+  },
+  done: { 
+    label: "Готово", 
+    icon: CheckCircle2, 
+    color: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300", 
+    bg: "bg-emerald-50/50 dark:bg-emerald-950/30",
+    border: "border-emerald-200 dark:border-emerald-800"
+  },
+  cancelled: { 
+    label: "Отменено", 
+    icon: X, 
+    color: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300", 
+    bg: "bg-red-50/50 dark:bg-red-950/30",
+    border: "border-red-200 dark:border-red-800"
+  },
 };
 
 const priorityConfig = {
-  low: { label: "Низкий", icon: ArrowDown, color: "text-muted-foreground" },
-  medium: { label: "Средний", icon: ArrowRight, color: "text-blue-500" },
-  high: { label: "Высокий", icon: ArrowUp, color: "text-orange-500" },
-  urgent: { label: "Срочный", icon: AlertCircle, color: "text-red-500" },
+  low: { label: "Низкий", icon: ArrowDown, color: "text-slate-500 dark:text-slate-400", dot: "bg-slate-400" },
+  medium: { label: "Средний", icon: ArrowRight, color: "text-blue-500 dark:text-blue-400", dot: "bg-blue-500" },
+  high: { label: "Высокий", icon: ArrowUp, color: "text-orange-500 dark:text-orange-400", dot: "bg-orange-500" },
+  urgent: { label: "Срочный", icon: AlertCircle, color: "text-red-500 dark:text-red-400", dot: "bg-red-500" },
+};
+
+const getDeadlineInfo = (dueDate: Date | string | null, startDate?: Date | string | null) => {
+  if (!dueDate) return null;
+  
+  const due = new Date(dueDate);
+  const now = new Date();
+  const start = startDate ? new Date(startDate) : addDays(now, -7);
+  
+  const totalTime = due.getTime() - start.getTime();
+  const elapsed = now.getTime() - start.getTime();
+  const progress = Math.min(100, Math.max(0, (elapsed / totalTime) * 100));
+  
+  const hoursLeft = differenceInHours(due, now);
+  const daysLeft = differenceInDays(due, now);
+  const isOverdue = isPast(due);
+  
+  let color = "bg-emerald-500";
+  let textColor = "text-emerald-600 dark:text-emerald-400";
+  
+  if (isOverdue) {
+    color = "bg-red-500";
+    textColor = "text-red-600 dark:text-red-400";
+  } else if (hoursLeft < 24) {
+    color = "bg-red-500";
+    textColor = "text-red-600 dark:text-red-400";
+  } else if (daysLeft < 3) {
+    color = "bg-amber-500";
+    textColor = "text-amber-600 dark:text-amber-400";
+  } else if (daysLeft < 7) {
+    color = "bg-blue-500";
+    textColor = "text-blue-600 dark:text-blue-400";
+  }
+  
+  let label = "";
+  if (isOverdue) {
+    label = `Просрочено на ${Math.abs(daysLeft)} дн.`;
+  } else if (hoursLeft < 24) {
+    label = `${hoursLeft} ч.`;
+  } else {
+    label = `${daysLeft} дн.`;
+  }
+  
+  return { progress, color, textColor, label, isOverdue };
 };
 
 const categoryOptions = [
@@ -55,6 +131,15 @@ const categoryOptions = [
   { value: "other", label: "Другое" },
 ];
 
+function getCurrentUser() {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(localStorage.getItem('streamstudio_user') || '{}');
+  } catch {
+    return {};
+  }
+}
+
 export default function Tasks() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -64,7 +149,11 @@ export default function Tasks() {
   const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
   const { toast } = useToast();
 
-  const currentUser = JSON.parse(localStorage.getItem('streamstudio_user') || '{}');
+  const [currentUser, setCurrentUser] = useState<any>({});
+  
+  useEffect(() => {
+    setCurrentUser(getCurrentUser());
+  }, []);
 
   const { data: tasks = [], isLoading } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
@@ -172,6 +261,18 @@ export default function Tasks() {
     if (destination.droppableId === source.droppableId && destination.index === source.index) return;
     
     const newStatus = destination.droppableId;
+    
+    // Optimistic update - immediately update UI
+    queryClient.setQueryData<Task[]>(["/api/tasks"], (old) => {
+      if (!old) return old;
+      return old.map(task => 
+        task.id === draggableId 
+          ? { ...task, status: newStatus, completedAt: newStatus === "done" ? new Date() : task.completedAt }
+          : task
+      );
+    });
+    
+    // Then sync with server
     handleStatusChange(draggableId, newStatus);
     
     toast({
@@ -182,7 +283,9 @@ export default function Tasks() {
 
   const DraggableTaskCard = ({ task, index }: { task: Task; index: number }) => {
     const priorityConf = priorityConfig[task.priority as keyof typeof priorityConfig];
-    const isOverdue = task.dueDate && isPast(new Date(task.dueDate)) && task.status !== "done";
+    const deadlineInfo = task.dueDate && task.status !== "done" 
+      ? getDeadlineInfo(task.dueDate, task.startDate) 
+      : null;
     const assigneeName = getUserName(task.assigneeId);
 
     return (
@@ -192,66 +295,106 @@ export default function Tasks() {
             ref={provided.innerRef}
             {...provided.draggableProps}
             {...provided.dragHandleProps}
-            className={`mb-3 cursor-grab active:cursor-grabbing ${snapshot.isDragging ? 'rotate-2 scale-105' : ''}`}
+            className={`mb-2 cursor-grab active:cursor-grabbing transition-transform ${snapshot.isDragging ? 'rotate-1 scale-[1.02]' : ''}`}
           >
-            <Card 
-              className={`hover:shadow-md transition-all ${isOverdue ? 'border-red-300' : ''} ${snapshot.isDragging ? 'shadow-lg ring-2 ring-primary' : ''}`}
+            <div
+              className={`
+                rounded-lg p-3 transition-all
+                bg-white dark:bg-slate-800/90
+                border border-slate-200 dark:border-slate-700
+                hover:border-slate-300 dark:hover:border-slate-600
+                hover:shadow-md dark:hover:shadow-lg dark:hover:shadow-black/20
+                ${snapshot.isDragging ? 'shadow-xl ring-2 ring-primary/50 dark:ring-primary/30' : ''}
+                ${deadlineInfo?.isOverdue ? 'border-l-4 border-l-red-500' : ''}
+              `}
               data-testid={`task-card-${task.id}`}
             >
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <GripVertical className="w-4 h-4 text-muted-foreground" />
-                    <priorityConf.icon className={`w-4 h-4 ${priorityConf.color}`} />
-                    <span className="text-xs text-muted-foreground">{priorityConf.label}</span>
+              {/* Priority indicator & Category */}
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${priorityConf.dot}`} />
+                  <span className={`text-xs font-medium ${priorityConf.color}`}>{priorityConf.label}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  {task.category && (
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400">
+                      {categoryOptions.find(c => c.value === task.category)?.label || task.category}
+                    </Badge>
+                  )}
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    className="h-6 w-6 p-0 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    onClick={() => setSelectedTask(task)}
+                    data-testid={`task-edit-${task.id}`}
+                  >
+                    <MoreVertical className="w-3.5 h-3.5 text-slate-500" />
+                  </Button>
+                </div>
+              </div>
+              
+              {/* Title */}
+              <h4 className="font-medium text-slate-900 dark:text-slate-100 mb-1.5 line-clamp-2 text-sm leading-snug">
+                {task.title}
+              </h4>
+              
+              {/* Description */}
+              {task.description && (
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 line-clamp-2 leading-relaxed">
+                  {task.description}
+                </p>
+              )}
+              
+              {/* Deadline progress bar */}
+              {deadlineInfo && (
+                <div className="mb-2">
+                  <div className="flex items-center justify-between text-[10px] mb-1">
+                    <div className={`flex items-center gap-1 ${deadlineInfo.textColor}`}>
+                      <Timer className="w-3 h-3" />
+                      <span className="font-medium">{deadlineInfo.label}</span>
+                    </div>
+                    <span className="text-slate-400 dark:text-slate-500">
+                      {format(new Date(task.dueDate!), "d MMM", { locale: ru })}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-1">
-                    {task.category && (
-                      <Badge variant="outline" className="text-xs">
-                        {categoryOptions.find(c => c.value === task.category)?.label || task.category}
-                      </Badge>
-                    )}
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={() => setSelectedTask(task)}
-                      data-testid={`task-edit-${task.id}`}
-                    >
-                      <MoreVertical className="w-4 h-4" />
-                    </Button>
+                  <div className="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full rounded-full transition-all ${deadlineInfo.color}`}
+                      style={{ width: `${Math.min(deadlineInfo.progress, 100)}%` }}
+                    />
                   </div>
                 </div>
-                
-                <h4 className="font-medium text-foreground mb-2 line-clamp-2">{task.title}</h4>
-                
-                {task.description && (
-                  <p className="text-sm text-muted-foreground mb-3 line-clamp-2">{task.description}</p>
-                )}
-                
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <div className="flex items-center gap-3">
-                    {task.dueDate && (
-                      <div className={`flex items-center gap-1 ${isOverdue ? 'text-red-500' : ''}`}>
-                        <Calendar className="w-3 h-3" />
-                        {format(new Date(task.dueDate), "d MMM", { locale: ru })}
-                      </div>
-                    )}
-                  </div>
-                  
-                  {assigneeName && (
-                    <div className="flex items-center gap-1">
-                      <Avatar className="w-5 h-5">
+              )}
+              
+              {/* Footer: Assignee & Actions */}
+              <div className="flex items-center justify-between text-xs pt-1.5 border-t border-slate-100 dark:border-slate-700">
+                <div className="flex items-center gap-2">
+                  {assigneeName ? (
+                    <div className="flex items-center gap-1.5">
+                      <Avatar className="w-5 h-5 border border-slate-200 dark:border-slate-600">
                         <AvatarImage src={getUserAvatar(task.assigneeId) || undefined} />
-                        <AvatarFallback className="text-[8px]">
+                        <AvatarFallback className="text-[9px] bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
                           {assigneeName.split(' ').map(n => n[0]).join('')}
                         </AvatarFallback>
                       </Avatar>
-                      <span className="truncate max-w-[80px]">{assigneeName}</span>
+                      <span className="text-slate-600 dark:text-slate-400 truncate max-w-[70px]">{assigneeName}</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 text-slate-400 dark:text-slate-500">
+                      <Users className="w-3.5 h-3.5" />
+                      <span>Не назначено</span>
                     </div>
                   )}
                 </div>
-              </CardContent>
-            </Card>
+                
+                {!deadlineInfo && task.dueDate && (
+                  <div className="flex items-center gap-1 text-slate-400 dark:text-slate-500">
+                    <Calendar className="w-3 h-3" />
+                    {format(new Date(task.dueDate), "d MMM", { locale: ru })}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </Draggable>
@@ -263,31 +406,55 @@ export default function Tasks() {
     const StatusIcon = config.icon;
 
     return (
-      <div className={`flex-1 min-w-[280px] max-w-[350px] rounded-lg p-3 ${config.bg}`}>
-        <div className="flex items-center justify-between mb-4">
+      <div className={`
+        flex-1 min-w-[260px] max-w-[320px] rounded-xl
+        bg-slate-50 dark:bg-slate-900/50
+        border border-slate-200 dark:border-slate-800
+        flex flex-col max-h-[calc(100vh-200px)]
+      `}>
+        {/* Column Header */}
+        <div className={`
+          flex items-center justify-between p-3
+          border-b border-slate-200 dark:border-slate-800
+          ${config.bg} rounded-t-xl
+        `}>
           <div className="flex items-center gap-2">
-            <StatusIcon className="w-4 h-4" />
-            <span className="font-medium">{config.label}</span>
-            <Badge variant="secondary" className="ml-1">{columnTasks.length}</Badge>
+            <div className={`p-1.5 rounded-md ${config.color}`}>
+              <StatusIcon className="w-3.5 h-3.5" />
+            </div>
+            <span className="font-semibold text-sm text-slate-700 dark:text-slate-200">{config.label}</span>
           </div>
+          <Badge 
+            className="h-5 min-w-5 flex items-center justify-center text-xs font-semibold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
+          >
+            {columnTasks.length}
+          </Badge>
         </div>
         
+        {/* Scrollable Task List */}
         <Droppable droppableId={status}>
           {(provided, snapshot) => (
             <div
               ref={provided.innerRef}
               {...provided.droppableProps}
-              className={`space-y-2 min-h-[200px] transition-colors rounded-lg ${
-                snapshot.isDraggingOver ? 'bg-primary/10 ring-2 ring-primary ring-dashed' : ''
-              }`}
+              className={`
+                flex-1 overflow-y-auto p-2 space-y-0 min-h-[150px]
+                transition-all duration-200
+                ${snapshot.isDraggingOver 
+                  ? 'bg-primary/5 dark:bg-primary/10 ring-2 ring-inset ring-primary/30' 
+                  : ''
+                }
+              `}
+              style={{ maxHeight: 'calc(100vh - 280px)' }}
             >
               {columnTasks.map((task, index) => (
                 <DraggableTaskCard key={task.id} task={task} index={index} />
               ))}
               {provided.placeholder}
               {columnTasks.length === 0 && !snapshot.isDraggingOver && (
-                <div className="text-center py-8 text-muted-foreground text-sm">
-                  Нет задач
+                <div className="flex flex-col items-center justify-center py-8 text-slate-400 dark:text-slate-600">
+                  <Circle className="w-8 h-8 mb-2 opacity-50" />
+                  <span className="text-sm">Нет задач</span>
                 </div>
               )}
             </div>
@@ -306,23 +473,28 @@ export default function Tasks() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <h2 className="text-2xl font-semibold text-foreground">Таск-менеджер</h2>
-        <div className="flex items-center gap-2">
-          <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as "kanban" | "list")}>
-            <TabsList>
-              <TabsTrigger value="kanban">Канбан</TabsTrigger>
-              <TabsTrigger value="list">Список</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-            <DialogTrigger asChild>
-              <Button data-testid="button-create-task">
-                <Plus className="w-4 h-4 mr-2" />
-                Новая задача
-              </Button>
-            </DialogTrigger>
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white">Таск-менеджер</h2>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as "kanban" | "list")} className="hidden sm:block">
+              <TabsList className="bg-slate-100 dark:bg-slate-800">
+                <TabsTrigger value="kanban" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700">Канбан</TabsTrigger>
+                <TabsTrigger value="list" className="data-[state=active]:bg-white dark:data-[state=active]:bg-slate-700">Список</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
+              <DialogTrigger asChild>
+                <Button 
+                  className="bg-primary hover:bg-primary/90 text-white shadow-sm flex-1 sm:flex-none"
+                  data-testid="button-create-task"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Новая задача
+                </Button>
+              </DialogTrigger>
             <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Создать задачу</DialogTitle>
@@ -488,51 +660,48 @@ export default function Tasks() {
           </Dialog>
         </div>
       </div>
+      </div>
 
       {/* Filters */}
-      <Card>
-        <CardContent className="py-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Поиск задач..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-                data-testid="input-search-tasks"
-              />
-            </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-full sm:w-[180px]" data-testid="filter-status">
-                <SelectValue placeholder="Статус" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Все статусы</SelectItem>
-                {Object.entries(statusConfig).map(([key, conf]) => (
-                  <SelectItem key={key} value={key}>{conf.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-              <SelectTrigger className="w-full sm:w-[180px]" data-testid="filter-priority">
-                <SelectValue placeholder="Приоритет" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Все приоритеты</SelectItem>
-                {Object.entries(priorityConfig).map(([key, conf]) => (
-                  <SelectItem key={key} value={key}>{conf.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="flex flex-col sm:flex-row gap-3 p-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Input
+            placeholder="Поиск задач..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+            data-testid="input-search-tasks"
+          />
+        </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-full sm:w-[160px] bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700" data-testid="filter-status">
+            <SelectValue placeholder="Статус" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все статусы</SelectItem>
+            {Object.entries(statusConfig).map(([key, conf]) => (
+              <SelectItem key={key} value={key}>{conf.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+          <SelectTrigger className="w-full sm:w-[160px] bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700" data-testid="filter-priority">
+            <SelectValue placeholder="Приоритет" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Все приоритеты</SelectItem>
+            {Object.entries(priorityConfig).map(([key, conf]) => (
+              <SelectItem key={key} value={key}>{conf.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
       {/* Kanban Board */}
       {viewMode === "kanban" && (
         <DragDropContext onDragEnd={handleDragEnd}>
-          <div className="flex gap-4 overflow-x-auto pb-4">
+          <div className="flex gap-3 overflow-x-auto pb-4 -mx-2 px-2">
             {["todo", "in_progress", "review", "done"].map(status => (
               <KanbanColumn 
                 key={status} 

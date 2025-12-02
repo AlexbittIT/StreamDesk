@@ -667,21 +667,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Task not found" });
       }
       
-      const task = await storage.updateTask(id, req.body);
+      // Extract userId from request body before updating
+      const { userId, ...updateData } = req.body;
+      
+      const task = await storage.updateTask(id, updateData);
       
       // Create history entry
-      if (req.body.userId) {
-        await storage.createTaskHistory({
-          taskId: id,
-          userId: req.body.userId,
-          action: "updated",
-          oldValue: oldTask,
-          newValue: task
-        });
+      if (userId) {
+        try {
+          await storage.createTaskHistory({
+            taskId: id,
+            userId: userId,
+            action: "updated",
+            oldValue: oldTask,
+            newValue: task
+          });
+        } catch (historyError) {
+          console.error("Error creating task history:", historyError);
+          // Don't fail the update if history creation fails
+        }
       }
       
       res.json(task);
     } catch (error) {
+      console.error("Error updating task:", error);
       res.status(500).json({ message: "Failed to update task" });
     }
   });
