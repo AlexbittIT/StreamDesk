@@ -1001,6 +1001,120 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Computers
+  app.get("/api/computers", async (req, res) => {
+    try {
+      const computers = await storage.getComputers();
+      res.json(computers);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch computers" });
+    }
+  });
+
+  app.post("/api/computers", async (req, res) => {
+    try {
+      const computer = await storage.createComputer(req.body);
+      res.status(201).json(computer);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create computer" });
+    }
+  });
+
+  app.put("/api/computers/:id", async (req, res) => {
+    try {
+      const computer = await storage.updateComputer(req.params.id, req.body);
+      if (!computer) {
+        return res.status(404).json({ message: "Computer not found" });
+      }
+      res.json(computer);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update computer" });
+    }
+  });
+
+  app.delete("/api/computers/:id", async (req, res) => {
+    try {
+      await storage.deleteComputer(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete computer" });
+    }
+  });
+
+  // Projects
+  app.get("/api/projects", async (req, res) => {
+    try {
+      const projects = await storage.getProjects();
+      res.json(projects);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch projects" });
+    }
+  });
+
+  app.post("/api/projects", async (req, res) => {
+    try {
+      const { deadline, ...rest } = req.body;
+      const projectData = {
+        ...rest,
+        deadline: deadline && deadline !== "" ? new Date(deadline) : null,
+      };
+      const project = await storage.createProject(projectData);
+      res.status(201).json(project);
+    } catch (error) {
+      console.error("Error creating project:", error);
+      res.status(500).json({ message: "Failed to create project" });
+    }
+  });
+
+  app.put("/api/projects/:id", async (req, res) => {
+    try {
+      const project = await storage.updateProject(req.params.id, req.body);
+      if (!project) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+      res.json(project);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update project" });
+    }
+  });
+
+  app.delete("/api/projects/:id", async (req, res) => {
+    try {
+      await storage.deleteProject(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete project" });
+    }
+  });
+
+  // Custom Locations
+  app.get("/api/locations", async (req, res) => {
+    try {
+      const locations = await storage.getCustomLocations();
+      res.json(locations);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch locations" });
+    }
+  });
+
+  app.post("/api/locations", async (req, res) => {
+    try {
+      const location = await storage.createCustomLocation(req.body);
+      res.status(201).json(location);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create location" });
+    }
+  });
+
+  app.delete("/api/locations/:id", async (req, res) => {
+    try {
+      await storage.deleteCustomLocation(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete location" });
+    }
+  });
+
   const httpServer = createServer(app);
 
   // WebSocket server for real-time updates

@@ -4,6 +4,7 @@ import {
   users, events, equipment, systems, streams, notifications,
   equipmentReservations, telegramUsers, obsConnections, analyticsEvents,
   eventParticipants, tasks, taskComments, taskHistory, roles,
+  computers, projects, customLocations,
   type User, type InsertUser,
   type Event, type InsertEvent,
   type Equipment, type InsertEquipment,
@@ -18,7 +19,10 @@ import {
   type Task, type InsertTask,
   type TaskComment, type InsertTaskComment,
   type TaskHistory, type InsertTaskHistory,
-  type Role, type InsertRole
+  type Role, type InsertRole,
+  type Computer, type InsertComputer,
+  type Project, type InsertProject,
+  type CustomLocation, type InsertCustomLocation
 } from "@shared/schema";
 import { eq, and, gte, lte, sql, or, isNull } from "drizzle-orm";
 
@@ -129,6 +133,25 @@ export interface IStorage {
   createRole(role: InsertRole): Promise<Role>;
   updateRole(id: string, role: Partial<Role>): Promise<Role | undefined>;
   deleteRole(id: string): Promise<boolean>;
+  
+  // Computers
+  getComputers(): Promise<Computer[]>;
+  getComputerById(id: string): Promise<Computer | undefined>;
+  createComputer(computer: InsertComputer): Promise<Computer>;
+  updateComputer(id: string, computer: Partial<Computer>): Promise<Computer | undefined>;
+  deleteComputer(id: string): Promise<boolean>;
+  
+  // Projects
+  getProjects(): Promise<Project[]>;
+  getProjectById(id: string): Promise<Project | undefined>;
+  createProject(project: InsertProject): Promise<Project>;
+  updateProject(id: string, project: Partial<Project>): Promise<Project | undefined>;
+  deleteProject(id: string): Promise<boolean>;
+  
+  // Custom Locations
+  getCustomLocations(): Promise<CustomLocation[]>;
+  createCustomLocation(location: InsertCustomLocation): Promise<CustomLocation>;
+  deleteCustomLocation(id: string): Promise<boolean>;
 }
 
 export class PostgreSQLStorage implements IStorage {
@@ -531,6 +554,71 @@ export class PostgreSQLStorage implements IStorage {
 
   async deleteRole(id: string): Promise<boolean> {
     const result = await db.delete(roles).where(eq(roles.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Computers
+  async getComputers(): Promise<Computer[]> {
+    return await db.select().from(computers).orderBy(computers.name);
+  }
+
+  async getComputerById(id: string): Promise<Computer | undefined> {
+    const result = await db.select().from(computers).where(eq(computers.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createComputer(insertComputer: InsertComputer): Promise<Computer> {
+    const result = await db.insert(computers).values(insertComputer).returning();
+    return result[0];
+  }
+
+  async updateComputer(id: string, computerData: Partial<Computer>): Promise<Computer | undefined> {
+    const result = await db.update(computers).set(computerData).where(eq(computers.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteComputer(id: string): Promise<boolean> {
+    const result = await db.delete(computers).where(eq(computers.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Projects
+  async getProjects(): Promise<Project[]> {
+    return await db.select().from(projects).orderBy(sql`${projects.createdAt} DESC`);
+  }
+
+  async getProjectById(id: string): Promise<Project | undefined> {
+    const result = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createProject(insertProject: InsertProject): Promise<Project> {
+    const result = await db.insert(projects).values(insertProject).returning();
+    return result[0];
+  }
+
+  async updateProject(id: string, projectData: Partial<Project>): Promise<Project | undefined> {
+    const result = await db.update(projects).set(projectData).where(eq(projects.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteProject(id: string): Promise<boolean> {
+    const result = await db.delete(projects).where(eq(projects.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Custom Locations
+  async getCustomLocations(): Promise<CustomLocation[]> {
+    return await db.select().from(customLocations).orderBy(customLocations.name);
+  }
+
+  async createCustomLocation(insertLocation: InsertCustomLocation): Promise<CustomLocation> {
+    const result = await db.insert(customLocations).values(insertLocation).returning();
+    return result[0];
+  }
+
+  async deleteCustomLocation(id: string): Promise<boolean> {
+    const result = await db.delete(customLocations).where(eq(customLocations.id, id));
     return (result.rowCount ?? 0) > 0;
   }
 }

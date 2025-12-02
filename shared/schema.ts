@@ -197,8 +197,44 @@ export const roles = pgTable("roles", {
   displayName: text("display_name").notNull(),
   description: text("description"),
   permissions: jsonb("permissions").notNull().default('[]'),
-  color: text("color").default("#6B7280"), // цвет для отображения
-  isSystem: boolean("is_system").default(false), // системные роли нельзя удалить
+  color: text("color").default("#6B7280"),
+  isSystem: boolean("is_system").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const computers = pgTable("computers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  location: text("location").notNull(),
+  purpose: text("purpose"),
+  status: text("status").notNull().default("active"),
+  ipAddress: text("ip_address"),
+  components: jsonb("components").default('{}'),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const projects = pgTable("projects", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  client: text("client"),
+  description: text("description"),
+  status: text("status").notNull().default("planning"),
+  category: text("category"),
+  deadline: timestamp("deadline"),
+  assignedTo: varchar("assigned_to").references(() => users.id),
+  devices: jsonb("devices").default('[]'),
+  storageLocation: text("storage_location"),
+  estimatedSize: text("estimated_size"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const customLocations = pgTable("custom_locations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(),
+  description: text("description"),
+  type: text("type").default("storage"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -277,6 +313,21 @@ export const insertRoleSchema = createInsertSchema(roles).omit({
   createdAt: true,
 });
 
+export const insertComputerSchema = createInsertSchema(computers).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertProjectSchema = createInsertSchema(projects).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertCustomLocationSchema = createInsertSchema(customLocations).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -322,6 +373,15 @@ export type InsertTaskHistory = z.infer<typeof insertTaskHistorySchema>;
 
 export type Role = typeof roles.$inferSelect;
 export type InsertRole = z.infer<typeof insertRoleSchema>;
+
+export type Computer = typeof computers.$inferSelect;
+export type InsertComputer = z.infer<typeof insertComputerSchema>;
+
+export type Project = typeof projects.$inferSelect;
+export type InsertProject = z.infer<typeof insertProjectSchema>;
+
+export type CustomLocation = typeof customLocations.$inferSelect;
+export type InsertCustomLocation = z.infer<typeof insertCustomLocationSchema>;
 
 // Константы для разрешений
 export const PERMISSIONS = {

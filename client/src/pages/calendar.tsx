@@ -23,9 +23,14 @@ export default function Calendar() {
   const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd });
 
   const getEventsForDate = (date: Date) => {
-    return (events as any[]).filter((event: any) => 
-      isSameDay(parseISO(event.startDate), date)
-    );
+    return (events as any[]).filter((event: any) => {
+      if (!event.startTime) return false;
+      try {
+        return isSameDay(new Date(event.startTime), date);
+      } catch {
+        return false;
+      }
+    });
   };
 
   const getEventTypeColor = (type: string) => {

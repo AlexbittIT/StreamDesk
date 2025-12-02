@@ -24,32 +24,47 @@
   --ring: hsl(20, 14.3%, 4.1%);
   --radius: 0.5rem;
   
-  /* Custom colors for the stream studio app */
   --surface: hsl(0, 0%, 98%);
   --error: hsl(0, 72%, 51%);
+  
+  --neon-cyan: hsl(180, 100%, 50%);
+  --neon-purple: hsl(280, 100%, 60%);
+  --neon-pink: hsl(320, 100%, 60%);
+  --neon-green: hsl(120, 100%, 50%);
+  --neon-blue: hsl(210, 100%, 60%);
+  --neon-orange: hsl(30, 100%, 50%);
 }
 
 .dark {
-  --background: hsl(240, 10%, 3.9%);
-  --foreground: hsl(0, 0%, 98%);
-  --muted: hsl(240, 3.7%, 15.9%);
-  --muted-foreground: hsl(240, 5%, 64.9%);
-  --popover: hsl(240, 10%, 3.9%);
-  --popover-foreground: hsl(0, 0%, 98%);
-  --card: hsl(240, 10%, 3.9%);
-  --card-foreground: hsl(0, 0%, 98%);
-  --border: hsl(240, 3.7%, 15.9%);
-  --input: hsl(240, 3.7%, 15.9%);
-  --primary: hsl(207, 90%, 54%);
-  --primary-foreground: hsl(211, 100%, 99%);
-  --secondary: hsl(240, 3.7%, 15.9%);
-  --secondary-foreground: hsl(0, 0%, 98%);
-  --accent: hsl(240, 3.7%, 15.9%);
-  --accent-foreground: hsl(0, 0%, 98%);
-  --destructive: hsl(0, 62.8%, 30.6%);
-  --destructive-foreground: hsl(0, 0%, 98%);
-  --ring: hsl(240, 4.9%, 83.9%);
-  --radius: 0.5rem;
+  --background: hsl(222, 47%, 8%);
+  --foreground: hsl(210, 40%, 98%);
+  --muted: hsl(217, 33%, 15%);
+  --muted-foreground: hsl(215, 20%, 55%);
+  --popover: hsl(222, 47%, 10%);
+  --popover-foreground: hsl(210, 40%, 98%);
+  --card: hsl(222, 47%, 10%);
+  --card-foreground: hsl(210, 40%, 98%);
+  --border: hsl(217, 33%, 20%);
+  --input: hsl(217, 33%, 17%);
+  --primary: hsl(210, 100%, 60%);
+  --primary-foreground: hsl(222, 47%, 8%);
+  --secondary: hsl(217, 33%, 17%);
+  --secondary-foreground: hsl(210, 40%, 98%);
+  --accent: hsl(280, 100%, 60%);
+  --accent-foreground: hsl(210, 40%, 98%);
+  --destructive: hsl(0, 62.8%, 50%);
+  --destructive-foreground: hsl(210, 40%, 98%);
+  --ring: hsl(210, 100%, 60%);
+  
+  --surface: hsl(222, 47%, 12%);
+  --error: hsl(0, 72%, 51%);
+  
+  --neon-cyan: hsl(180, 100%, 60%);
+  --neon-purple: hsl(280, 100%, 70%);
+  --neon-pink: hsl(320, 100%, 65%);
+  --neon-green: hsl(120, 100%, 55%);
+  --neon-blue: hsl(210, 100%, 65%);
+  --neon-orange: hsl(30, 100%, 55%);
 }
 
 @layer base {
@@ -68,8 +83,16 @@
     box-shadow: 2px 0 10px rgba(0,0,0,0.1);
   }
   
+  .dark .sidebar-shadow {
+    box-shadow: 2px 0 20px rgba(0,0,0,0.5);
+  }
+  
   .card-shadow {
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+  
+  .dark .card-shadow {
+    box-shadow: 0 2px 15px rgba(0,0,0,0.3);
   }
   
   .card-hover:hover {
@@ -78,6 +101,63 @@
     transition: all 0.2s ease;
   }
   
+  .dark .card-hover:hover {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+
+  .neon-glow {
+    box-shadow: 0 0 5px var(--neon-cyan), 0 0 20px var(--neon-cyan), 0 0 40px var(--neon-cyan);
+  }
+  
+  .neon-glow-purple {
+    box-shadow: 0 0 5px var(--neon-purple), 0 0 20px var(--neon-purple), 0 0 40px var(--neon-purple);
+  }
+  
+  .neon-glow-pink {
+    box-shadow: 0 0 5px var(--neon-pink), 0 0 20px var(--neon-pink);
+  }
+  
+  .neon-glow-green {
+    box-shadow: 0 0 5px var(--neon-green), 0 0 20px var(--neon-green);
+  }
+  
+  .neon-glow-blue {
+    box-shadow: 0 0 5px var(--neon-blue), 0 0 20px var(--neon-blue);
+  }
+  
+  .neon-text-cyan {
+    color: var(--neon-cyan);
+    text-shadow: 0 0 10px var(--neon-cyan), 0 0 20px var(--neon-cyan);
+  }
+  
+  .neon-text-purple {
+    color: var(--neon-purple);
+    text-shadow: 0 0 10px var(--neon-purple), 0 0 20px var(--neon-purple);
+  }
+  
+  .neon-text-pink {
+    color: var(--neon-pink);
+    text-shadow: 0 0 10px var(--neon-pink);
+  }
+
+  .neon-border {
+    border: 1px solid var(--neon-cyan);
+    box-shadow: 0 0 5px var(--neon-cyan), inset 0 0 5px rgba(0, 255, 255, 0.1);
+  }
+  
+  .neon-border-purple {
+    border: 1px solid var(--neon-purple);
+    box-shadow: 0 0 5px var(--neon-purple), inset 0 0 5px rgba(160, 0, 255, 0.1);
+  }
+
+  .gradient-neon {
+    background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple));
+  }
+  
+  .gradient-neon-pink {
+    background: linear-gradient(135deg, var(--neon-pink), var(--neon-purple));
+  }
+
   .status-online {
     animation: pulse-green 2s infinite;
   }
@@ -99,7 +179,6 @@
     background: linear-gradient(90deg, hsl(207, 90%, 54%) var(--progress, 0%), hsl(206, 100%, 97%) var(--progress, 0%));
   }
 
-  /* Mobile-first responsive utilities */
   .mobile-container {
     @apply px-3 sm:px-4 md:px-6;
   }
@@ -120,17 +199,14 @@
     @apply w-full sm:w-auto;
   }
 
-  /* Touch-friendly tap targets for mobile */
   .touch-target {
     @apply min-h-[44px] min-w-[44px];
   }
 
-  /* Overlay for mobile sidebar */
   .sidebar-overlay {
     @apply fixed inset-0 bg-black/50 z-40 lg:hidden transition-opacity;
   }
 
-  /* Hide scrollbar on mobile for horizontal scrolls */
   .hide-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
@@ -139,12 +215,54 @@
     display: none;
   }
 
-  /* Safe area insets for notched devices */
   .safe-area-top {
     padding-top: env(safe-area-inset-top);
   }
   .safe-area-bottom {
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .kanban-column {
+    @apply rounded-xl p-4 min-w-[300px] max-w-[350px];
+    transition: all 0.3s ease;
+  }
+
+  .dark .kanban-column {
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  .task-card {
+    @apply rounded-lg p-4 transition-all duration-200;
+  }
+
+  .dark .task-card {
+    @apply bg-card;
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+  
+  .dark .task-card:hover {
+    border-color: hsl(var(--primary) / 0.5);
+    box-shadow: 0 0 15px rgba(var(--neon-cyan), 0.2);
+  }
+
+  .scheduler-button {
+    @apply relative overflow-hidden;
+    background: linear-gradient(135deg, hsl(280, 100%, 60%), hsl(320, 100%, 60%));
+  }
+
+  .scheduler-button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+    transition: left 0.5s;
+  }
+
+  .scheduler-button:hover::before {
+    left: 100%;
   }
 }
 
@@ -156,4 +274,17 @@
 @keyframes pulse-red {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.7; }
+}
+
+@keyframes neon-pulse {
+  0%, 100% {
+    box-shadow: 0 0 5px var(--neon-cyan), 0 0 20px var(--neon-cyan);
+  }
+  50% {
+    box-shadow: 0 0 10px var(--neon-cyan), 0 0 30px var(--neon-cyan), 0 0 50px var(--neon-cyan);
+  }
+}
+
+.animate-neon-pulse {
+  animation: neon-pulse 2s ease-in-out infinite;
 }

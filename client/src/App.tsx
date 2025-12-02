@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useState, useEffect } from "react";
+import { ThemeProvider } from "@/components/theme-provider";
 
 import Dashboard from "@/pages/dashboard";
 import Calendar from "@/pages/calendar";
@@ -17,6 +18,8 @@ import Tasks from "@/pages/tasks";
 import Admin from "@/pages/admin";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
+import Computers from "@/pages/computers";
+import Projects from "@/pages/projects";
 
 import Sidebar from "@/components/layout/sidebar";
 import Header from "@/components/layout/header";
@@ -27,6 +30,8 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/calendar" component={Calendar} />
       <Route path="/equipment" component={Equipment} />
+      <Route path="/computers" component={Computers} />
+      <Route path="/projects" component={Projects} />
       <Route path="/monitoring" component={Monitoring} />
       <Route path="/streams" component={Streams} />
       <Route path="/servers" component={Servers} />
@@ -73,47 +78,51 @@ function App() {
 
   if (!user) {
     return (
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <Login onLogin={handleLogin} />
-          <Toaster />
-        </TooltipProvider>
-      </QueryClientProvider>
+      <ThemeProvider defaultTheme="system" storageKey="streamstudio-theme">
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <Login onLogin={handleLogin} />
+            <Toaster />
+          </TooltipProvider>
+        </QueryClientProvider>
+      </ThemeProvider>
     );
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <div className="min-h-screen bg-gray-50 font-inter">
-          {mobileNavOpen && (
-            <div 
-              className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
-              onClick={() => setMobileNavOpen(false)}
-            />
-          )}
-          
-          <Sidebar 
-            user={user} 
-            isOpen={mobileNavOpen}
-            onClose={() => setMobileNavOpen(false)}
-            onLogout={handleLogout}
-          />
-          
-          <div className="lg:ml-72">
-            <Header 
-              onMobileMenuClick={() => setMobileNavOpen(true)}
-              user={user}
+    <ThemeProvider defaultTheme="system" storageKey="streamstudio-theme">
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <div className="min-h-screen bg-background font-inter transition-colors duration-300">
+            {mobileNavOpen && (
+              <div 
+                className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+                onClick={() => setMobileNavOpen(false)}
+              />
+            )}
+            
+            <Sidebar 
+              user={user} 
+              isOpen={mobileNavOpen}
+              onClose={() => setMobileNavOpen(false)}
               onLogout={handleLogout}
             />
-            <main className="p-4 sm:p-6">
-              <Router />
-            </main>
+            
+            <div className="lg:ml-72">
+              <Header 
+                onMobileMenuClick={() => setMobileNavOpen(true)}
+                user={user}
+                onLogout={handleLogout}
+              />
+              <main className="p-4 sm:p-6">
+                <Router />
+              </main>
+            </div>
           </div>
-        </div>
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
 

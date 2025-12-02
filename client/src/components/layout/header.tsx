@@ -10,8 +10,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Bell, Menu, Settings, LogOut, User } from "lucide-react";
+import { Bell, Menu, Settings, LogOut } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 interface HeaderProps {
   onMobileMenuClick: () => void;
@@ -24,9 +25,11 @@ const pageTitles: Record<string, string> = {
   "/tasks": "Таск-менеджер",
   "/calendar": "Календарь",
   "/equipment": "Склад техники",
+  "/computers": "Компьютеры",
+  "/projects": "Видеопроекты",
   "/monitoring": "Мониторинг системы",
-  "/streams": "Статистика стримов",
-  "/servers": "Управление серверами",
+  "/streams": "Стриминг",
+  "/servers": "Серверы",
   "/notifications": "Уведомления",
   "/settings": "Настройки",
   "/admin": "Администрирование",
@@ -54,7 +57,7 @@ export default function Header({ onMobileMenuClick, user, onLogout }: HeaderProp
   const pageTitle = pageTitles[location] || "StreamStudio";
 
   return (
-    <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-30">
+    <header className="bg-card border-b border-border px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-30">
       <div className="flex items-center space-x-4">
         <Button 
           variant="ghost" 
@@ -65,16 +68,18 @@ export default function Header({ onMobileMenuClick, user, onLogout }: HeaderProp
         >
           <Menu className="h-5 w-5" />
         </Button>
-        <h2 className="text-xl sm:text-2xl font-semibold text-gray-900 truncate">{pageTitle}</h2>
+        <h2 className="text-xl sm:text-2xl font-semibold text-foreground truncate">{pageTitle}</h2>
       </div>
       
       <div className="flex items-center space-x-2 sm:space-x-4">
-        <div className="text-sm text-gray-600 hidden md:block text-right">
-          <div className="font-medium">{currentTime.toLocaleTimeString('ru-RU')}</div>
-          <div className="text-xs text-gray-400">
+        <div className="text-sm text-muted-foreground hidden md:block text-right">
+          <div className="font-medium text-foreground">{currentTime.toLocaleTimeString('ru-RU')}</div>
+          <div className="text-xs">
             {currentTime.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' })}
           </div>
         </div>
+
+        <ThemeToggle />
 
         <Link href="/notifications">
           <Button variant="ghost" size="sm" className="relative" data-testid="button-notifications">
@@ -92,18 +97,18 @@ export default function Header({ onMobileMenuClick, user, onLogout }: HeaderProp
             <Button variant="ghost" size="sm" className="flex items-center gap-2" data-testid="button-user-menu">
               <Avatar className="w-8 h-8">
                 <AvatarImage src={user?.avatar || undefined} />
-                <AvatarFallback className="bg-primary text-white text-xs">
+                <AvatarFallback className="bg-primary text-primary-foreground text-xs">
                   {user?.name?.split(' ').map((n: string) => n[0]).join('') || 'U'}
                 </AvatarFallback>
               </Avatar>
-              <span className="hidden sm:inline text-sm font-medium">{user?.name}</span>
+              <span className="hidden sm:inline text-sm font-medium text-foreground">{user?.name}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>
               <div className="flex flex-col">
                 <span>{user?.name}</span>
-                <span className="text-xs font-normal text-gray-500">@{user?.username}</span>
+                <span className="text-xs font-normal text-muted-foreground">@{user?.username}</span>
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
@@ -116,7 +121,7 @@ export default function Header({ onMobileMenuClick, user, onLogout }: HeaderProp
             <DropdownMenuSeparator />
             {onLogout && (
               <DropdownMenuItem 
-                className="cursor-pointer text-red-600 focus:text-red-600"
+                className="cursor-pointer text-destructive focus:text-destructive"
                 onClick={onLogout}
               >
                 <LogOut className="w-4 h-4 mr-2" />
