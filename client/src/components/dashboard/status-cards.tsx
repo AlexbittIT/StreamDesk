@@ -1,5 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { Monitor, Video, Package, Calendar } from "lucide-react";
+import { Monitor, Video, Zap, Calendar } from "lucide-react";
 
 interface StatusCardsProps {
   stats: any;
@@ -7,86 +7,90 @@ interface StatusCardsProps {
 
 export default function StatusCards({ stats }: StatusCardsProps) {
   if (!stats) {
-    return <div>Loading stats...</div>;
+    return (
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[...Array(4)].map((_, i) => (
+          <Card key={i} className="bg-white dark:bg-slate-800/90 border-slate-200 dark:border-slate-700 animate-pulse">
+            <CardContent className="p-4">
+              <div className="h-12 bg-slate-200 dark:bg-slate-700 rounded" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
   }
 
   const cards = [
     {
-      title: "Системы онлайн",
+      title: "Системы",
       value: stats.onlineSystems,
       icon: Monitor,
-      color: "text-green-600",
-      bgColor: "bg-green-50",
-      progress: 80,
-      description: "80% систем активны"
+      iconColor: "text-emerald-500",
+      bgColor: "bg-emerald-500/10 dark:bg-emerald-500/20",
+      glow: "neon-glow-green",
+      description: "онлайн"
     },
     {
-      title: "Активные стримы", 
+      title: "Стримы", 
       value: stats.activeStreams,
       icon: Video,
-      color: "text-blue-600",
-      bgColor: "bg-blue-50",
+      iconColor: "text-cyan-500",
+      bgColor: "bg-cyan-500/10 dark:bg-cyan-500/20",
+      glow: "",
       indicator: "pulse",
-      description: "Все стримы работают стабильно"
+      description: "активных"
     },
     {
-      title: "Доступная техника",
-      value: stats.availableEquipment,
-      icon: Package,
-      color: "text-orange-600", 
-      bgColor: "bg-orange-50",
-      progress: 67,
-      description: "6 единиц в использовании"
+      title: "Скорость",
+      value: "120",
+      icon: Zap,
+      iconColor: "text-amber-500", 
+      bgColor: "bg-amber-500/10 dark:bg-amber-500/20",
+      glow: "",
+      description: "Mbps"
     },
     {
-      title: "События сегодня",
+      title: "Событий",
       value: stats.todayEvents,
       icon: Calendar,
-      color: "text-gray-600",
-      bgColor: "bg-gray-50",
-      description: "Следующее событие в 15:00"
+      iconColor: "text-violet-500",
+      bgColor: "bg-violet-500/10 dark:bg-violet-500/20",
+      glow: "",
+      description: "сегодня"
     }
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {cards.map((card, index) => {
         const Icon = card.icon;
         return (
-          <Card key={index} className="card-shadow card-hover">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
+          <Card 
+            key={index} 
+            className={`
+              bg-white dark:bg-slate-800/90 
+              border-slate-200 dark:border-slate-700 
+              hover:border-slate-300 dark:hover:border-slate-600
+              transition-all hover:shadow-lg dark:hover:shadow-black/20
+            `}
+            data-testid={`status-card-${index}`}
+          >
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 ${card.bgColor} rounded-lg flex items-center justify-center`}>
+                  <Icon className={`${card.iconColor} h-5 w-5`} />
+                </div>
                 <div>
-                  <p className="text-sm text-gray-600">{card.title}</p>
-                  <p className={`text-3xl font-bold ${card.color}`}>{card.value}</p>
-                </div>
-                <div className={`w-12 h-12 ${card.bgColor} rounded-lg flex items-center justify-center`}>
-                  <Icon className={`${card.color} h-6 w-6`} />
-                </div>
-              </div>
-              <div className="mt-4">
-                {card.progress && (
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div 
-                      className={`h-2 rounded-full ${card.color.includes('green') ? 'bg-green-500' : card.color.includes('orange') ? 'bg-orange-500' : 'bg-blue-500'}`}
-                      style={{ width: `${card.progress}%` }}
-                    ></div>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-2xl font-bold text-slate-900 dark:text-white">{card.value}</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">{card.description}</span>
                   </div>
-                )}
+                  <p className="text-sm text-slate-600 dark:text-slate-400">{card.title}</p>
+                </div>
                 {card.indicator === "pulse" && (
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2 h-2 bg-green-500 rounded-full status-online"></div>
-                    <p className="text-xs text-gray-500">{card.description}</p>
+                  <div className="ml-auto">
+                    <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse" />
                   </div>
-                )}
-                {!card.progress && card.indicator !== "pulse" && (
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
-                    <p className="text-xs text-gray-500">{card.description}</p>
-                  </div>
-                )}
-                {card.progress && (
-                  <p className="text-xs text-gray-500 mt-2">{card.description}</p>
                 )}
               </div>
             </CardContent>

@@ -1,67 +1,73 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useQuery } from "@tanstack/react-query";
+import { Server, Wifi, WifiOff } from "lucide-react";
 
 interface SystemStatusProps {
   systems?: any[];
 }
 
 export default function SystemStatus({ systems }: SystemStatusProps) {
-  const { data: activeStreams } = useQuery({
-    queryKey: ["/api/streams", "active=true"],
-  });
-
-  // Mock stream parameters for active streams
-  const streamParams = {
-    bitrate: Math.floor(Math.random() * 1000) + 5000,
-    fps: 60,
-    quality: "Отличное"
-  };
+  const onlineCount = systems?.filter(s => s.status === 'online').length || 0;
+  const totalCount = systems?.length || 0;
 
   return (
-    <Card className="card-shadow">
-      <CardHeader>
-        <CardTitle>Статус системы</CardTitle>
+    <Card className="bg-white dark:bg-slate-800/90 border-slate-200 dark:border-slate-700">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
+            <Server className="w-4 h-4" />
+            Серверы
+          </CardTitle>
+          <span className="text-sm text-slate-500 dark:text-slate-400">
+            {onlineCount}/{totalCount} онлайн
+          </span>
+        </div>
       </CardHeader>
       <CardContent>
-        <div className="space-y-4">
-          {systems?.map((system) => (
-            <div key={system.id} className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <div className={`w-3 h-3 rounded-full ${
-                  system.status === 'online' 
-                    ? 'bg-green-500 status-online' 
-                    : 'bg-red-500 status-offline'
-                }`}></div>
-                <span className="text-sm text-gray-900">{system.name}</span>
+        <div className="space-y-2">
+          {systems?.slice(0, 5).map((system) => (
+            <div 
+              key={system.id} 
+              className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-slate-900/50"
+              data-testid={`system-${system.id}`}
+            >
+              <div className="flex items-center gap-3">
+                <div className={`
+                  w-8 h-8 rounded-lg flex items-center justify-center
+                  ${system.status === 'online' 
+                    ? 'bg-emerald-500/10 dark:bg-emerald-500/20' 
+                    : 'bg-red-500/10 dark:bg-red-500/20'
+                  }
+                `}>
+                  {system.status === 'online' 
+                    ? <Wifi className="w-4 h-4 text-emerald-500" />
+                    : <WifiOff className="w-4 h-4 text-red-500" />
+                  }
+                </div>
+                <div>
+                  <span className="text-sm font-medium text-slate-900 dark:text-white">{system.name}</span>
+                  {system.ipAddress && (
+                    <p className="text-xs text-slate-500 dark:text-slate-500">{system.ipAddress}</p>
+                  )}
+                </div>
               </div>
-              <span className={`text-xs ${
-                system.status === 'online' ? 'text-gray-500' : 'text-red-600'
-              }`}>
-                {system.status === 'online' ? 'Онлайн' : 'Офлайн'}
-              </span>
+              <div className={`
+                px-2 py-1 rounded text-xs font-medium
+                ${system.status === 'online' 
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' 
+                  : 'bg-red-500/10 text-red-600 dark:text-red-400'
+                }
+              `}>
+                {system.status === 'online' ? 'Online' : 'Offline'}
+              </div>
             </div>
           ))}
-        </div>
-        
-        {activeStreams && activeStreams.length > 0 && (
-          <div className="mt-6 pt-4 border-t border-gray-100">
-            <h4 className="text-sm font-medium text-gray-900 mb-3">Параметры стрима</h4>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">Битрейт</span>
-                <span className="text-sm font-medium text-gray-900">{streamParams.bitrate} kbps</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">FPS</span>
-                <span className="text-sm font-medium text-gray-900">{streamParams.fps}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">Качество</span>
-                <span className="text-sm font-medium text-green-600">{streamParams.quality}</span>
-              </div>
+          {(!systems || systems.length === 0) && (
+            <div className="text-center py-4 text-slate-500 dark:text-slate-400">
+              <Server className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">Нет данных о серверах</p>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </CardContent>
     </Card>
   );

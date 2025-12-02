@@ -1,72 +1,70 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, ClipboardCheck, CalendarPlus, BarChart3 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { Video, Package, CalendarPlus, ListTodo } from "lucide-react";
+import { Link } from "wouter";
 
 export default function QuickActions() {
-  const { toast } = useToast();
-
-  const handleAction = (action: string) => {
-    toast({
-      title: "Действие выполнено",
-      description: `${action} - функция будет реализована в следующих версиях`,
-    });
-  };
-
   const actions = [
     {
       title: "Новый стрим",
-      icon: Plus,
-      color: "hover:border-primary hover:bg-primary hover:bg-opacity-5",
-      iconColor: "text-primary",
-      action: "Создание нового стрима"
+      icon: Video,
+      href: "/streams",
+      gradient: "from-red-500 to-pink-500",
+      glow: "hover:shadow-red-500/25"
     },
     {
-      title: "Проверить технику",
-      icon: ClipboardCheck,
-      color: "hover:border-secondary hover:bg-secondary hover:bg-opacity-5",
-      iconColor: "text-secondary",
-      action: "Проверка техники"
+      title: "Техника",
+      icon: Package,
+      href: "/equipment",
+      gradient: "from-amber-500 to-orange-500",
+      glow: "hover:shadow-amber-500/25"
     },
     {
-      title: "Добавить событие",
+      title: "Событие",
       icon: CalendarPlus,
-      color: "hover:border-accent hover:bg-accent hover:bg-opacity-5",
-      iconColor: "text-accent",
-      action: "Добавление события"
+      href: "/calendar",
+      gradient: "from-violet-500 to-purple-500",
+      glow: "hover:shadow-violet-500/25"
     },
     {
-      title: "Отчет",
-      icon: BarChart3,
-      color: "hover:border-gray-400 hover:bg-gray-50",
-      iconColor: "text-gray-600",
-      action: "Генерация отчета"
+      title: "Задачи",
+      icon: ListTodo,
+      href: "/tasks",
+      gradient: "from-cyan-500 to-blue-500",
+      glow: "hover:shadow-cyan-500/25"
     }
   ];
 
   return (
-    <Card className="card-shadow">
-      <CardHeader>
-        <CardTitle>Быстрые действия</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {actions.map((action, index) => {
-            const Icon = action.icon;
-            return (
-              <Button
-                key={index}
-                variant="outline"
-                className={`flex flex-col items-center p-4 h-auto border border-gray-200 ${action.color} transition-colors`}
-                onClick={() => handleAction(action.action)}
-              >
-                <Icon className={`${action.iconColor} h-8 w-8 mb-2`} />
-                <span className="text-sm font-medium text-gray-900">{action.title}</span>
-              </Button>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {actions.map((action, index) => {
+        const Icon = action.icon;
+        return (
+          <Link key={index} href={action.href}>
+            <Button
+              variant="outline"
+              className={`
+                w-full flex flex-col items-center justify-center gap-2 p-4 h-auto
+                bg-white dark:bg-slate-800/90
+                border-slate-200 dark:border-slate-700
+                hover:border-slate-300 dark:hover:border-slate-600
+                transition-all duration-200
+                hover:shadow-lg ${action.glow}
+                group
+              `}
+              data-testid={`quick-action-${index}`}
+            >
+              <div className={`
+                w-10 h-10 rounded-lg flex items-center justify-center
+                bg-gradient-to-br ${action.gradient}
+                group-hover:scale-110 transition-transform
+              `}>
+                <Icon className="h-5 w-5 text-white" />
+              </div>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{action.title}</span>
+            </Button>
+          </Link>
+        );
+      })}
+    </div>
   );
 }

@@ -132,7 +132,10 @@ The application is designed for easy deployment on platforms like Replit, with a
 - ✓ Fixed localStorage SSR issues with typeof window guards
 - ✓ Cleaned up permission listener memory leaks
 - ✓ Added take/return/transfer actions for scanned equipment
-- ✓ Role-based edit permissions (admin/tech_director only)
+- ✓ Role-based edit permissions (admin/tech_director only) - aligned across EquipmentPage, EquipmentForm, and BarcodeScanner
+- ✓ Enhanced equipment search to include barcode, inventory number, and serial number fields
+- ✓ Added onBarcodeScanned callback for searching scanned barcodes in inventory
+- ✓ Fixed TypeScript errors in equipment form by handling nullable field values
 - ✓ Added vMix Scheduler component to dashboard
 - ✓ vMix scheduler shows connection status, next event, and schedule list
 - ✓ Streaming stats component updated with dark mode support

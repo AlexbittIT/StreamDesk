@@ -14,6 +14,7 @@ interface BarcodeScannerProps {
   isOpen: boolean;
   onClose: () => void;
   onEquipmentFound?: (equipment: Equipment) => void;
+  onBarcodeScanned?: (barcode: string) => void;
 }
 
 type PermissionState = "prompt" | "granted" | "denied" | "checking";
@@ -27,7 +28,7 @@ function getCurrentUser() {
   }
 }
 
-export function BarcodeScanner({ isOpen, onClose, onEquipmentFound }: BarcodeScannerProps) {
+export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeScanned }: BarcodeScannerProps) {
   const [permissionState, setPermissionState] = useState<PermissionState>("prompt");
   const [scanning, setScanning] = useState(false);
   const [scannedCode, setScannedCode] = useState<string | null>(null);
@@ -394,9 +395,22 @@ export function BarcodeScanner({ isOpen, onClose, onEquipmentFound }: BarcodeSca
                     <p className="font-medium text-amber-800 dark:text-amber-300 mb-2">
                       Оборудование не найдено
                     </p>
-                    <p className="text-sm text-amber-600 dark:text-amber-400">
+                    <p className="text-sm text-amber-600 dark:text-amber-400 mb-4">
                       Штрих-код не зарегистрирован в системе
                     </p>
+                    {onBarcodeScanned && (
+                      <Button 
+                        variant="outline"
+                        onClick={() => {
+                          onBarcodeScanned(scannedCode!);
+                          handleClose();
+                        }}
+                        className="w-full"
+                        data-testid="button-search-barcode"
+                      >
+                        Искать в инвентаре
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               )}

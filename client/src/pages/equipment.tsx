@@ -1,33 +1,58 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Package, Search, Plus, Mic, Camera, Lightbulb, Monitor, Gavel, Edit, MapPin, ScanBarcode, QrCode } from "lucide-react";
+import { Package, Search, Plus, Mic, Camera, Lightbulb, Monitor, Gavel, Edit, MapPin, ScanBarcode, QrCode, ArrowRightLeft } from "lucide-react";
 import { EquipmentForm } from "@/components/forms/equipment-form";
 import { BarcodeScanner } from "@/components/equipment/barcode-scanner";
 import { EquipmentBarcodeModal } from "@/components/equipment/barcode-generator";
 import type { Equipment } from "@shared/schema";
+
+function getCurrentUser() {
+  if (typeof window === 'undefined') return null;
+  try {
+    return JSON.parse(localStorage.getItem('streamstudio_user') || '{}');
+  } catch {
+    return null;
+  }
+}
+
+function canEditEquipment(userRole: string | undefined): boolean {
+  return userRole === 'admin' || userRole === 'tech_director';
+}
 
 export default function EquipmentPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<"full" | "take_return">("full");
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false);
   const [barcodeEquipment, setBarcodeEquipment] = useState<Equipment | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  
+  useEffect(() => {
+    setCurrentUser(getCurrentUser());
+  }, []);
+  
+  const userCanEdit = canEditEquipment(currentUser?.role);
 
   const { data: equipment = [], isLoading } = useQuery<Equipment[]>({
     queryKey: ["/api/equipment"],
   });
 
   const filteredEquipment = equipment.filter((item: Equipment) => {
-    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         item.model?.toLowerCase().includes(searchTerm.toLowerCase());
+    const searchLower = searchTerm.toLowerCase();
+    const matchesSearch = item.name.toLowerCase().includes(searchLower) ||
+                         item.model?.toLowerCase().includes(searchLower) ||
+                         item.serialNumber?.toLowerCase().includes(searchLower) ||
+                         item.inventoryNumber?.toLowerCase().includes(searchLower) ||
+                         item.barcode?.toLowerCase().includes(searchLower);
     const matchesStatus = statusFilter === "all" || item.status === statusFilter;
     const matchesType = typeFilter === "all" || item.type === typeFilter;
     
@@ -184,14 +209,14 @@ export default function EquipmentPage() {
                       <p className="text-sm text-slate-500 dark:text-slate-400">{getTypeText(item.type)}</p>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-1">
+                  <div className="flex items-center gap-1">
                     <Badge className={getStatusColor(item.status)}>
                       {getStatusText(item.status)}
                     </Badge>
                     <Button 
                       variant="ghost" 
                       size="sm"
-                      className="hover:bg-slate-100 dark:hover:bg-slate-700"
+                      className="hover:bg-slate-100 dark:hover:bg-slate-700 h-8 w-8 p-0"
                       onClick={() => {
                         setBarcodeEquipment(item);
                         setIsBarcodeModalOpen(true);
@@ -201,19 +226,37 @@ export default function EquipmentPage() {
                     >
                       <QrCode className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                     </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      className="hover:bg-slate-100 dark:hover:bg-slate-700"
-                      onClick={() => {
-                        setSelectedEquipment(item);
-                        setIsFormOpen(true);
-                      }}
-                      title="Редактировать"
-                      data-testid={`button-edit-${item.id}`}
-                    >
-                      <Edit className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                    </Button>
+                    {userCanEdit ? (
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="hover:bg-slate-100 dark:hover:bg-slate-700 h-8 w-8 p-0"
+                        onClick={() => {
+                          setSelectedEquipment(item);
+                          setFormMode("full");
+                          setIsFormOpen(true);
+                        }}
+                        title="Редактировать"
+                        data-testid={`button-edit-${item.id}`}
+                      >
+                        <Edit className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                      </Button>
+                    ) : (
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="hover:bg-slate-100 dark:hover:bg-slate-700 h-8 w-8 p-0"
+                        onClick={() => {
+                          setSelectedEquipment(item);
+                          setFormMode("take_return");
+                          setIsFormOpen(true);
+                        }}
+                        title={item.status === 'in-use' ? 'Вернуть' : 'Взять'}
+                        data-testid={`button-take-return-${item.id}`}
+                      >
+                        <ArrowRightLeft className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </CardHeader>
@@ -260,8 +303,12 @@ export default function EquipmentPage() {
       {/* Equipment Form */}
       <EquipmentForm
         isOpen={isFormOpen}
-        onClose={() => setIsFormOpen(false)}
+        onClose={() => {
+          setIsFormOpen(false);
+          setSelectedEquipment(null);
+        }}
         equipment={selectedEquipment}
+        mode={formMode}
       />
 
       {/* Barcode Scanner */}
@@ -270,7 +317,12 @@ export default function EquipmentPage() {
         onClose={() => setIsScannerOpen(false)}
         onEquipmentFound={(foundEquipment: Equipment) => {
           setSelectedEquipment(foundEquipment);
+          setFormMode(userCanEdit ? "full" : "take_return");
           setIsFormOpen(true);
+          setIsScannerOpen(false);
+        }}
+        onBarcodeScanned={(barcode: string) => {
+          setSearchTerm(barcode);
           setIsScannerOpen(false);
         }}
       />
