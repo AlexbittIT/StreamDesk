@@ -123,14 +123,33 @@ The application is designed for easy deployment on platforms like Replit, with a
 
 ## Recent Changes: Latest modifications with dates
 
+### December 2, 2025 - Equipment Barcode System & Dashboard Improvements
+- ✓ Implemented barcode generation for equipment using JsBarcode library
+- ✓ Equipment cards now have QR code button to view/download/print barcodes
+- ✓ Barcode modal shows equipment name, CODE128 barcode, download PNG and print options
+- ✓ Fixed barcode scanner camera permissions with Safari/Firefox fallback
+- ✓ Added proper permission state management (prompt, granted, denied, checking)
+- ✓ Fixed localStorage SSR issues with typeof window guards
+- ✓ Cleaned up permission listener memory leaks
+- ✓ Added take/return/transfer actions for scanned equipment
+- ✓ Role-based edit permissions (admin/tech_director only)
+- ✓ Added vMix Scheduler component to dashboard
+- ✓ vMix scheduler shows connection status, next event, and schedule list
+- ✓ Streaming stats component updated with dark mode support
+- ✓ Dashboard layout reorganized with better visual hierarchy
+- ✓ Fixed task update API to properly extract userId before updating
+
 ### December 2, 2025 - Dark Mode and Drag-and-Drop Implementation
 - ✓ Fixed dark mode text visibility across Task Manager page (replaced hardcoded gray colors with theme-aware CSS variables)
 - ✓ Fixed dark mode colors for Calendar event type badges
 - ✓ Implemented drag-and-drop for Task Manager Kanban board using @hello-pangea/dnd library
 - ✓ Tasks can now be dragged between status columns (todo, in_progress, review, done)
+- ✓ Optimistic UI updates for instant visual feedback before server confirmation
+- ✓ Deadline progress bars on task cards showing time remaining
 - ✓ Visual feedback during drag with card scaling, rotation, and ring highlight
 - ✓ Toast notifications appear when task status changes via drag
 - ✓ API automatically updates task status when dropped in new column
+- ✓ Calendar week view updated with responsive grid and overflow handling
 
 ### January 25, 2025 - Complete Forms and CRUD Implementation
 - ✓ Created fully functional equipment management with photo uploads, specifications, and inventory tracking
