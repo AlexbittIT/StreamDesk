@@ -5,9 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Package, Search, Plus, Mic, Camera, Lightbulb, Monitor, Gavel, Edit, MapPin, ScanBarcode } from "lucide-react";
+import { Package, Search, Plus, Mic, Camera, Lightbulb, Monitor, Gavel, Edit, MapPin, ScanBarcode, QrCode } from "lucide-react";
 import { EquipmentForm } from "@/components/forms/equipment-form";
 import { BarcodeScanner } from "@/components/equipment/barcode-scanner";
+import { EquipmentBarcodeModal } from "@/components/equipment/barcode-generator";
 import type { Equipment } from "@shared/schema";
 
 export default function EquipmentPage() {
@@ -17,6 +18,8 @@ export default function EquipmentPage() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false);
+  const [barcodeEquipment, setBarcodeEquipment] = useState<Equipment | null>(null);
 
   const { data: equipment = [], isLoading } = useQuery<Equipment[]>({
     queryKey: ["/api/equipment"],
@@ -181,7 +184,7 @@ export default function EquipmentPage() {
                       <p className="text-sm text-slate-500 dark:text-slate-400">{getTypeText(item.type)}</p>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-1">
                     <Badge className={getStatusColor(item.status)}>
                       {getStatusText(item.status)}
                     </Badge>
@@ -190,9 +193,24 @@ export default function EquipmentPage() {
                       size="sm"
                       className="hover:bg-slate-100 dark:hover:bg-slate-700"
                       onClick={() => {
+                        setBarcodeEquipment(item);
+                        setIsBarcodeModalOpen(true);
+                      }}
+                      title="Штрих-код"
+                      data-testid={`button-barcode-${item.id}`}
+                    >
+                      <QrCode className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      className="hover:bg-slate-100 dark:hover:bg-slate-700"
+                      onClick={() => {
                         setSelectedEquipment(item);
                         setIsFormOpen(true);
                       }}
+                      title="Редактировать"
+                      data-testid={`button-edit-${item.id}`}
                     >
                       <Edit className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                     </Button>
@@ -255,6 +273,16 @@ export default function EquipmentPage() {
           setIsFormOpen(true);
           setIsScannerOpen(false);
         }}
+      />
+
+      {/* Barcode Generator Modal */}
+      <EquipmentBarcodeModal
+        isOpen={isBarcodeModalOpen}
+        onClose={() => {
+          setIsBarcodeModalOpen(false);
+          setBarcodeEquipment(null);
+        }}
+        equipment={barcodeEquipment}
       />
     </div>
   );
