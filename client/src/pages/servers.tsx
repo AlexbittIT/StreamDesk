@@ -157,10 +157,17 @@ export default function Servers() {
                     </div>
                   )}
                   
-                  {item.specifications && (
+                  {item.specifications && typeof item.specifications === 'object' && Object.keys(item.specifications).length > 0 && (
                     <div>
                       <span className="text-sm text-gray-500">Характеристики:</span>
-                      <p className="text-sm mt-1">{item.specifications}</p>
+                      <div className="text-sm mt-1 space-y-1">
+                        {Object.entries(item.specifications).map(([key, value]) => (
+                          <div key={key} className="flex justify-between">
+                            <span className="text-gray-500 capitalize">{key}:</span>
+                            <span className="font-mono">{String(value)}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                   

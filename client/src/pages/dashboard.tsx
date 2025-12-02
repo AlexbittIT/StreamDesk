@@ -9,23 +9,23 @@ import QuickActions from "@/components/dashboard/quick-actions";
 import { useWebSocket } from "@/hooks/use-websocket";
 
 export default function Dashboard() {
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats, isLoading: statsLoading } = useQuery<any>({
     queryKey: ["/api/dashboard/stats"],
   });
 
-  const { data: events } = useQuery({
+  const { data: events } = useQuery<any[]>({
     queryKey: ["/api/events"],
   });
 
-  const { data: systems } = useQuery({
+  const { data: systems } = useQuery<any[]>({
     queryKey: ["/api/systems"],
   });
 
-  const { data: equipment } = useQuery({
+  const { data: equipment } = useQuery<any[]>({
     queryKey: ["/api/equipment"],
   });
 
-  const { data: streams } = useQuery({
+  const { data: streams } = useQuery<any[]>({
     queryKey: ["/api/streams", "active=true"],
   });
 
