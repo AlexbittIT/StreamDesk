@@ -601,7 +601,10 @@ export default function Tasks() {
   const handleQuickCreateTask = (columnId: string) => {
     const title = quickTaskInputs[columnId]?.trim();
     if (!title) return;
-
+    if (!currentUser?.id) {
+      toast({ title: "Ошибка", description: "Войдите в систему для создания задачи", variant: "destructive" });
+      return;
+    }
     createMutation.mutate({
       title,
       description: "",
@@ -764,6 +767,10 @@ export default function Tasks() {
       });
       return;
     }
+    if (!currentUser?.id) {
+      toast({ title: "Ошибка", description: "Войдите в систему для создания задачи", variant: "destructive" });
+      return;
+    }
 
     // Если назначен ответственный, задача должна попасть в столбец "todo" (к выполнению)
     const taskStatus = newTaskAssigneeId ? "todo" : newTaskStatus;
@@ -881,6 +888,162 @@ export default function Tasks() {
     const index = projectId.charCodeAt(0) % colors.length;
     return colors[index];
   }, []);
+
+// Мемоизированный компонент карточки задачи — уменьшает перераендеры
+interface TaskCardProps {
+  task: Task;
+  index: number;
+  provided: any;
+  snapshot: any;
+  users: UserType[];
+  taskComments: Record<string, any[]>;
+  updateMutation: any;
+  getUserAvatar: (id: string | null) => string | null;
+  getUserInitials: (id: string | null) => string | null;
+  handleStatusChange: (taskId: string, newStatus: string) => void;
+  setSelectedTaskForView: (task: Task) => void;
+  getTaskTag: (task: Task) => any;
+  getProjectColor: (id: string | null | undefined) => any;
+  getDeadlineColor: (date: string | null | undefined) => string;
+}
+
+const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskComments, updateMutation, getUserAvatar, getUserInitials, handleStatusChange, setSelectedTaskForView, getTaskTag, getProjectColor, getDeadlineColor }: TaskCardProps) {
+  const taskTag = getTaskTag(task);
+  return (
+    <Card
+      ref={provided.innerRef}
+      {...provided.draggableProps}
+      className={cn(
+        "p-2.5 sm:p-3 md:p-4 hover:shadow-lg transition-all duration-200 cursor-grab active:cursor-grabbing relative border-2 rounded-xl bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900",
+        snapshot.isDragging
+          ? "shadow-2xl rotate-2 scale-105 border-primary z-50 ring-4 ring-primary/20"
+          : "border-slate-200 dark:border-slate-700 hover:border-primary/40 hover:shadow-xl hover:-translate-y-1"
+      )}
+    >
+      {taskTag && (
+        <div className="mb-3">
+          <Badge className={cn("text-xs font-medium px-2 py-0.5 rounded-full", taskTag.color, "shadow-sm")}>
+            {taskTag.label}
+          </Badge>
+        </div>
+      )}
+
+      <div className="space-y-2 sm:space-y-3">
+        <div className="flex items-start justify-between gap-1.5 sm:gap-2">
+          <h3
+            className="font-semibold text-xs sm:text-sm flex-1 leading-snug text-slate-900 dark:text-slate-100 cursor-pointer hover:text-primary transition-colors line-clamp-2 min-w-0"
+            onClick={(e) => { e.stopPropagation(); setSelectedTaskForView(task); }}
+            title={task.title}
+          >
+            {task.title}
+          </h3>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 sm:h-6 sm:w-6"
+              onClick={(e) => { e.stopPropagation(); setSelectedTaskForView(task); }}
+              title="Просмотр задачи"
+            >
+              <Eye className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+            </Button>
+            <Checkbox
+              checked={task.status === "done"}
+              onCheckedChange={(checked) => { handleStatusChange(task.id, checked ? "done" : "todo"); }}
+              className="h-3.5 w-3.5 sm:h-4 sm:w-4 rounded border-2 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+            />
+          </div>
+        </div>
+
+        {task.description && (
+          <p className="text-xs text-muted-foreground line-clamp-2">{task.description}</p>
+        )}
+
+        <div className="flex items-center justify-between gap-1.5 sm:gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap min-w-0 flex-1">
+            {task.assigneeId ? (
+              <Select value={task.assigneeId} onValueChange={(value) => {
+                const newAssigneeId = value === "none" ? null : value;
+                const newStatus = newAssigneeId ? "todo" : task.status;
+                updateMutation.mutate({ id: task.id, data: { assigneeId: newAssigneeId, status: newStatus } });
+              }}>
+                <SelectTrigger asChild>
+                  <div className="flex items-center gap-1 group cursor-pointer">
+                    <Avatar className="w-6 h-6 sm:w-7 sm:h-7 ring-2 ring-slate-200 dark:ring-slate-700 group-hover:ring-primary/50 transition-all flex-shrink-0">
+                      <AvatarImage src={getUserAvatar(task.assigneeId) || undefined} />
+                      <AvatarFallback className="text-[9px] sm:text-[10px] font-semibold bg-gradient-to-br from-primary/20 to-primary/10 text-primary border border-primary/20">
+                        {getUserInitials(task.assigneeId) || "?"}
+                      </AvatarFallback>
+                    </Avatar>
+                  </div>
+                </SelectTrigger>
+                <SelectContent onClick={(e) => e.stopPropagation()}>
+                  <SelectItem value="none">Не назначен</SelectItem>
+                  {users.map(user => (<SelectItem key={user.id} value={user.id}>{user.name}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Select value="" onValueChange={(value) => { if (value) updateMutation.mutate({ id: task.id, data: { assigneeId: value } }); }}>
+                <SelectTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-6 sm:h-7 px-1.5 sm:px-2 text-[10px] sm:text-xs text-muted-foreground hover:text-primary border border-dashed border-slate-300 dark:border-slate-600 hover:border-primary/50 rounded-full" onClick={(e) => e.stopPropagation()}>
+                    <Plus className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" />
+                    <span className="hidden sm:inline">Назначить</span>
+                  </Button>
+                </SelectTrigger>
+                <SelectContent onClick={(e) => e.stopPropagation()}>
+                  <SelectItem value="none">Не назначен</SelectItem>
+                  {users.map(user => (<SelectItem key={user.id} value={user.id}>{user.name}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            )}
+            {task.dueDate && (
+              <span className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-medium text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-md whitespace-nowrap">
+                <Calendar className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                {format(new Date(task.dueDate), "d MMM", { locale: ru })}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
+            {taskComments[task.id]?.length > 0 && (
+              <div className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs text-muted-foreground">
+                <MessageSquare className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                <span>{taskComments[task.id].length}</span>
+              </div>
+            )}
+            {task.attachments && Array.isArray(task.attachments) && task.attachments.length > 0 && (
+              <div className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs text-muted-foreground">
+                <Paperclip className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                <span>{task.attachments.length}</span>
+              </div>
+            )}
+            {task.links && Array.isArray(task.links) && task.links.length > 0 && (
+              <div className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs text-muted-foreground">
+                <Link2 className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                <span>{task.links.length}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="absolute bottom-0 left-0 right-0 flex flex-col gap-0.5">
+          {task.projectId && (() => {
+            const projectColor = getProjectColor(task.projectId);
+            return projectColor ? (
+              <div className={cn("h-1.5 rounded-b-xl", projectColor.bg, projectColor.darkBg)} style={{ boxShadow: `0 0 10px ${projectColor.bg.includes('orange') ? '#f97316' : projectColor.bg.includes('purple') ? '#a855f7' : projectColor.bg.includes('blue') ? '#3b82f6' : projectColor.bg.includes('green') ? '#22c55e' : '#ec4899'}40` }} />
+            ) : null;
+          })()}
+
+          {task.dueDate && (
+            <div className="h-2 rounded-b-xl overflow-hidden">
+              <div className={cn("h-full w-full rounded-b-xl", getDeadlineColor(task.dueDate))} style={{ boxShadow: `0 0 20px ${getDeadlineColor(task.dueDate).includes('red') ? '#ef4444' : getDeadlineColor(task.dueDate).includes('orange') ? '#f97316' : getDeadlineColor(task.dueDate).includes('yellow') ? '#eab308' : getDeadlineColor(task.dueDate).includes('blue') ? '#3b82f6' : '#22c55e'}, 0 0 40px ${getDeadlineColor(task.dueDate).includes('red') ? '#ef4444' : getDeadlineColor(task.dueDate).includes('orange') ? '#f97316' : getDeadlineColor(task.dueDate).includes('yellow') ? '#eab308' : getDeadlineColor(task.dueDate).includes('blue') ? '#3b82f6' : '#22c55e'}80, inset 0 0 10px ${getDeadlineColor(task.dueDate).includes('red') ? '#ef4444' : getDeadlineColor(task.dueDate).includes('orange') ? '#f97316' : getDeadlineColor(task.dueDate).includes('yellow') ? '#eab308' : getDeadlineColor(task.dueDate).includes('blue') ? '#3b82f6' : '#22c55e'}40`, filter: 'brightness(1.4) saturate(1.3)' }} />
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+});
 
   const daysInSelectedMonth = getDaysInMonth(selectedMonth, selectedYear);
   const daysArray = Array.from({ length: daysInSelectedMonth }, (_, i) => i + 1);
@@ -1669,7 +1832,7 @@ export default function Tasks() {
                             snapshot.isDraggingOver && "bg-gradient-to-br from-primary/10 via-primary/5 to-transparent dark:from-primary/20 dark:via-primary/10 border-2 border-dashed border-primary/50 rounded-xl shadow-inner"
                           )}
                         >
-                          {tasksByColumn[column.id]?.length === 0 ? (
+                            {tasksByColumn[column.id]?.length === 0 ? (
                             <div className="text-center text-sm text-muted-foreground py-12 flex flex-col items-center gap-2">
                               <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
                                 <Circle className="w-6 h-6 text-slate-400" />
@@ -1678,217 +1841,25 @@ export default function Tasks() {
                             </div>
                           ) : (
                             tasksByColumn[column.id]?.map((task, index) => {
-                              const taskTag = getTaskTag(task);
                               return (
                                 <Draggable key={task.id} draggableId={task.id} index={index}>
                                   {(provided, snapshot) => (
-                                    <Card
-                                      ref={provided.innerRef}
-                                      {...provided.draggableProps}
-                                      className={cn(
-                                        "p-2.5 sm:p-3 md:p-4 hover:shadow-lg transition-all duration-200 cursor-grab active:cursor-grabbing relative border-2 rounded-xl bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900",
-                                        snapshot.isDragging 
-                                          ? "shadow-2xl rotate-2 scale-105 border-primary z-50 ring-4 ring-primary/20" 
-                                          : "border-slate-200 dark:border-slate-700 hover:border-primary/40 hover:shadow-xl hover:-translate-y-1"
-                                      )}
-                                    >
-                                      {/* Тег приоритета сверху */}
-                                      {taskTag && (
-                                        <div className="mb-3">
-                                          <Badge className={cn("text-xs font-medium px-2 py-0.5 rounded-full", taskTag.color, "shadow-sm")}>
-                                            {taskTag.label}
-                                          </Badge>
-                                        </div>
-                                      )}
-
-                                      <div className="space-y-2 sm:space-y-3">
-                                        {/* Заголовок задачи */}
-                                        <div className="flex items-start justify-between gap-1.5 sm:gap-2">
-                                          <h3 
-                                            className="font-semibold text-xs sm:text-sm flex-1 leading-snug text-slate-900 dark:text-slate-100 cursor-pointer hover:text-primary transition-colors line-clamp-2 min-w-0"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setSelectedTaskForView(task);
-                                            }}
-                                            title={task.title}
-                                          >
-                                            {task.title}
-                                          </h3>
-                                          <div className="flex items-center gap-1 flex-shrink-0">
-                                            <Button
-                                              variant="ghost"
-                                              size="icon"
-                                              className="h-5 w-5 sm:h-6 sm:w-6"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                setSelectedTaskForView(task);
-                                              }}
-                                              title="Просмотр задачи"
-                                            >
-                                              <Eye className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                                            </Button>
-                                            <Checkbox
-                                              checked={task.status === "done"}
-                                              onCheckedChange={(checked) => {
-                                                handleStatusChange(task.id, checked ? "done" : "todo");
-                                              }}
-                                              className="h-3.5 w-3.5 sm:h-4 sm:w-4 rounded border-2 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                                            />
-                                          </div>
-                                        </div>
-
-                                        {/* Описание задачи (если есть) */}
-                                        {task.description && (
-                                          <p className="text-xs text-muted-foreground line-clamp-2">
-                                            {task.description}
-                                          </p>
-                                        )}
-
-                                        {/* Метаданные: назначение, инициалы и дата */}
-                                        <div className="flex items-center justify-between gap-1.5 sm:gap-2 flex-wrap">
-                                          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap min-w-0 flex-1">
-                                            {task.assigneeId ? (
-                                              <Select
-                                                value={task.assigneeId}
-                                                onValueChange={(value) => {
-                                                  const newAssigneeId = value === "none" ? null : value;
-                                                  // При назначении ответственного, задача попадает в столбец "todo"
-                                                  const newStatus = newAssigneeId ? "todo" : task.status;
-                                                  updateMutation.mutate({
-                                                    id: task.id,
-                                                    data: { assigneeId: newAssigneeId, status: newStatus },
-                                                  });
-                                                }}
-                                              >
-                                                <SelectTrigger asChild>
-                                                  <div className="flex items-center gap-1 group cursor-pointer">
-                                                    <Avatar className="w-6 h-6 sm:w-7 sm:h-7 ring-2 ring-slate-200 dark:ring-slate-700 group-hover:ring-primary/50 transition-all flex-shrink-0">
-                                                      <AvatarImage src={getUserAvatar(task.assigneeId) || undefined} />
-                                                      <AvatarFallback className="text-[9px] sm:text-[10px] font-semibold bg-gradient-to-br from-primary/20 to-primary/10 text-primary border border-primary/20">
-                                                        {getUserInitials(task.assigneeId) || "?"}
-                                                      </AvatarFallback>
-                                                    </Avatar>
-                                                  </div>
-                                                </SelectTrigger>
-                                                <SelectContent onClick={(e) => e.stopPropagation()}>
-                                                  <SelectItem value="none">Не назначен</SelectItem>
-                                                  {users.map(user => (
-                                                    <SelectItem key={user.id} value={user.id}>
-                                                      {user.name}
-                                                    </SelectItem>
-                                                  ))}
-                                                </SelectContent>
-                                              </Select>
-                                            ) : (
-                                              <Select
-                                                value=""
-                                                onValueChange={(value) => {
-                                                  if (value) {
-                                                    updateMutation.mutate({
-                                                      id: task.id,
-                                                      data: { assigneeId: value },
-                                                    });
-                                                  }
-                                                }}
-                                              >
-                                                <SelectTrigger asChild>
-                                                  <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    className="h-6 sm:h-7 px-1.5 sm:px-2 text-[10px] sm:text-xs text-muted-foreground hover:text-primary border border-dashed border-slate-300 dark:border-slate-600 hover:border-primary/50 rounded-full"
-                                                    onClick={(e) => e.stopPropagation()}
-                                                  >
-                                                    <Plus className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" />
-                                                    <span className="hidden sm:inline">Назначить</span>
-                                                  </Button>
-                                                </SelectTrigger>
-                                                <SelectContent onClick={(e) => e.stopPropagation()}>
-                                                  <SelectItem value="none">Не назначен</SelectItem>
-                                                  {users.map(user => (
-                                                    <SelectItem key={user.id} value={user.id}>
-                                                      {user.name}
-                                                    </SelectItem>
-                                                  ))}
-                                                </SelectContent>
-                                              </Select>
-                                            )}
-                                            {task.dueDate && (
-                                              <span className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-medium text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-md whitespace-nowrap">
-                                                <Calendar className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                                                {format(new Date(task.dueDate), "d MMM", { locale: ru })}
-                                              </span>
-                                            )}
-                                          </div>
-                                          
-                                          {/* Индикаторы */}
-                                          <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-                                            {taskComments[task.id]?.length > 0 && (
-                                              <div className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs text-muted-foreground">
-                                                <MessageSquare className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                                                <span>{taskComments[task.id].length}</span>
-                                              </div>
-                                            )}
-                                            {task.attachments && Array.isArray(task.attachments) && task.attachments.length > 0 && (
-                                              <div className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs text-muted-foreground">
-                                                <Paperclip className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                                                <span>{task.attachments.length}</span>
-                                              </div>
-                                            )}
-                                            {task.links && Array.isArray(task.links) && task.links.length > 0 && (
-                                              <div className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs text-muted-foreground">
-                                                <Link2 className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                                                <span>{task.links.length}</span>
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-
-                                        {/* Полоски: проект и дедлайн */}
-                                        <div className="absolute bottom-0 left-0 right-0 flex flex-col gap-0.5">
-                                          {/* Полоска проекта */}
-                                          {task.projectId && (() => {
-                                            const projectColor = getProjectColor(task.projectId);
-                                            return projectColor ? (
-                                              <div className={cn("h-1.5 rounded-b-xl", projectColor.bg, projectColor.darkBg)} 
-                                                style={{
-                                                  boxShadow: `0 0 10px ${projectColor.bg.includes('orange') ? '#f97316' : 
-                                                    projectColor.bg.includes('purple') ? '#a855f7' :
-                                                    projectColor.bg.includes('blue') ? '#3b82f6' :
-                                                    projectColor.bg.includes('green') ? '#22c55e' : '#ec4899'}40`,
-                                                }}
-                                              />
-                                            ) : null;
-                                          })()}
-                                          
-                                          {/* Неоновая полоса дедлайна */}
-                                          {task.dueDate && (
-                                            <div className="h-2 rounded-b-xl overflow-hidden">
-                                              <div 
-                                                className={cn(
-                                                  "h-full w-full rounded-b-xl",
-                                                  getDeadlineColor(task.dueDate)
-                                                )}
-                                                style={{
-                                                  boxShadow: `0 0 20px ${getDeadlineColor(task.dueDate).includes('red') ? '#ef4444' : 
-                                                    getDeadlineColor(task.dueDate).includes('orange') ? '#f97316' :
-                                                    getDeadlineColor(task.dueDate).includes('yellow') ? '#eab308' :
-                                                    getDeadlineColor(task.dueDate).includes('blue') ? '#3b82f6' : '#22c55e'}, 
-                                                    0 0 40px ${getDeadlineColor(task.dueDate).includes('red') ? '#ef4444' : 
-                                                    getDeadlineColor(task.dueDate).includes('orange') ? '#f97316' :
-                                                    getDeadlineColor(task.dueDate).includes('yellow') ? '#eab308' :
-                                                    getDeadlineColor(task.dueDate).includes('blue') ? '#3b82f6' : '#22c55e'}80,
-                                                    inset 0 0 10px ${getDeadlineColor(task.dueDate).includes('red') ? '#ef4444' : 
-                                                    getDeadlineColor(task.dueDate).includes('orange') ? '#f97316' :
-                                                    getDeadlineColor(task.dueDate).includes('yellow') ? '#eab308' :
-                                                    getDeadlineColor(task.dueDate).includes('blue') ? '#3b82f6' : '#22c55e'}40`,
-                                                  filter: 'brightness(1.4) saturate(1.3)',
-                                                }}
-                                              />
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </Card>
+                                    <TaskCard
+                                      task={task}
+                                      index={index}
+                                      provided={provided}
+                                      snapshot={snapshot}
+                                      users={users}
+                                      taskComments={taskComments}
+                                      updateMutation={updateMutation}
+                                      getUserAvatar={getUserAvatar}
+                                      getUserInitials={getUserInitials}
+                                      handleStatusChange={handleStatusChange}
+                                      setSelectedTaskForView={setSelectedTaskForView}
+                                      getTaskTag={getTaskTag}
+                                      getProjectColor={getProjectColor}
+                                      getDeadlineColor={getDeadlineColor}
+                                    />
                                   )}
                                 </Draggable>
                               );
