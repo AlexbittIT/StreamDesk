@@ -1,0 +1,60 @@
+/* Design tokens and theme variables imported from design-website */
+:root {
+  --font-rubik: "Rubik Variable", sans-serif;
+  --font-handwritten: "Fuzzy Bubbles", sans-serif;
+
+  --breakpoint-4xl: 2048px;
+  --breakpoint-xxl: 1550px;
+
+  --color-brand-gradient-start-rgb: 154 46 255; /* #9A2EFF */
+  --color-brand-gradient-end-rgb: 209 35 162; /* #D1233E */
+
+  --color-inh-primary-rgb: 235 237 239;
+  --color-inh-primary-hover-rgb: 223 225 229; /* #DFE1E5 */
+  --color-inh-secondary-rgb: 227 229 232; /* #E3E5E8 */
+  --color-inh-secondary-hover-rgb: 210 212 216; /* #D2D4D8 */
+  --color-inh-inactive-rgb: 138 138 138; /* #8A8A8A */
+
+  --animate-booking-fake-progress: fake-progress 50s linear;
+}
+
+:root[data-theme="dark"] {
+  --color-inh-primary-rgb: 38 38 38;
+  --color-inh-primary-hover-rgb: 28 28 28; /* #1C1C1C */
+  --color-inh-secondary-rgb: 34 34 34; /* #222222 */
+  --color-inh-secondary-hover-rgb: 55 55 55; /* #373737 */
+  --color-inh-inactive-rgb: 105 105 105; /* #696969 */
+}
+
+/* Compatibility helpers and small utilities */
+*,
+::after,
+::before,
+::backdrop,
+::file-selector-button {
+  border-color: var(--color-gray-200, currentcolor);
+}
+
+@keyframes fake-progress {
+  from { width: 0%; }
+  5% { width: 40%; }
+  20% { width: 80%; }
+  40% { width: 95%; }
+  to { width: 100%; }
+}
+
+/* Gradient near primary brand color */
+.selected {
+  background-image: linear-gradient(to right, rgb(var(--color-brand-gradient-start-rgb)), rgb(var(--color-brand-gradient-end-rgb)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Basic component helpers from design theme */
+.neon-glow { box-shadow: 0 0 5px var(--neon-cyan), 0 0 20px var(--neon-cyan), 0 0 40px var(--neon-cyan); }
+.neon-glow-purple { box-shadow: 0 0 5px var(--neon-purple), 0 0 20px var(--neon-purple), 0 0 40px var(--neon-purple); }
+.neon-glow-pink { box-shadow: 0 0 5px var(--neon-pink), 0 0 20px var(--neon-pink); }
+
+/* Ensure the base font variable is available */
+:root { --font-sans: var(--font-rubik); }
