@@ -142,11 +142,11 @@ export default function Calendar() {
     <div className="space-y-3 sm:space-y-4 p-2 sm:p-0">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3">
-        <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 dark:text-white">
+        <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-slate-900 dark:text-white selected">
           Календарь событий
         </h2>
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-          <div className="flex rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5 sm:p-1 text-xs sm:text-sm">
+          <div className="flex rounded-lg p-0.5 sm:p-1 text-xs sm:text-sm bg-inherit shadow-sm" style={{backgroundColor: 'rgba(0,0,0,0.03)'}}>
             <Button 
               variant={viewMode === "month" ? "default" : "ghost"}
               size="sm"
@@ -173,7 +173,7 @@ export default function Calendar() {
             </Button>
           </div>
           <Button 
-            className="bg-primary hover:bg-primary/90 text-white shadow-sm text-xs sm:text-sm px-3 sm:px-4 h-8 sm:h-9"
+            className="bg-primary hover:bg-primary/90 text-white shadow-sm text-xs sm:text-sm px-3 sm:px-4 h-8 sm:h-9 rounded-lg"
             onClick={() => {
               setSelectedEvent(null);
               setIsFormOpen(true);
@@ -269,7 +269,7 @@ export default function Calendar() {
                             <div className={`text-xs sm:text-sm font-semibold mb-0.5 sm:mb-1 ${isToday ? 'text-primary' : isCurrentMonth ? 'text-slate-900 dark:text-white' : 'text-slate-400 dark:text-slate-500'}`}>
                               {format(day, "d")}
                             </div>
-                            <div className="space-y-0.5 sm:space-y-1 max-h-[50px] sm:max-h-[70px] overflow-y-auto">
+                            <div className="space-y-0.5 sm:space-y-1 max-h-[50px] sm:max-h-[70px] overflow-y-auto hide-scrollbar">
                               {dayEvents.slice(0, 3).map((event: any) => (
                                 <Draggable key={event.id} draggableId={event.id} index={dayEvents.indexOf(event)}>
                                   {(provided, snapshot) => (
@@ -277,7 +277,7 @@ export default function Calendar() {
                                       ref={provided.innerRef}
                                       {...provided.draggableProps}
                                       {...provided.dragHandleProps}
-                                      className={`text-[10px] sm:text-xs p-0.5 sm:p-1 rounded bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary-300 cursor-grab active:cursor-grabbing truncate ${
+                                      className={`text-[10px] sm:text-xs px-2 py-1 rounded-lg bg-gradient-to-r from-[rgb(var(--color-brand-gradient-start-rgb))] to-[rgb(var(--color-brand-gradient-end-rgb))] text-white cursor-grab active:cursor-grabbing truncate ${
                                         snapshot.isDragging ? 'opacity-50' : ''
                                       }`}
                                       onClick={(e) => {
@@ -382,7 +382,7 @@ export default function Calendar() {
                         </div>
                         
                         {/* Events */}
-                        <div className="space-y-1 sm:space-y-1.5 overflow-y-auto max-h-[80px] sm:max-h-[100px] md:max-h-[120px]">
+                        <div className="space-y-1 sm:space-y-1.5 overflow-y-auto hide-scrollbar max-h-[80px] sm:max-h-[100px] md:max-h-[120px]">
                           {dayEvents.length === 0 && !snapshot.isDraggingOver ? (
                             <p className="text-[10px] sm:text-xs text-slate-400 dark:text-slate-500 text-center py-1 sm:py-2">Нет событий</p>
                           ) : (
