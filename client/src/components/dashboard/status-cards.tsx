@@ -8,11 +8,11 @@ interface StatusCardsProps {
 export default function StatusCards({ stats }: StatusCardsProps) {
   if (!stats) {
     return (
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[...Array(4)].map((_, i) => (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+      {[...Array(4)].map((_, i) => (
           <Card key={i} className="bg-white dark:bg-slate-800/90 border-slate-200 dark:border-slate-700 animate-pulse">
-            <CardContent className="p-4">
-              <div className="h-12 bg-slate-200 dark:bg-slate-700 rounded" />
+            <CardContent className="p-2.5 sm:p-3">
+              <div className="h-9 bg-slate-200 dark:bg-slate-700 rounded" />
             </CardContent>
           </Card>
         ))}
@@ -61,37 +61,39 @@ export default function StatusCards({ stats }: StatusCardsProps) {
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
       {cards.map((card, index) => {
         const Icon = card.icon;
         return (
-          <Card 
-            key={index} 
-            className={`
-              bg-white dark:bg-slate-800/90 
-              border-slate-200 dark:border-slate-700 
-              hover:border-slate-300 dark:hover:border-slate-600
-              transition-all hover:shadow-lg dark:hover:shadow-black/20
-            `}
+          <Card
+            key={index}
+            className={"overflow-hidden relative border-0 bg-transparent"}
             data-testid={`status-card-${index}`}
           >
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 ${card.bgColor} rounded-lg flex items-center justify-center`}>
-                  <Icon className={`${card.iconColor} h-5 w-5`} />
-                </div>
-                <div>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-2xl font-bold text-slate-900 dark:text-white">{card.value}</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">{card.description}</span>
+            <CardContent className="p-0">
+              <div className="flex items-stretch gap-0 bg-white dark:bg-slate-800/95 rounded-xl shadow-sm overflow-hidden">
+                <div className="flex items-center justify-center w-24 sm:w-28 p-3 bg-gradient-to-br from-[rgb(var(--color-brand-gradient-start-rgb))] to-[rgb(var(--color-brand-gradient-end-rgb))]">
+                  <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-white/10 shadow-lg">
+                    <Icon className="w-6 h-6 text-white" />
                   </div>
-                  <p className="text-sm text-slate-600 dark:text-slate-400">{card.title}</p>
                 </div>
-                {card.indicator === "pulse" && (
-                  <div className="ml-auto">
-                    <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse" />
+
+                <div className="flex-1 p-3 sm:p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white selected">{card.value}</span>
+                        <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">{card.description}</span>
+                      </div>
+                      <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 truncate">{card.title}</p>
+                    </div>
+                    {card.indicator === "pulse" && (
+                      <div className="flex-shrink-0">
+                        <div className="w-3.5 h-3.5 rounded-full bg-emerald-500 animate-pulse shadow" />
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             </CardContent>
           </Card>
