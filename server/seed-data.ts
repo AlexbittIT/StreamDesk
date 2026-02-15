@@ -3,6 +3,18 @@ import { storage } from "./database";
 export async function seedDatabase() {
   try {
     console.log("Seeding database with sample data...");
+    
+    // Проверка подключения к базе данных перед началом
+    try {
+      await storage.getUsers();
+      console.log("✅ Database connection OK");
+    } catch (dbError: any) {
+      const errorMsg = dbError.message || String(dbError);
+      if (errorMsg.includes('ECONNREFUSED') || errorMsg.includes('fetch failed')) {
+        throw new Error(`Cannot connect to database. Please check:\n1. PostgreSQL is running\n2. DATABASE_URL in .env file is correct\n3. Database exists\n\nError: ${errorMsg}`);
+      }
+      throw dbError;
+    }
 
     // Create sample systems
     const systems = [
@@ -117,15 +129,43 @@ export async function seedDatabase() {
       await storage.createEquipment(item);
     }
 
-    // First, create an admin user for seed data
-    const adminUser = await storage.createUser({
-      username: "admin",
-      password: "admin123",
-      name: "Администратор",
-      email: "admin@streamstudio.local",
-      role: "admin",
-      permissions: ["admin:panel", "users:manage", "roles:manage", "tasks:view", "tasks:create", "tasks:edit", "tasks:delete", "tasks:assign", "equipment:view", "equipment:create", "equipment:edit", "equipment:delete", "equipment:reserve", "events:view", "events:create", "events:edit", "events:delete", "streams:view", "streams:manage", "systems:view", "systems:manage", "settings:manage"],
-    });
+    // First, check if admin user exists, if not - create it
+    let adminUser;
+    try {
+      adminUser = await storage.getUserByUsername("admin");
+      if (!adminUser) {
+        // Admin doesn't exist, create it
+        adminUser = await storage.createUser({
+          username: "admin",
+          password: "admin123",
+          name: "Администратор",
+          email: "admin@streamstudio.local",
+          role: "admin",
+          permissions: ["admin:panel", "users:manage", "roles:manage", "tasks:view", "tasks:create", "tasks:edit", "tasks:delete", "tasks:assign", "equipment:view", "equipment:create", "equipment:edit", "equipment:delete", "equipment:reserve", "events:view", "events:create", "events:edit", "events:delete", "streams:view", "streams:manage", "systems:view", "systems:manage", "settings:manage"],
+          active: true,
+        } as any);
+        console.log("✅ Admin user created");
+      } else {
+        console.log("✅ Admin user already exists");
+      }
+    } catch (error: any) {
+      console.error("Error checking/creating admin user:", error);
+      // Try to create admin anyway
+      try {
+        adminUser = await storage.createUser({
+          username: "admin",
+          password: "admin123",
+          name: "Администратор",
+          email: "admin@streamstudio.local",
+          role: "admin",
+          permissions: ["admin:panel", "users:manage", "roles:manage", "tasks:view", "tasks:create", "tasks:edit", "tasks:delete", "tasks:assign", "equipment:view", "equipment:create", "equipment:edit", "equipment:delete", "equipment:reserve", "events:view", "events:create", "events:edit", "events:delete", "streams:view", "streams:manage", "systems:view", "systems:manage", "settings:manage"],
+          active: true,
+        } as any);
+        console.log("✅ Admin user created (fallback)");
+      } catch (createError) {
+        console.error("Failed to create admin user:", createError);
+      }
+    }
 
     // Create sample events
     const events = [

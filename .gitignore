@@ -1,6 +1,253 @@
-node_modules
-dist
+# ============================================
+# StreamDesk - .gitignore
+# ============================================
+
+# ============================================
+# Зависимости
+# ============================================
+node_modules/
+client/node_modules/
+.pnp
+.pnp.js
+.yarn/
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# ============================================
+# Сборка и артефакты
+# ============================================
+dist/
+build/
+client/dist/
+client/build/
+server/dist/
+*.tsbuildinfo
+*.buildinfo
+.next/
+out/
+.cache/
+
+# ============================================
+# Переменные окружения
+# ============================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+.env.production
+.env.development
+
+# ============================================
+# Логи
+# ============================================
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+pnpm-debug.log*
+*.log
+logs/
+*.log.*
+
+# ============================================
+# Временные файлы и кэш
+# ============================================
 .DS_Store
-server/public
-vite.config.ts.*
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.tmp
+.cache/
+.temp/
+.tmp/
+
+# ============================================
+# Загрузки пользователей
+# ============================================
+uploads/
+!uploads/.gitkeep
+!uploads/transcriptions/.gitkeep
+attached_assets/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.mp4
+*.mp3
+*.wav
+*.ogg
+*.pdf
+*.doc
+*.docx
+
+# ============================================
+# База данных
+# ============================================
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+!create_connection_schemas_tables.sql
+!create_connection_schemas_tables.sql
+*.db-journal
+*.db-shm
+*.db-wal
+
+# ============================================
+# PM2 и процессы
+# ============================================
+.pm2/
+ecosystem.config.js.bak
+pm2.log
+.pm2.log
+
+# ============================================
+# SSL сертификаты и ключи
+# ============================================
+*.key
+*.crt
+*.pem
+*.cert
+*.csr
+*.p12
+*.pfx
+*.keystore
+*.jks
+ssl/
+certs/
+private/
+
+# ============================================
+# Резервные копии
+# ============================================
+*.bak
+*.backup
+*.old
+backup/
+backups/
 *.tar.gz
+*.zip
+*.rar
+*.7z
+
+# ============================================
+# Системные файлы
+# ============================================
+Thumbs.db
+desktop.ini
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ============================================
+# IDE и редакторы
+# ============================================
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ============================================
+# Тестирование
+# ============================================
+coverage/
+.nyc_output/
+*.lcov
+.jest/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# ============================================
+# TypeScript
+# ============================================
+*.tsbuildinfo
+.tsbuildinfo
+
+# ============================================
+# Vite
+# ============================================
+vite.config.ts.*
+.vite/
+
+# ============================================
+# Drizzle ORM
+# ============================================
+drizzle/
+migrations/
+
+# ============================================
+# Другие
+# ============================================
+*.pid
+*.seed
+*.pid.lock
+.npm
+.eslintcache
+.stylelintcache
+.parcel-cache
+.turbo
+.serverless/
+.fusebox/
+.dynamodb/
+.tern-port
+.vscode-test
+.yarn-integrity
+.vercel
+.netlify
+
+# ============================================
+# Специфичные для проекта
+# ============================================
+server/public/
+*.tar.gz
+encode-password.html
+
+# ============================================
+# Временные файлы проекта
+# ============================================
+*.local
+*.local.*
+local/
+temp/
+tmp/

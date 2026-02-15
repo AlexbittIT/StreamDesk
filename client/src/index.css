@@ -1,8 +1,110 @@
+@import "@fontsource-variable/rubik";
+@import "@fontsource/fuzzy-bubbles";
+@import "@fontsource/roboto";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Масштаб и читаемость: стабильный размер, контент не съезжает */
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  box-sizing: border-box;
+}
+*, *::before, *::after {
+  box-sizing: inherit;
+}
+body {
+  min-height: 100vh;
+  line-height: 1.5;
+  min-width: 320px;
+  overflow-x: hidden;
+}
+#root {
+  min-width: 0;
+  min-height: 100vh;
+}
+#main-content {
+  min-width: 0;
+  overflow-x: hidden;
+}
+#main-content main {
+  max-width: 1600px;
+  margin-left: auto;
+  margin-right: auto;
+  min-width: 0;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+@media (min-width: 640px) {
+  #main-content main {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+@media (min-width: 768px) {
+  #main-content main {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+}
+
+/* Скрытие полос прокрутки везде — контент остаётся прокручиваемым */
+html,
+body,
+#root {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+.hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+
+/* Плавное вращение рамки логотипа на странице входа */
+@keyframes logo-frame-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-logo-frame {
+  animation: logo-frame-spin 5s linear infinite;
+}
+
+/* Сканлайн на экране монитора при входе */
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+/* Базовая адаптивная обёртка для контента вкладок */
+.page-content {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
 :root {
+  --font-rubik: "Rubik Variable", sans-serif;
+  --font-handwritten: "Fuzzy Bubbles", sans-serif;
   --background: hsl(0, 0%, 100%);
   --foreground: hsl(222, 47%, 11%);
   --muted: hsl(210, 40%, 96%);
@@ -71,6 +173,181 @@
   --neon-orange: hsl(38, 92%, 55%);
 }
 
+/* Неоновая RGB тема - классическая */
+.neon {
+  --background: hsl(224, 71%, 2%);
+  --foreground: hsl(213, 31%, 95%);
+  --muted: hsl(223, 47%, 8%);
+  --muted-foreground: hsl(215, 20%, 70%);
+  --popover: hsl(224, 71%, 2%);
+  --popover-foreground: hsl(213, 31%, 95%);
+  --card: hsl(224, 47%, 4%);
+  --card-foreground: hsl(213, 31%, 95%);
+  --border: hsl(180, 100%, 30%);
+  --input: hsl(216, 34%, 15%);
+  --primary: hsl(180, 100%, 60%);
+  --primary-foreground: hsl(222, 47%, 1.2%);
+  --secondary: hsl(223, 47%, 8%);
+  --secondary-foreground: hsl(213, 31%, 95%);
+  --accent: hsl(180, 100%, 40%);
+  --accent-foreground: hsl(213, 31%, 95%);
+  --destructive: hsl(0, 63%, 40%);
+  --destructive-foreground: hsl(210, 40%, 98%);
+  --ring: hsl(180, 100%, 50%);
+  
+  --surface: hsl(224, 47%, 6%);
+  --error: hsl(0, 72%, 60%);
+  --success: hsl(142, 76%, 50%);
+  --warning: hsl(38, 92%, 60%);
+  
+  --neon-cyan: hsl(180, 100%, 60%);
+  --neon-purple: hsl(280, 100%, 70%);
+  --neon-pink: hsl(320, 100%, 70%);
+  --neon-green: hsl(142, 76%, 55%);
+  --neon-blue: hsl(210, 100%, 70%);
+  --neon-orange: hsl(38, 92%, 60%);
+}
+
+/* Неоновая тема - Cyan (голубая) */
+.neon-cyan {
+  --background: hsl(200, 100%, 3%);
+  --foreground: hsl(180, 100%, 95%);
+  --muted: hsl(200, 100%, 8%);
+  --muted-foreground: hsl(180, 50%, 70%);
+  --popover: hsl(200, 100%, 3%);
+  --popover-foreground: hsl(180, 100%, 95%);
+  --card: hsl(200, 100%, 5%);
+  --card-foreground: hsl(180, 100%, 95%);
+  --border: hsl(180, 100%, 40%);
+  --input: hsl(200, 100%, 10%);
+  --primary: hsl(180, 100%, 60%);
+  --primary-foreground: hsl(200, 100%, 5%);
+  --secondary: hsl(200, 100%, 8%);
+  --secondary-foreground: hsl(180, 100%, 95%);
+  --accent: hsl(180, 100%, 50%);
+  --accent-foreground: hsl(200, 100%, 5%);
+  --destructive: hsl(0, 100%, 50%);
+  --destructive-foreground: hsl(180, 100%, 95%);
+  --ring: hsl(180, 100%, 60%);
+  
+  --surface: hsl(200, 100%, 6%);
+  --error: hsl(0, 100%, 60%);
+  --success: hsl(180, 100%, 50%);
+  --warning: hsl(60, 100%, 50%);
+  
+  --neon-cyan: hsl(180, 100%, 60%);
+  --neon-purple: hsl(280, 100%, 70%);
+  --neon-pink: hsl(320, 100%, 70%);
+  --neon-green: hsl(142, 76%, 55%);
+  --neon-blue: hsl(210, 100%, 70%);
+  --neon-orange: hsl(38, 92%, 60%);
+}
+
+/* Неоновая тема - Purple (фиолетовая) */
+.neon-purple {
+  --background: hsl(280, 100%, 3%);
+  --foreground: hsl(280, 100%, 95%);
+  --muted: hsl(280, 100%, 8%);
+  --muted-foreground: hsl(280, 50%, 70%);
+  --popover: hsl(280, 100%, 3%);
+  --popover-foreground: hsl(280, 100%, 95%);
+  --card: hsl(280, 100%, 5%);
+  --card-foreground: hsl(280, 100%, 95%);
+  --border: hsl(280, 100%, 40%);
+  --input: hsl(280, 100%, 10%);
+  --primary: hsl(280, 100%, 70%);
+  --primary-foreground: hsl(280, 100%, 5%);
+  --secondary: hsl(280, 100%, 8%);
+  --secondary-foreground: hsl(280, 100%, 95%);
+  --accent: hsl(280, 100%, 60%);
+  --accent-foreground: hsl(280, 100%, 5%);
+  --destructive: hsl(0, 100%, 50%);
+  --destructive-foreground: hsl(280, 100%, 95%);
+  --ring: hsl(280, 100%, 70%);
+  
+  --surface: hsl(280, 100%, 6%);
+  --error: hsl(0, 100%, 60%);
+  --success: hsl(280, 100%, 60%);
+  --warning: hsl(60, 100%, 50%);
+  
+  --neon-cyan: hsl(180, 100%, 60%);
+  --neon-purple: hsl(280, 100%, 70%);
+  --neon-pink: hsl(320, 100%, 70%);
+  --neon-green: hsl(142, 76%, 55%);
+  --neon-blue: hsl(210, 100%, 70%);
+  --neon-orange: hsl(38, 92%, 60%);
+}
+
+/* Неоновая тема - Pink (розовая) */
+.neon-pink {
+  --background: hsl(320, 100%, 3%);
+  --foreground: hsl(320, 100%, 95%);
+  --muted: hsl(320, 100%, 8%);
+  --muted-foreground: hsl(320, 50%, 70%);
+  --popover: hsl(320, 100%, 3%);
+  --popover-foreground: hsl(320, 100%, 95%);
+  --card: hsl(320, 100%, 5%);
+  --card-foreground: hsl(320, 100%, 95%);
+  --border: hsl(320, 100%, 40%);
+  --input: hsl(320, 100%, 10%);
+  --primary: hsl(320, 100%, 70%);
+  --primary-foreground: hsl(320, 100%, 5%);
+  --secondary: hsl(320, 100%, 8%);
+  --secondary-foreground: hsl(320, 100%, 95%);
+  --accent: hsl(320, 100%, 60%);
+  --accent-foreground: hsl(320, 100%, 5%);
+  --destructive: hsl(0, 100%, 50%);
+  --destructive-foreground: hsl(320, 100%, 95%);
+  --ring: hsl(320, 100%, 70%);
+  
+  --surface: hsl(320, 100%, 6%);
+  --error: hsl(0, 100%, 60%);
+  --success: hsl(320, 100%, 60%);
+  --warning: hsl(60, 100%, 50%);
+  
+  --neon-cyan: hsl(180, 100%, 60%);
+  --neon-purple: hsl(280, 100%, 70%);
+  --neon-pink: hsl(320, 100%, 70%);
+  --neon-green: hsl(142, 76%, 55%);
+  --neon-blue: hsl(210, 100%, 70%);
+  --neon-orange: hsl(38, 92%, 60%);
+}
+
+/* Неоновая тема - Rainbow (радужная, цветная) */
+.neon-rainbow {
+  --background: hsl(0, 0%, 2%);
+  --foreground: hsl(0, 0%, 95%);
+  --muted: hsl(0, 0%, 8%);
+  --muted-foreground: hsl(0, 0%, 70%);
+  --popover: hsl(0, 0%, 2%);
+  --popover-foreground: hsl(0, 0%, 95%);
+  --card: hsl(0, 0%, 4%);
+  --card-foreground: hsl(0, 0%, 95%);
+  --border: hsl(180, 100%, 40%);
+  --input: hsl(0, 0%, 10%);
+  --primary: hsl(180, 100%, 60%);
+  --primary-foreground: hsl(0, 0%, 5%);
+  --secondary: hsl(0, 0%, 8%);
+  --secondary-foreground: hsl(0, 0%, 95%);
+  --accent: hsl(280, 100%, 60%);
+  --accent-foreground: hsl(0, 0%, 5%);
+  --destructive: hsl(0, 100%, 50%);
+  --destructive-foreground: hsl(0, 0%, 95%);
+  --ring: hsl(180, 100%, 60%);
+  
+  --surface: hsl(0, 0%, 6%);
+  --error: hsl(0, 100%, 60%);
+  --success: hsl(142, 100%, 50%);
+  --warning: hsl(60, 100%, 50%);
+  
+  --neon-cyan: hsl(180, 100%, 60%);
+  --neon-purple: hsl(280, 100%, 70%);
+  --neon-pink: hsl(320, 100%, 70%);
+  --neon-green: hsl(142, 76%, 55%);
+  --neon-blue: hsl(210, 100%, 70%);
+  --neon-orange: hsl(38, 92%, 60%);
+}
+
 @layer base {
   * {
     @apply border-border;
@@ -78,7 +355,7 @@
 
   body {
     @apply font-sans antialiased bg-background text-foreground;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+    font-family: var(--font-rubik), -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   }
 }
 
@@ -212,11 +489,19 @@
   }
 
   .hide-scrollbar {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
+    -ms-overflow-style: none !important;
+    scrollbar-width: none !important;
   }
   .hide-scrollbar::-webkit-scrollbar {
-    display: none;
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  .hide-scrollbar::-webkit-scrollbar-track {
+    display: none !important;
+  }
+  .hide-scrollbar::-webkit-scrollbar-thumb {
+    display: none !important;
   }
 
   .safe-area-top {
@@ -291,4 +576,298 @@
 
 .animate-neon-pulse {
   animation: neon-pulse 2s ease-in-out infinite;
+}
+
+/* Неоновая RGB тема - стили */
+.neon * {
+  border-color: rgba(6, 182, 212, 0.2) !important;
+}
+
+/* Неоновые эффекты для всех неоновых тем */
+.neon .card,
+.neon [class*="Card"],
+.neon-cyan .card,
+.neon-cyan [class*="Card"],
+.neon-purple .card,
+.neon-purple [class*="Card"],
+.neon-pink .card,
+.neon-pink [class*="Card"],
+.neon-rainbow .card,
+.neon-rainbow [class*="Card"] {
+  border: 1px solid var(--primary) !important;
+  box-shadow: 0 0 10px var(--primary), 
+              0 0 20px var(--primary),
+              inset 0 0 10px var(--primary) !important;
+  transition: all 0.3s ease !important;
+}
+
+.neon .card:hover,
+.neon [class*="Card"]:hover,
+.neon-cyan .card:hover,
+.neon-cyan [class*="Card"]:hover,
+.neon-purple .card:hover,
+.neon-purple [class*="Card"]:hover,
+.neon-pink .card:hover,
+.neon-pink [class*="Card"]:hover,
+.neon-rainbow .card:hover,
+.neon-rainbow [class*="Card"]:hover {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 20px var(--primary), 
+              0 0 40px var(--primary),
+              inset 0 0 20px var(--primary) !important;
+  transform: translateY(-2px) !important;
+}
+
+/* Неоновые кнопки */
+.neon button,
+.neon [class*="Button"],
+.neon-cyan button,
+.neon-cyan [class*="Button"],
+.neon-purple button,
+.neon-purple [class*="Button"],
+.neon-pink button,
+.neon-pink [class*="Button"],
+.neon-rainbow button,
+.neon-rainbow [class*="Button"] {
+  border: 1px solid var(--primary) !important;
+  box-shadow: 0 0 8px var(--primary) !important;
+  transition: all 0.3s ease !important;
+}
+
+.neon button:hover,
+.neon [class*="Button"]:hover,
+.neon-cyan button:hover,
+.neon-cyan [class*="Button"]:hover,
+.neon-purple button:hover,
+.neon-purple [class*="Button"]:hover,
+.neon-pink button:hover,
+.neon-pink [class*="Button"]:hover,
+.neon-rainbow button:hover,
+.neon-rainbow [class*="Button"]:hover {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 20px var(--primary),
+              0 0 30px var(--primary) !important;
+  transform: scale(1.05) !important;
+}
+
+/* Неоновые поля ввода */
+.neon input,
+.neon textarea,
+.neon select,
+.neon [class*="Input"],
+.neon [class*="Textarea"],
+.neon [class*="Select"],
+.neon-cyan input,
+.neon-cyan textarea,
+.neon-cyan select,
+.neon-purple input,
+.neon-purple textarea,
+.neon-purple select,
+.neon-pink input,
+.neon-pink textarea,
+.neon-pink select,
+.neon-rainbow input,
+.neon-rainbow textarea,
+.neon-rainbow select {
+  border: 1px solid var(--primary) !important;
+  box-shadow: 0 0 5px var(--primary),
+              inset 0 0 5px var(--primary) !important;
+  background: var(--background) !important;
+  color: var(--foreground) !important;
+}
+
+.neon input:focus,
+.neon textarea:focus,
+.neon select:focus,
+.neon-cyan input:focus,
+.neon-cyan textarea:focus,
+.neon-cyan select:focus,
+.neon-purple input:focus,
+.neon-purple textarea:focus,
+.neon-purple select:focus,
+.neon-pink input:focus,
+.neon-pink textarea:focus,
+.neon-pink select:focus,
+.neon-rainbow input:focus,
+.neon-rainbow textarea:focus,
+.neon-rainbow select:focus {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 15px var(--primary),
+              0 0 25px var(--primary),
+              inset 0 0 10px var(--primary) !important;
+  outline: none !important;
+}
+
+/* Неоновые заголовки */
+.neon h1, .neon h2, .neon h3,
+.neon [class*="Title"],
+.neon [class*="Heading"],
+.neon-cyan h1, .neon-cyan h2, .neon-cyan h3,
+.neon-purple h1, .neon-purple h2, .neon-purple h3,
+.neon-pink h1, .neon-pink h2, .neon-pink h3,
+.neon-rainbow h1, .neon-rainbow h2, .neon-rainbow h3 {
+  text-shadow: 0 0 10px var(--primary),
+               0 0 20px var(--primary),
+               0 0 30px var(--primary) !important;
+  color: var(--primary) !important;
+}
+
+/* Неоновые бейджи */
+.neon .badge,
+.neon [class*="Badge"],
+.neon-cyan .badge,
+.neon-cyan [class*="Badge"],
+.neon-purple .badge,
+.neon-purple [class*="Badge"],
+.neon-pink .badge,
+.neon-pink [class*="Badge"],
+.neon-rainbow .badge,
+.neon-rainbow [class*="Badge"] {
+  border: 1px solid var(--primary) !important;
+  box-shadow: 0 0 8px var(--primary) !important;
+  background: var(--card) !important;
+}
+
+/* Анимация RGB свечения для неоновой темы */
+@keyframes neon-glow {
+  0%, 100% {
+    box-shadow: 0 0 10px var(--primary),
+                0 0 20px var(--primary);
+  }
+  50% {
+    box-shadow: 0 0 20px var(--primary),
+                0 0 40px var(--primary),
+                0 0 60px var(--primary);
+  }
+}
+
+@keyframes rgb-rotate {
+  0% {
+    border-color: hsl(180, 100%, 60%);
+    box-shadow: 0 0 15px hsl(180, 100%, 60%),
+                0 0 30px hsl(180, 100%, 60%);
+  }
+  25% {
+    border-color: hsl(280, 100%, 70%);
+    box-shadow: 0 0 15px hsl(280, 100%, 70%),
+                0 0 30px hsl(280, 100%, 70%);
+  }
+  50% {
+    border-color: hsl(320, 100%, 70%);
+    box-shadow: 0 0 15px hsl(320, 100%, 70%),
+                0 0 30px hsl(320, 100%, 70%);
+  }
+  75% {
+    border-color: hsl(142, 100%, 50%);
+    box-shadow: 0 0 15px hsl(142, 100%, 50%),
+                0 0 30px hsl(142, 100%, 50%);
+  }
+  100% {
+    border-color: hsl(180, 100%, 60%);
+    box-shadow: 0 0 15px hsl(180, 100%, 60%),
+                0 0 30px hsl(180, 100%, 60%);
+  }
+}
+
+@keyframes rgb-text {
+  0% {
+    text-shadow: 0 0 10px hsl(180, 100%, 60%),
+                 0 0 20px hsl(180, 100%, 60%),
+                 0 0 30px hsl(180, 100%, 60%);
+    color: hsl(180, 100%, 60%);
+  }
+  25% {
+    text-shadow: 0 0 10px hsl(280, 100%, 70%),
+                 0 0 20px hsl(280, 100%, 70%),
+                 0 0 30px hsl(280, 100%, 70%);
+    color: hsl(280, 100%, 70%);
+  }
+  50% {
+    text-shadow: 0 0 10px hsl(320, 100%, 70%),
+                 0 0 20px hsl(320, 100%, 70%),
+                 0 0 30px hsl(320, 100%, 70%);
+    color: hsl(320, 100%, 70%);
+  }
+  75% {
+    text-shadow: 0 0 10px hsl(142, 100%, 50%),
+                 0 0 20px hsl(142, 100%, 50%),
+                 0 0 30px hsl(142, 100%, 50%);
+    color: hsl(142, 100%, 50%);
+  }
+  100% {
+    text-shadow: 0 0 10px hsl(180, 100%, 60%),
+                 0 0 20px hsl(180, 100%, 60%),
+                 0 0 30px hsl(180, 100%, 60%);
+    color: hsl(180, 100%, 60%);
+  }
+}
+
+/* Радужная анимация для neon-rainbow темы */
+.neon-rainbow .card:hover,
+.neon-rainbow [class*="Card"]:hover {
+  animation: rgb-rotate 3s ease-in-out infinite;
+}
+
+.neon-rainbow h1, .neon-rainbow h2, .neon-rainbow h3,
+.neon-rainbow [class*="Title"],
+.neon-rainbow [class*="Heading"] {
+  animation: rgb-text 4s ease-in-out infinite;
+}
+
+.neon-rainbow button:hover,
+.neon-rainbow [class*="Button"]:hover {
+  animation: rgb-rotate 2s ease-in-out infinite;
+}
+
+.neon-rainbow .neon-glow-item {
+  animation: rgb-rotate 3s ease-in-out infinite;
+}
+
+/* Пульсирующее свечение для всех неоновых тем */
+.neon .neon-glow-item,
+.neon-cyan .neon-glow-item,
+.neon-purple .neon-glow-item,
+.neon-pink .neon-glow-item {
+  animation: neon-glow 2s ease-in-out infinite;
+}
+
+/* Стили для тем для зрения */
+.warm .card,
+.warm [class*="Card"],
+.high-contrast .card,
+.high-contrast [class*="Card"],
+.sepia .card,
+.sepia [class*="Card"] {
+  border: 1px solid var(--border) !important;
+  transition: all 0.3s ease !important;
+}
+
+.warm .card:hover,
+.warm [class*="Card"]:hover,
+.high-contrast .card:hover,
+.high-contrast [class*="Card"]:hover,
+.sepia .card:hover,
+.sepia [class*="Card"]:hover {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 10px var(--primary) !important;
+}
+
+/* Высокий контраст - более четкие границы */
+.high-contrast .card,
+.high-contrast [class*="Card"] {
+  border-width: 2px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5) !important;
+}
+
+.high-contrast button,
+.high-contrast [class*="Button"] {
+  border-width: 2px !important;
+  font-weight: 600 !important;
+}
+
+.high-contrast input,
+.high-contrast textarea,
+.high-contrast select {
+  border-width: 2px !important;
+  font-weight: 500 !important;
 }

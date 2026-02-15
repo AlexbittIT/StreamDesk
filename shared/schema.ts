@@ -151,7 +151,7 @@ export const tasks = pgTable("tasks", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   title: text("title").notNull(),
   description: text("description"),
-  status: text("status").notNull().default("todo"), // todo, in_progress, review, done, cancelled
+  status: text("status").notNull().default("todo"), // todo, in_progress, review, done, cancelled или ID столбца проекта
   priority: text("priority").notNull().default("medium"), // low, medium, high, urgent
   creatorId: varchar("creator_id").references(() => users.id).notNull(),
   assigneeId: varchar("assignee_id").references(() => users.id),
@@ -159,11 +159,15 @@ export const tasks = pgTable("tasks", {
   startDate: timestamp("start_date"),
   completedAt: timestamp("completed_at"),
   category: text("category"), // production, equipment, stream, admin, other
+  projectId: varchar("project_id").references(() => projects.id), // связь с проектом
+  projectColumnId: varchar("project_column_id").references(() => projectColumns.id), // связь со столбцом проекта
   tags: jsonb("tags").default('[]'),
   attachments: jsonb("attachments").default('[]'),
   parentTaskId: varchar("parent_task_id"), // для подзадач
   estimatedHours: integer("estimated_hours"),
   actualHours: integer("actual_hours"),
+  repository: text("repository"), // ссылка на репозиторий (GitHub, GitLab и т.д.)
+  links: jsonb("links").default('[]'), // массив ссылок [{ title: string, url: string }]
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -227,6 +231,17 @@ export const projects = pgTable("projects", {
   storageLocation: text("storage_location"),
   estimatedSize: text("estimated_size"),
   notes: text("notes"),
+  columns: jsonb("columns").default('[]'), // Кастомные столбцы для Kanban
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Таблица для кастомных столбцов проектов
+export const projectColumns = pgTable("project_columns", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").references(() => projects.id).notNull(),
+  name: text("name").notNull(),
+  order: integer("order").notNull().default(0),
+  color: text("color"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -236,6 +251,76 @@ export const customLocations = pgTable("custom_locations", {
   description: text("description"),
   type: text("type").default("storage"),
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Репозитории для задач
+export const repositories = pgTable("repositories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  url: text("url").notNull(),
+  type: text("type").default("github"), // github, gitlab, bitbucket, other
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// ChatGPT чаты
+export const chatSessions = pgTable("chat_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  title: text("title").notNull(),
+  modelId: text("model_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Сообщения в чатах
+export const chatMessages = pgTable("chat_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: varchar("session_id").references(() => chatSessions.id).notNull(),
+  role: text("role").notNull(), // user, assistant
+  content: text("content").notNull(),
+  attachments: jsonb("attachments").default('[]'), // массив файлов
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// vMix Scheduler Events
+export const vmixSchedulerEvents = pgTable("vmix_scheduler_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  startTime: timestamp("start_time").notNull(),
+  endTime: timestamp("end_time"),
+  status: text("status").notNull().default("scheduled"), // scheduled, live, completed, error
+  actions: jsonb("actions").default('[]'), // массив действий ["PreviewInput1", "Cut", "StartStreaming"]
+  input: text("input"), // номер инпута для переключения
+  vmixHost: text("vmix_host"),
+  vmixPort: integer("vmix_port"),
+  executedAt: timestamp("executed_at"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Connection Schemas (Схемы подключения)
+export const connectionSchemas = pgTable("connection_schemas", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Connection Schema Components (Компоненты схем подключения: компьютеры, входы, кабели и т.д.)
+export const connectionSchemaComponents = pgTable("connection_schema_components", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  schemaId: varchar("schema_id").references(() => connectionSchemas.id).notNull(),
+  type: text("type").notNull(), // computer, input, cable, signal, extender, splitter, etc.
+  name: text("name").notNull(),
+  position: jsonb("position").default('{"x": 0, "y": 0}'), // позиция на схеме
+  properties: jsonb("properties").default('{}'), // дополнительные свойства (IP, порты, тип сигнала и т.д.)
+  connections: jsonb("connections").default('[]'), // массив связей с другими компонентами
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Insert schemas
@@ -328,6 +413,41 @@ export const insertCustomLocationSchema = createInsertSchema(customLocations).om
   createdAt: true,
 });
 
+export const insertRepositorySchema = createInsertSchema(repositories).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertChatSessionSchema = createInsertSchema(chatSessions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertVmixSchedulerEventSchema = createInsertSchema(vmixSchedulerEvents).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertConnectionSchemaSchema = createInsertSchema(connectionSchemas).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertConnectionSchemaComponentSchema = createInsertSchema(connectionSchemaComponents).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -380,8 +500,29 @@ export type InsertComputer = z.infer<typeof insertComputerSchema>;
 export type Project = typeof projects.$inferSelect;
 export type InsertProject = z.infer<typeof insertProjectSchema>;
 
+export type ProjectColumn = typeof projectColumns.$inferSelect;
+export type InsertProjectColumn = typeof projectColumns.$inferInsert;
+
 export type CustomLocation = typeof customLocations.$inferSelect;
 export type InsertCustomLocation = z.infer<typeof insertCustomLocationSchema>;
+
+export type Repository = typeof repositories.$inferSelect;
+export type InsertRepository = z.infer<typeof insertRepositorySchema>;
+
+export type ChatSession = typeof chatSessions.$inferSelect;
+export type InsertChatSession = z.infer<typeof insertChatSessionSchema>;
+
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
+
+export type VmixSchedulerEvent = typeof vmixSchedulerEvents.$inferSelect;
+export type InsertVmixSchedulerEvent = z.infer<typeof insertVmixSchedulerEventSchema>;
+
+export type ConnectionSchema = typeof connectionSchemas.$inferSelect;
+export type InsertConnectionSchema = z.infer<typeof insertConnectionSchemaSchema>;
+
+export type ConnectionSchemaComponent = typeof connectionSchemaComponents.$inferSelect;
+export type InsertConnectionSchemaComponent = z.infer<typeof insertConnectionSchemaComponentSchema>;
 
 // Константы для разрешений
 export const PERMISSIONS = {

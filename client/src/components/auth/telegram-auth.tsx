@@ -168,7 +168,7 @@ export function TelegramAuth({ onSuccess }: TelegramAuthProps) {
               <div className="text-sm text-blue-800">
                 <p className="font-medium mb-1">Как подключить Telegram:</p>
                 <ol className="list-decimal list-inside space-y-1 text-xs">
-                  <li>Найдите @StreamStudioBot в Telegram</li>
+                  <li>Найдите @StreamDeskBot в Telegram</li>
                   <li>Отправьте команду /start</li>
                   <li>Скопируйте ваш Telegram ID из ответа бота</li>
                   <li>Заполните форму ниже</li>

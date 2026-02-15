@@ -62,7 +62,7 @@ export default function Streams() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold text-gray-900">Статистика стримов</h2>
+        <div />
         <Button>
           <Plus className="w-4 h-4 mr-2" />
           Создать стрим

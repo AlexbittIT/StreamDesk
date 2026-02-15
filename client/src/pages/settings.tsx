@@ -4,19 +4,26 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings as SettingsIcon, User, Bell, Shield, Palette, Globe } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Settings as SettingsIcon, User, Bell, Shield, Palette, Globe, Smartphone, Languages } from "lucide-react";
 import { TelegramAuth } from "@/components/auth/telegram-auth";
+import { usePushNotifications } from "@/hooks/use-push-notifications";
+import { Badge } from "@/components/ui/badge";
+import { useI18n } from "@/hooks/use-i18n";
+import { cn } from "@/lib/utils";
 
 export default function Settings() {
+  const { isSupported, isSubscribed, subscribe, unsubscribe } = usePushNotifications();
+  const { language, setLanguage, t } = useI18n();
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-semibold text-gray-900">Настройки</h2>
         <p className="text-gray-600">Управление настройками приложения и профиля</p>
       </div>
 
       <Tabs defaultValue="profile" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="profile" className="flex items-center space-x-2">
             <User className="w-4 h-4" />
             <span className="hidden sm:inline">Профиль</span>
@@ -32,6 +39,10 @@ export default function Settings() {
           <TabsTrigger value="appearance" className="flex items-center space-x-2">
             <Palette className="w-4 h-4" />
             <span className="hidden sm:inline">Внешний вид</span>
+          </TabsTrigger>
+          <TabsTrigger value="language" className="flex items-center space-x-2">
+            <Languages className="w-4 h-4" />
+            <span className="hidden sm:inline">Язык</span>
           </TabsTrigger>
           <TabsTrigger value="integrations" className="flex items-center space-x-2">
             <Globe className="w-4 h-4" />
@@ -130,6 +141,38 @@ export default function Settings() {
                 </div>
               </div>
 
+              {/* Push Notifications */}
+              <div className="border-t pt-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Label htmlFor="push-notifications">Push-уведомления в браузере</Label>
+                      {!isSupported && (
+                        <Badge variant="secondary" className="text-xs">Не поддерживается</Badge>
+                      )}
+                      {isSupported && isSubscribed && (
+                        <Badge variant="default" className="text-xs bg-green-500">Включено</Badge>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-600">
+                      Получать уведомления даже когда браузер закрыт
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isSupported && (
+                      <Button
+                        onClick={() => isSubscribed ? unsubscribe() : subscribe()}
+                        variant={isSubscribed ? "destructive" : "default"}
+                        size="sm"
+                      >
+                        <Smartphone className="w-4 h-4 mr-2" />
+                        {isSubscribed ? "Отключить" : "Включить"}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="flex justify-end">
                 <Button>Сохранить настройки</Button>
               </div>
@@ -189,18 +232,40 @@ export default function Settings() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="dark-mode">Темная тема</Label>
-                    <p className="text-sm text-gray-600">Использовать темную цветовую схему</p>
+                <div>
+                  <Label className="text-base font-semibold mb-3 block">Выбор темы</Label>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Используйте переключатель темы в правом верхнем углу для выбора темы
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className={cn(
+                      "p-3 rounded-lg border-2 cursor-pointer transition-all",
+                      "bg-gradient-to-br from-white to-gray-50 border-gray-200 hover:border-primary"
+                    )}>
+                      <Sun className="w-6 h-6 mx-auto mb-2 text-yellow-500" />
+                      <p className="text-xs text-center font-medium">Светлая</p>
+                    </div>
+                    <div className={cn(
+                      "p-3 rounded-lg border-2 cursor-pointer transition-all",
+                      "bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-primary"
+                    )}>
+                      <Moon className="w-6 h-6 mx-auto mb-2 text-blue-300" />
+                      <p className="text-xs text-center font-medium text-white">Тёмная</p>
+                    </div>
+                    <div className={cn(
+                      "p-3 rounded-lg border-2 cursor-pointer transition-all neon-rainbow",
+                      "bg-gradient-to-br from-cyan-900/50 via-purple-900/50 to-pink-900/50 border-cyan-500/50 hover:border-cyan-400"
+                    )}>
+                      <Sparkles className="w-6 h-6 mx-auto mb-2 text-cyan-400 animate-pulse" />
+                      <p className="text-xs text-center font-medium text-cyan-300">Rainbow</p>
+                    </div>
                   </div>
-                  <Switch id="dark-mode" />
                 </div>
 
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between pt-4 border-t">
                   <div>
                     <Label htmlFor="compact-mode">Компактный вид</Label>
-                    <p className="text-sm text-gray-600">Уменьшить отступы и размеры элементов</p>
+                    <p className="text-sm text-muted-foreground">Уменьшить отступы и размеры элементов</p>
                   </div>
                   <Switch id="compact-mode" />
                 </div>
@@ -208,7 +273,7 @@ export default function Settings() {
                 <div className="flex items-center justify-between">
                   <div>
                     <Label htmlFor="animations">Анимации</Label>
-                    <p className="text-sm text-gray-600">Включить анимации интерфейса</p>
+                    <p className="text-sm text-muted-foreground">Включить анимации интерфейса</p>
                   </div>
                   <Switch id="animations" defaultChecked />
                 </div>
@@ -216,6 +281,36 @@ export default function Settings() {
 
               <div className="flex justify-end">
                 <Button>Применить настройки</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="language">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <Languages className="w-5 h-5 mr-2" />
+                Язык интерфейса
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="language">Выберите язык</Label>
+                  <Select value={language} onValueChange={(value) => setLanguage(value as 'ru' | 'en')}>
+                    <SelectTrigger id="language">
+                      <SelectValue placeholder="Выберите язык" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ru">Русский</SelectItem>
+                      <SelectItem value="en">English</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-sm text-muted-foreground">
+                    Изменения применятся сразу после выбора
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>

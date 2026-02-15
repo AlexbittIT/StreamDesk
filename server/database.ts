@@ -1,10 +1,12 @@
-import { drizzle } from "drizzle-orm/neon-http";
-import { neon } from "@neondatabase/serverless";
+// Поддержка как локального PostgreSQL, так и Neon
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 import { 
   users, events, equipment, systems, streams, notifications,
   equipmentReservations, telegramUsers, obsConnections, analyticsEvents,
   eventParticipants, tasks, taskComments, taskHistory, roles,
-  computers, projects, customLocations,
+  computers, projects, projectColumns, customLocations, chatSessions, chatMessages, repositories,
+  vmixSchedulerEvents, connectionSchemas, connectionSchemaComponents,
   type User, type InsertUser,
   type Event, type InsertEvent,
   type Equipment, type InsertEquipment,
@@ -22,12 +24,33 @@ import {
   type Role, type InsertRole,
   type Computer, type InsertComputer,
   type Project, type InsertProject,
-  type CustomLocation, type InsertCustomLocation
+  type ProjectColumn, type InsertProjectColumn,
+  type CustomLocation, type InsertCustomLocation,
+  type ChatSession, type InsertChatSession,
+  type ChatMessage, type InsertChatMessage,
+  type Repository, type InsertRepository,
+  type VmixSchedulerEvent, type InsertVmixSchedulerEvent,
+  type ConnectionSchema, type InsertConnectionSchema,
+  type ConnectionSchemaComponent, type InsertConnectionSchemaComponent
 } from "@shared/schema";
 import { eq, and, gte, lte, sql, or, isNull } from "drizzle-orm";
 
-const connectionString = process.env.DATABASE_URL!;
-const client = neon(connectionString);
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error("DATABASE_URL environment variable is not set!");
+}
+
+// Создаем клиент PostgreSQL с настройками для стабильного подключения
+const client = postgres(connectionString, {
+  max: 1, // Один клиент для development
+  idle_timeout: 20,
+  connect_timeout: 5, // 5 секунд для быстрого подключения
+  max_lifetime: 60 * 30, // 30 минут
+  prepare: false, // Отключить prepared statements для совместимости
+  statement_timeout: 5000, // 5 секунд таймаут для SQL запросов (быстро!)
+});
+
 export const db = drizzle(client);
 
 export interface IStorage {
@@ -112,6 +135,7 @@ export interface IStorage {
   getTaskById(id: string): Promise<Task | undefined>;
   getTasksByAssignee(assigneeId: string): Promise<Task[]>;
   getTasksByCreator(creatorId: string): Promise<Task[]>;
+  getTasksByAssigneeOrCreator(userId: string): Promise<Task[]>;
   getTasksByStatus(status: string): Promise<Task[]>;
   createTask(task: InsertTask): Promise<Task>;
   updateTask(id: string, task: Partial<Task>): Promise<Task | undefined>;
@@ -148,10 +172,24 @@ export interface IStorage {
   updateProject(id: string, project: Partial<Project>): Promise<Project | undefined>;
   deleteProject(id: string): Promise<boolean>;
   
+  // Project Columns
+  getProjectColumns(projectId: string): Promise<ProjectColumn[]>;
+  createProjectColumn(column: InsertProjectColumn): Promise<ProjectColumn>;
+  updateProjectColumn(id: string, column: Partial<ProjectColumn>): Promise<ProjectColumn | undefined>;
+  deleteProjectColumn(id: string): Promise<boolean>;
+  reorderProjectColumns(projectId: string, columnIds: string[]): Promise<void>;
+  
   // Custom Locations
   getCustomLocations(): Promise<CustomLocation[]>;
   createCustomLocation(location: InsertCustomLocation): Promise<CustomLocation>;
   deleteCustomLocation(id: string): Promise<boolean>;
+  
+  // Repositories
+  getRepositories(): Promise<Repository[]>;
+  getRepositoryById(id: string): Promise<Repository | undefined>;
+  createRepository(repository: InsertRepository): Promise<Repository>;
+  updateRepository(id: string, repository: Partial<Repository>): Promise<Repository | undefined>;
+  deleteRepository(id: string): Promise<boolean>;
 }
 
 export class PostgreSQLStorage implements IStorage {
@@ -476,6 +514,12 @@ export class PostgreSQLStorage implements IStorage {
       .orderBy(sql`${tasks.createdAt} DESC`);
   }
 
+  async getTasksByAssigneeOrCreator(userId: string): Promise<Task[]> {
+    return await db.select().from(tasks)
+      .where(or(eq(tasks.assigneeId, userId), eq(tasks.creatorId, userId)))
+      .orderBy(sql`${tasks.createdAt} DESC`);
+  }
+
   async getTasksByStatus(status: string): Promise<Task[]> {
     return await db.select().from(tasks)
       .where(eq(tasks.status, status))
@@ -603,8 +647,50 @@ export class PostgreSQLStorage implements IStorage {
   }
 
   async deleteProject(id: string): Promise<boolean> {
+    // Сначала удаляем все столбцы проекта
+    await db.delete(projectColumns).where(eq(projectColumns.projectId, id));
+    // Затем удаляем сам проект
     const result = await db.delete(projects).where(eq(projects.id, id));
     return (result.rowCount ?? 0) > 0;
+  }
+
+  // Project Columns
+  async getProjectColumns(projectId: string): Promise<ProjectColumn[]> {
+    return await db.select().from(projectColumns)
+      .where(eq(projectColumns.projectId, projectId))
+      .orderBy(sql`${projectColumns.order} ASC`);
+  }
+
+  async createProjectColumn(insertColumn: InsertProjectColumn): Promise<ProjectColumn> {
+    const result = await db.insert(projectColumns).values(insertColumn).returning();
+    return result[0];
+  }
+
+  async updateProjectColumn(id: string, columnData: Partial<ProjectColumn>): Promise<ProjectColumn | undefined> {
+    const result = await db.update(projectColumns)
+      .set(columnData)
+      .where(eq(projectColumns.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteProjectColumn(id: string): Promise<boolean> {
+    const result = await db.delete(projectColumns).where(eq(projectColumns.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async reorderProjectColumns(projectId: string, columnIds: string[]): Promise<void> {
+    // Обновляем порядок всех столбцов за один запрос
+    await Promise.all(
+      columnIds.map((columnId, index) =>
+        db.update(projectColumns)
+          .set({ order: index })
+          .where(and(
+            eq(projectColumns.id, columnId),
+            eq(projectColumns.projectId, projectId)
+          ))
+      )
+    );
   }
 
   // Custom Locations
@@ -619,6 +705,185 @@ export class PostgreSQLStorage implements IStorage {
 
   async deleteCustomLocation(id: string): Promise<boolean> {
     const result = await db.delete(customLocations).where(eq(customLocations.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Repositories
+  async getRepositories(): Promise<Repository[]> {
+    return await db.select().from(repositories).orderBy(repositories.name);
+  }
+
+  async getRepositoryById(id: string): Promise<Repository | undefined> {
+    const result = await db.select().from(repositories).where(eq(repositories.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createRepository(insertRepository: InsertRepository): Promise<Repository> {
+    const result = await db.insert(repositories).values(insertRepository).returning();
+    return result[0];
+  }
+
+  async updateRepository(id: string, repositoryData: Partial<Repository>): Promise<Repository | undefined> {
+    const result = await db.update(repositories)
+      .set({ ...repositoryData, updatedAt: new Date() })
+      .where(eq(repositories.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteRepository(id: string): Promise<boolean> {
+    const result = await db.delete(repositories).where(eq(repositories.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Chat Sessions
+  async getChatSessionsByUser(userId: string): Promise<ChatSession[]> {
+    return await db.select().from(chatSessions)
+      .where(eq(chatSessions.userId, userId))
+      .orderBy(sql`${chatSessions.updatedAt} DESC`);
+  }
+
+  async getChatSessionById(id: string): Promise<ChatSession | undefined> {
+    const result = await db.select().from(chatSessions).where(eq(chatSessions.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createChatSession(insertSession: InsertChatSession): Promise<ChatSession> {
+    const result = await db.insert(chatSessions).values(insertSession).returning();
+    return result[0];
+  }
+
+  async updateChatSession(id: string, sessionData: Partial<ChatSession>): Promise<ChatSession | undefined> {
+    const result = await db.update(chatSessions)
+      .set({ ...sessionData, updatedAt: new Date() })
+      .where(eq(chatSessions.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteChatSession(id: string): Promise<boolean> {
+    // Сначала удаляем все сообщения
+    await db.delete(chatMessages).where(eq(chatMessages.sessionId, id));
+    // Затем удаляем сессию
+    const result = await db.delete(chatSessions).where(eq(chatSessions.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Chat Messages
+  async getChatMessagesBySession(sessionId: string): Promise<ChatMessage[]> {
+    return await db.select().from(chatMessages)
+      .where(eq(chatMessages.sessionId, sessionId))
+      .orderBy(sql`${chatMessages.createdAt} ASC`);
+  }
+
+  async createChatMessage(insertMessage: InsertChatMessage): Promise<ChatMessage> {
+    const result = await db.insert(chatMessages).values(insertMessage).returning();
+    // Обновляем время последнего обновления сессии
+    await db.update(chatSessions)
+      .set({ updatedAt: new Date() })
+      .where(eq(chatSessions.id, insertMessage.sessionId));
+    return result[0];
+  }
+
+  async deleteChatMessage(id: string): Promise<boolean> {
+    const result = await db.delete(chatMessages).where(eq(chatMessages.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // vMix Scheduler Events
+  async getVmixSchedulerEvents(): Promise<VmixSchedulerEvent[]> {
+    return await db.select().from(vmixSchedulerEvents)
+      .orderBy(sql`${vmixSchedulerEvents.startTime} ASC`);
+  }
+
+  async getVmixSchedulerEventById(id: string): Promise<VmixSchedulerEvent | undefined> {
+    const result = await db.select().from(vmixSchedulerEvents)
+      .where(eq(vmixSchedulerEvents.id, id))
+      .limit(1);
+    return result[0];
+  }
+
+  async createVmixSchedulerEvent(event: InsertVmixSchedulerEvent): Promise<VmixSchedulerEvent> {
+    const result = await db.insert(vmixSchedulerEvents).values(event).returning();
+    return result[0];
+  }
+
+  async updateVmixSchedulerEvent(id: string, eventData: Partial<VmixSchedulerEvent>): Promise<VmixSchedulerEvent | undefined> {
+    const result = await db.update(vmixSchedulerEvents)
+      .set({ ...eventData, updatedAt: new Date() })
+      .where(eq(vmixSchedulerEvents.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteVmixSchedulerEvent(id: string): Promise<boolean> {
+    const result = await db.delete(vmixSchedulerEvents).where(eq(vmixSchedulerEvents.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Connection Schemas
+  async getConnectionSchemas(): Promise<ConnectionSchema[]> {
+    return await db.select().from(connectionSchemas)
+      .orderBy(sql`${connectionSchemas.createdAt} DESC`);
+  }
+
+  async getConnectionSchemaById(id: string): Promise<ConnectionSchema | undefined> {
+    const result = await db.select().from(connectionSchemas)
+      .where(eq(connectionSchemas.id, id))
+      .limit(1);
+    return result[0];
+  }
+
+  async createConnectionSchema(schema: InsertConnectionSchema): Promise<ConnectionSchema> {
+    const result = await db.insert(connectionSchemas).values(schema).returning();
+    return result[0];
+  }
+
+  async updateConnectionSchema(id: string, schemaData: Partial<ConnectionSchema>): Promise<ConnectionSchema | undefined> {
+    const result = await db.update(connectionSchemas)
+      .set({ ...schemaData, updatedAt: new Date() })
+      .where(eq(connectionSchemas.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteConnectionSchema(id: string): Promise<boolean> {
+    // Сначала удаляем все компоненты
+    await db.delete(connectionSchemaComponents).where(eq(connectionSchemaComponents.schemaId, id));
+    // Затем удаляем схему
+    const result = await db.delete(connectionSchemas).where(eq(connectionSchemas.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Connection Schema Components
+  async getConnectionSchemaComponents(schemaId: string): Promise<ConnectionSchemaComponent[]> {
+    return await db.select().from(connectionSchemaComponents)
+      .where(eq(connectionSchemaComponents.schemaId, schemaId))
+      .orderBy(sql`${connectionSchemaComponents.createdAt} ASC`);
+  }
+
+  async getConnectionSchemaComponentById(id: string): Promise<ConnectionSchemaComponent | undefined> {
+    const result = await db.select().from(connectionSchemaComponents)
+      .where(eq(connectionSchemaComponents.id, id))
+      .limit(1);
+    return result[0];
+  }
+
+  async createConnectionSchemaComponent(component: InsertConnectionSchemaComponent): Promise<ConnectionSchemaComponent> {
+    const result = await db.insert(connectionSchemaComponents).values(component).returning();
+    return result[0];
+  }
+
+  async updateConnectionSchemaComponent(id: string, componentData: Partial<ConnectionSchemaComponent>): Promise<ConnectionSchemaComponent | undefined> {
+    const result = await db.update(connectionSchemaComponents)
+      .set({ ...componentData, updatedAt: new Date() })
+      .where(eq(connectionSchemaComponents.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteConnectionSchemaComponent(id: string): Promise<boolean> {
+    const result = await db.delete(connectionSchemaComponents).where(eq(connectionSchemaComponents.id, id));
     return (result.rowCount ?? 0) > 0;
   }
 }

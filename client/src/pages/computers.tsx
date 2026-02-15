@@ -162,7 +162,6 @@ export default function Computers() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <h2 className="text-2xl font-semibold text-foreground">Компьютеры</h2>
         <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
           <DialogTrigger asChild>
             <Button className="dark:neon-glow-blue" data-testid="button-add-computer">

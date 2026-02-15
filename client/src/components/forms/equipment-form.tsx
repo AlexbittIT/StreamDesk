@@ -41,6 +41,10 @@ function canEditEquipment(userRole: string | undefined): boolean {
   return userRole === 'admin' || userRole === 'tech_director';
 }
 
+function isAdmin(userRole: string | undefined): boolean {
+  return userRole === 'admin';
+}
+
 export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: EquipmentFormProps) {
   const [photos, setPhotos] = useState<string[]>(equipment?.photos || []);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -139,10 +143,11 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
 
   const createMutation = useMutation({
     mutationFn: async (data: z.infer<typeof equipmentFormSchema>) => {
+      // Only admins can create/promote barcodes
       const payload = { 
         ...data, 
         photos,
-        barcode: barcodeValue || undefined
+        barcode: (userIsAdmin && barcodeValue) ? barcodeValue : undefined
       };
       const response = await apiRequest("POST", "/api/equipment", payload);
       return response.json();
@@ -159,9 +164,22 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
       setBarcodeValue("");
     },
     onError: (error: any) => {
+      console.error("Error creating equipment:", error);
+      let errorMessage = "Не удалось добавить оборудование";
+      
+      if (error.message) {
+        if (error.message.includes("timeout") || error.message.includes("время ожидания")) {
+          errorMessage = "Операция заняла слишком много времени. Попробуйте снова или проверьте подключение к серверу.";
+        } else if (error.message.includes("400")) {
+          errorMessage = "Неверные данные. Проверьте заполнение всех обязательных полей.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       toast({
         title: "Ошибка",
-        description: error.message || "Не удалось добавить оборудование",
+        description: errorMessage,
         variant: "destructive",
       });
     },
@@ -169,10 +187,11 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
 
   const updateMutation = useMutation({
     mutationFn: async (data: z.infer<typeof equipmentFormSchema>) => {
+      // Only admins can update/promote barcodes
       const payload = { 
         ...data, 
         photos,
-        barcode: barcodeValue || undefined
+        barcode: (userIsAdmin && barcodeValue) ? barcodeValue : equipment?.barcode
       };
       const response = await apiRequest("PUT", `/api/equipment/${equipment.id}`, payload);
       return response.json();
@@ -330,6 +349,7 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
   };
 
   const userCanEdit = canEditEquipment(currentUser?.role);
+  const userIsAdmin = isAdmin(currentUser?.role);
   const isTakeReturnMode = mode === "take_return" || (equipment && !userCanEdit);
 
   if (isTakeReturnMode && equipment) {
@@ -527,16 +547,29 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
                           value={field.value || ""} 
                         />
                       </FormControl>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={generateBarcode}
-                        title="Сгенерировать"
-                        className="shrink-0"
-                      >
-                        <RefreshCw className="w-4 h-4" />
-                      </Button>
+                      {userIsAdmin ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={generateBarcode}
+                          title="Сгенерировать штрих-код (только администраторы)"
+                          className="shrink-0"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          disabled
+                          title="Только администраторы могут генерировать штрих-коды"
+                          className="shrink-0 opacity-50 cursor-not-allowed"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </Button>
+                      )}
                     </div>
                     <FormMessage />
                   </FormItem>

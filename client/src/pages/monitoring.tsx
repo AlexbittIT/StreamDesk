@@ -2,19 +2,24 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Monitor, Server, Wifi, Activity, AlertTriangle, CheckCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Monitor, Server, Wifi, Activity, AlertTriangle, CheckCircle, RefreshCw, TrendingUp } from "lucide-react";
 import { useWebSocket } from "@/hooks/use-websocket";
+import { queryClient } from "@/lib/queryClient";
 
 export default function Monitoring() {
-  const { data: systems, isLoading } = useQuery({
+  const { data: systems, isLoading, refetch } = useQuery({
     queryKey: ["/api/systems"],
+    refetchInterval: 30000, // Автоматическое обновление каждые 30 секунд
   });
 
   const { data: streams } = useQuery({
     queryKey: ["/api/streams", "active=true"],
+    refetchInterval: 60000,
   });
 
-  // Connect to WebSocket for real-time updates
+  // Connect to WebSocket for real-time updates (опционально)
+  // WebSocket не критичен - приложение должно работать без него
   const { isConnected } = useWebSocket();
 
   const onlineSystems = systems?.filter((system: any) => system.status === "online") || [];
@@ -66,18 +71,43 @@ export default function Monitoring() {
   };
 
   if (isLoading) {
-    return <div>Loading monitoring data...</div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <RefreshCw className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
+          <p className="text-gray-600 dark:text-gray-400">Загрузка данных мониторинга...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold text-gray-900">Мониторинг системы</h2>
-        <div className="flex items-center space-x-2">
-          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-          <span className="text-sm text-gray-600">
-            {isConnected ? 'Подключено' : 'Не подключено'}
-          </span>
+        <div>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            Отслеживание состояния всех систем в реальном времени
+          </p>
+        </div>
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2">
+            <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+            <span className="text-sm text-gray-600 dark:text-gray-400">
+              {isConnected ? 'WebSocket подключен' : 'WebSocket отключен'}
+            </span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              refetch();
+              queryClient.invalidateQueries({ queryKey: ["/api/systems"] });
+            }}
+            disabled={isLoading}
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            Обновить
+          </Button>
         </div>
       </div>
 

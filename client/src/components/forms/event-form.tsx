@@ -120,9 +120,22 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
       setSelectedParticipants([]);
     },
     onError: (error: any) => {
+      console.error("Error creating event:", error);
+      let errorMessage = "Не удалось создать событие";
+      
+      if (error.message) {
+        if (error.message.includes("timeout") || error.message.includes("время ожидания")) {
+          errorMessage = "Операция заняла слишком много времени. Попробуйте снова или проверьте подключение к серверу.";
+        } else if (error.message.includes("400")) {
+          errorMessage = "Неверные данные. Проверьте заполнение всех обязательных полей.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       toast({
         title: "Ошибка",
-        description: error.message || "Не удалось создать событие",
+        description: errorMessage,
         variant: "destructive",
       });
     },

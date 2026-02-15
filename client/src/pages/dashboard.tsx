@@ -10,30 +10,44 @@ import QuickActions from "@/components/dashboard/quick-actions";
 import { useWebSocket } from "@/hooks/use-websocket";
 
 export default function Dashboard() {
-  const { data: stats, isLoading: statsLoading } = useQuery<any>({
+  const { data: stats, isLoading: statsLoading, isError: statsError } = useQuery<any>({
     queryKey: ["/api/dashboard/stats"],
+    retry: 1,
+    retryDelay: 1000,
   });
 
-  const { data: events } = useQuery<any[]>({
+  const { data: events = [], isLoading: eventsLoading, isError: eventsError } = useQuery<any[]>({
     queryKey: ["/api/events"],
+    retry: 1,
+    retryDelay: 1000,
   });
 
-  const { data: systems } = useQuery<any[]>({
+  const { data: systems = [], isLoading: systemsLoading, isError: systemsError } = useQuery<any[]>({
     queryKey: ["/api/systems"],
+    retry: 1,
+    retryDelay: 1000,
   });
 
-  const { data: equipment } = useQuery<any[]>({
+  const { data: equipment = [], isLoading: equipmentLoading, isError: equipmentError } = useQuery<any[]>({
     queryKey: ["/api/equipment"],
+    retry: 1,
+    retryDelay: 1000,
   });
 
-  const { data: streams } = useQuery<any[]>({
+  const { data: streams = [], isLoading: streamsLoading, isError: streamsError } = useQuery<any[]>({
     queryKey: ["/api/streams", "active=true"],
+    retry: 1,
+    retryDelay: 1000,
   });
 
-  // Connect to WebSocket for real-time updates
+  // Connect to WebSocket for real-time updates (опционально)
+  // WebSocket не критичен - приложение должно работать без него
   useWebSocket();
 
-  if (statsLoading) {
+  const isLoading = statsLoading || eventsLoading || systemsLoading || equipmentLoading || streamsLoading;
+  const hasError = statsError || eventsError || systemsError || equipmentError || streamsError;
+
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -41,12 +55,13 @@ export default function Dashboard() {
     );
   }
 
+  // Если есть ошибки, все равно показываем контент, но с пустыми данными
+  if (hasError) {
+    console.warn("[Dashboard] Some data failed to load, showing dashboard with available data");
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Панель управления</h2>
-      </div>
-
       {/* Status Cards */}
       <StatusCards stats={stats} />
 

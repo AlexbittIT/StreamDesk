@@ -102,7 +102,6 @@ export default function Notifications() {
     return (
       <div className="space-y-6">
         <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Уведомления</h2>
           <p className="text-gray-600">Управление уведомлениями и предупреждениями</p>
         </div>
         <div className="animate-pulse space-y-4">
@@ -118,7 +117,6 @@ export default function Notifications() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Уведомления</h2>
           <p className="text-gray-600">
             Управление уведомлениями и предупреждениями 
             {unreadCount > 0 && (

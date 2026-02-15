@@ -53,7 +53,6 @@ export default function Servers() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold text-gray-900">Управление серверами</h2>
         <Button onClick={() => {
           setSelectedSystem(null);
           setIsFormOpen(true);

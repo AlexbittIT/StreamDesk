@@ -10,9 +10,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { 
   Users, Shield, Settings, Search, Edit, Trash2, 
-  UserPlus, Key, Check, X, AlertCircle
+  UserPlus, Key, Check, X, AlertCircle, Github, Plus, History, Clock, FileText
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -81,6 +82,12 @@ export default function Admin() {
   const [isPermissionsOpen, setIsPermissionsOpen] = useState(false);
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
   const [userRole, setUserRole] = useState<string>("");
+  const [isRepositoryDialogOpen, setIsRepositoryDialogOpen] = useState(false);
+  const [editingRepository, setEditingRepository] = useState<any>(null);
+  const [repositoryName, setRepositoryName] = useState("");
+  const [repositoryUrl, setRepositoryUrl] = useState("");
+  const [repositoryType, setRepositoryType] = useState("github");
+  const [repositoryDescription, setRepositoryDescription] = useState("");
   const { toast } = useToast();
 
   const currentUser = JSON.parse(localStorage.getItem('streamstudio_user') || '{}');
@@ -91,6 +98,10 @@ export default function Admin() {
 
   const { data: roles = [], isLoading: rolesLoading } = useQuery<Role[]>({
     queryKey: ["/api/roles"],
+  });
+
+  const { data: repositories = [], refetch: refetchRepositories } = useQuery<any[]>({
+    queryKey: ["/api/repositories"],
   });
 
   const updatePermissionsMutation = useMutation({
@@ -113,6 +124,17 @@ export default function Admin() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       toast({ title: "Успешно", description: "Пользователь деактивирован" });
+    },
+  });
+
+  const activateUserMutation = useMutation({
+    mutationFn: (userId: string) => apiRequest("PUT", `/api/users/${userId}`, { active: true }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "Успешно", description: "Пользователь активирован" });
+    },
+    onError: () => {
+      toast({ title: "Ошибка", description: "Не удалось активировать пользователя", variant: "destructive" });
     },
   });
 
@@ -190,7 +212,6 @@ export default function Admin() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Администрирование</h2>
           <p className="text-gray-500 mt-1">Управление пользователями и правами доступа</p>
         </div>
       </div>
@@ -204,6 +225,14 @@ export default function Admin() {
           <TabsTrigger value="roles" className="flex items-center gap-2">
             <Shield className="w-4 h-4" />
             Роли
+          </TabsTrigger>
+          <TabsTrigger value="repositories" className="flex items-center gap-2">
+            <Github className="w-4 h-4" />
+            Репозитории
+          </TabsTrigger>
+          <TabsTrigger value="logs" className="flex items-center gap-2">
+            <Settings className="w-4 h-4" />
+            Логи сотрудников
           </TabsTrigger>
         </TabsList>
 
@@ -258,6 +287,11 @@ export default function Admin() {
                             <Badge className={getRoleColor(user.role)}>
                               {getRoleLabel(user.role)}
                             </Badge>
+                            {user.active === false && (
+                              <Badge variant="outline" className="text-xs bg-yellow-100 text-yellow-800 border-yellow-300">
+                                Ожидает подтверждения
+                              </Badge>
+                            )}
                             {user.telegramId && (
                               <Badge variant="outline" className="text-xs">
                                 Telegram
@@ -272,6 +306,18 @@ export default function Admin() {
                       </div>
                       
                       <div className="flex items-center gap-2">
+                        {user.active === false && (
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => activateUserMutation.mutate(user.id)}
+                            className="bg-green-600 hover:bg-green-700 text-white"
+                            data-testid={`button-activate-${user.id}`}
+                          >
+                            <Check className="w-4 h-4 mr-1" />
+                            Подтвердить
+                          </Button>
+                        )}
                         <Button
                           variant="outline"
                           size="sm"
@@ -350,7 +396,197 @@ export default function Admin() {
             )}
           </div>
         </TabsContent>
+
+        <TabsContent value="repositories" className="mt-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-lg font-semibold">Управление репозиториями</h3>
+              <p className="text-sm text-gray-500 mt-1">Добавляйте и редактируйте репозитории для задач</p>
+            </div>
+            <Button
+              onClick={() => {
+                setEditingRepository(null);
+                setRepositoryName("");
+                setRepositoryUrl("");
+                setRepositoryType("github");
+                setRepositoryDescription("");
+                setIsRepositoryDialogOpen(true);
+              }}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Добавить репозиторий
+            </Button>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {repositories.map(repo => (
+              <Card key={repo.id}>
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2">
+                      <Github className="w-5 h-5" />
+                      <CardTitle className="text-base">{repo.name}</CardTitle>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => {
+                          setEditingRepository(repo);
+                          setRepositoryName(repo.name);
+                          setRepositoryUrl(repo.url);
+                          setRepositoryType(repo.type || "github");
+                          setRepositoryDescription(repo.description || "");
+                          setIsRepositoryDialogOpen(true);
+                        }}
+                      >
+                        <Edit className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-red-500 hover:text-red-700"
+                        onClick={async () => {
+                          if (confirm(`Удалить репозиторий "${repo.name}"?`)) {
+                            try {
+                              await apiRequest("DELETE", `/api/repositories/${repo.id}`);
+                              refetchRepositories();
+                              toast({ title: "Успешно", description: "Репозиторий удален" });
+                            } catch (error) {
+                              toast({ title: "Ошибка", description: "Не удалось удалить репозиторий", variant: "destructive" });
+                            }
+                          }
+                        }}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  {repo.description && (
+                    <CardDescription>{repo.description}</CardDescription>
+                  )}
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-sm">
+                      <Badge variant="outline">{repo.type || "github"}</Badge>
+                    </div>
+                    <a
+                      href={repo.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-primary hover:underline flex items-center gap-1"
+                    >
+                      {repo.url}
+                      <X className="w-3 h-3 rotate-45" />
+                    </a>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+            {repositories.length === 0 && (
+              <div className="col-span-full text-center py-12 text-gray-500">
+                Нет репозиториев. Добавьте первый репозиторий.
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="logs" className="mt-6">
+          <UserLogsTab />
+        </TabsContent>
       </Tabs>
+
+      {/* Repository Dialog */}
+      <Dialog open={isRepositoryDialogOpen} onOpenChange={setIsRepositoryDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editingRepository ? "Редактировать репозиторий" : "Добавить репозиторий"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Название *</Label>
+              <Input
+                value={repositoryName}
+                onChange={(e) => setRepositoryName(e.target.value)}
+                placeholder="Например: StreamDesk Frontend"
+              />
+            </div>
+            <div>
+              <Label>URL *</Label>
+              <Input
+                value={repositoryUrl}
+                onChange={(e) => setRepositoryUrl(e.target.value)}
+                placeholder="https://github.com/user/repo"
+              />
+            </div>
+            <div>
+              <Label>Тип</Label>
+              <Select value={repositoryType} onValueChange={setRepositoryType}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="github">GitHub</SelectItem>
+                  <SelectItem value="gitlab">GitLab</SelectItem>
+                  <SelectItem value="bitbucket">Bitbucket</SelectItem>
+                  <SelectItem value="other">Другое</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Описание</Label>
+              <Textarea
+                value={repositoryDescription}
+                onChange={(e) => setRepositoryDescription(e.target.value)}
+                placeholder="Краткое описание репозитория"
+                rows={3}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIsRepositoryDialogOpen(false)}>
+                Отмена
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (!repositoryName.trim() || !repositoryUrl.trim()) {
+                    toast({ title: "Ошибка", description: "Заполните название и URL", variant: "destructive" });
+                    return;
+                  }
+                  try {
+                    if (editingRepository) {
+                      await apiRequest("PUT", `/api/repositories/${editingRepository.id}`, {
+                        name: repositoryName,
+                        url: repositoryUrl,
+                        type: repositoryType,
+                        description: repositoryDescription,
+                      });
+                      toast({ title: "Успешно", description: "Репозиторий обновлен" });
+                    } else {
+                      await apiRequest("POST", "/api/repositories", {
+                        name: repositoryName,
+                        url: repositoryUrl,
+                        type: repositoryType,
+                        description: repositoryDescription,
+                      });
+                      toast({ title: "Успешно", description: "Репозиторий добавлен" });
+                    }
+                    refetchRepositories();
+                    setIsRepositoryDialogOpen(false);
+                  } catch (error) {
+                    toast({ title: "Ошибка", description: "Не удалось сохранить репозиторий", variant: "destructive" });
+                  }
+                }}
+              >
+                {editingRepository ? "Сохранить" : "Добавить"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Permissions Dialog */}
       <Dialog open={isPermissionsOpen} onOpenChange={setIsPermissionsOpen}>
@@ -439,6 +675,154 @@ export default function Admin() {
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// Компонент для просмотра логов сотрудников
+function UserLogsTab() {
+  const [selectedUserId, setSelectedUserId] = useState<string>("all");
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
+  const { toast } = useToast();
+
+  const { data: users = [] } = useQuery<User[]>({
+    queryKey: ["/api/users"],
+  });
+
+  const { data: logs = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/admin/user-logs", selectedUserId, startDate, endDate],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (selectedUserId !== "all") params.append("userId", selectedUserId);
+      if (startDate) params.append("startDate", startDate);
+      if (endDate) params.append("endDate", endDate);
+      
+      const response = await apiRequest("GET", `/api/admin/user-logs?${params.toString()}`);
+      if (!response.ok) throw new Error("Failed to fetch logs");
+      return response.json();
+    },
+    enabled: true,
+  });
+
+  const getUserName = (userId: string | null) => {
+    if (!userId) return "Неизвестно";
+    const user = users.find(u => u.id === userId);
+    return user?.name || user?.username || "Неизвестно";
+  };
+
+  const formatDate = (date: string) => {
+    return new Date(date).toLocaleString("ru-RU", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const getActionLabel = (action: string) => {
+    const labels: Record<string, string> = {
+      created: "Создано",
+      updated: "Обновлено",
+      status_changed: "Изменен статус",
+      assigned: "Назначено",
+      commented: "Комментарий",
+      deleted: "Удалено",
+    };
+    return labels[action] || action;
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Логи активности сотрудников</CardTitle>
+          <CardDescription>
+            Просмотр истории действий пользователей в системе
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <Label>Пользователь</Label>
+              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Все пользователи" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Все пользователи</SelectItem>
+                  {users.map(user => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.name || user.username}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Начало периода</Label>
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label>Конец периода</Label>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <History className="w-5 h-5" />
+            История действий ({logs.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="text-center py-8 text-gray-500">Загрузка...</div>
+          ) : logs.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">Нет записей</div>
+          ) : (
+            <div className="space-y-3 max-h-[600px] overflow-y-auto">
+              {logs.map((log) => (
+                <div
+                  key={log.id}
+                  className="flex items-start gap-4 p-4 border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+                >
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
+                    {log.type === "task_history" ? (
+                      <FileText className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                    ) : (
+                      <Clock className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-semibold">{getUserName(log.userId)}</span>
+                      <Badge variant="outline">{getActionLabel(log.action)}</Badge>
+                      <span className="text-sm text-gray-500">{formatDate(log.timestamp)}</span>
+                    </div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{log.description}</p>
+                    {log.data?.taskId && (
+                      <p className="text-xs text-gray-500 mt-1">ID задачи: {log.data.taskId}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
