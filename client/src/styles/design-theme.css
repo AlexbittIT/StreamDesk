@@ -6,8 +6,8 @@
   --breakpoint-4xl: 2048px;
   --breakpoint-xxl: 1550px;
 
-  --color-brand-gradient-start-rgb: 154 46 255; /* #9A2EFF */
-  --color-brand-gradient-end-rgb: 209 35 162; /* #D1233E */
+  --color-brand-gradient-start-rgb: 151 71 255; /* #9747FF основной */
+  --color-brand-gradient-end-rgb: 180 100 255; /* чуть светлее для градиента */
 
   --color-inh-primary-rgb: 235 237 239;
   --color-inh-primary-hover-rgb: 223 225 229; /* #DFE1E5 */
@@ -58,3 +58,31 @@
 
 /* Ensure the base font variable is available */
 :root { --font-sans: var(--font-rubik); }
+
+/* InNoHassle layout tokens (как у них) */
+:root {
+  --radius-box: 1rem;
+  --radius-field: 0.5rem;
+}
+
+/* InNoHassle-style theme: purple primary, dark base (use with class "inh" or dark) */
+:root.inh,
+.dark.inh,
+[data-theme="dark"].inh {
+  --color-inh-primary-rgb: 38 38 38;
+  --color-inh-primary-hover-rgb: 28 28 28;
+  --color-inh-secondary-rgb: 34 34 34;
+  --color-inh-secondary-hover-rgb: 55 55 55;
+  --color-inh-inactive-rgb: 105 105 105;
+}
+
+/* Starry/dotted background — только в тёмной теме (как InNoHassle) */
+.bg-starry {
+  background-color: hsl(0, 0%, 100%);
+  background-image: radial-gradient(circle at 1px 1px, rgba(151, 71, 255, 0.08) 1px, transparent 0);
+  background-size: 32px 32px;
+}
+.dark .bg-starry {
+  background-color: hsl(224, 47%, 4%);
+  background-image: radial-gradient(circle at 1px 1px, rgba(151, 71, 255, 0.15) 1px, transparent 0);
+}

@@ -35,7 +35,7 @@ export default function QuickActions() {
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
       {actions.map((action, index) => {
         const Icon = action.icon;
         return (
@@ -43,24 +43,24 @@ export default function QuickActions() {
             <Button
               variant="outline"
               className={`
-                w-full flex flex-col items-center justify-center gap-2 p-4 h-auto
+                w-full flex flex-col items-center justify-center gap-1 p-2.5 h-auto min-h-0
                 bg-white dark:bg-slate-800/90
                 border-slate-200 dark:border-slate-700
                 hover:border-slate-300 dark:hover:border-slate-600
                 transition-all duration-200
-                hover:shadow-lg ${action.glow}
+                hover:shadow-md ${action.glow}
                 group
               `}
               data-testid={`quick-action-${index}`}
             >
               <div className={`
-                w-10 h-10 rounded-lg flex items-center justify-center
+                w-8 h-8 rounded-md flex items-center justify-center shrink-0
                 bg-gradient-to-br ${action.gradient}
-                group-hover:scale-110 transition-transform
+                group-hover:scale-105 transition-transform
               `}>
-                <Icon className="h-5 w-5 text-white" />
+                <Icon className="h-4 w-4 text-white" />
               </div>
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{action.title}</span>
+              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{action.title}</span>
             </Button>
           </Link>
         );

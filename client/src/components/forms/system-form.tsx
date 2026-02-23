@@ -11,7 +11,7 @@ import { insertSystemSchema } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Activity, Server, Wifi } from "lucide-react";
 
@@ -33,28 +33,63 @@ export function SystemForm({ isOpen, onClose, system }: SystemFormProps) {
   const form = useForm<z.infer<typeof systemFormSchema>>({
     resolver: zodResolver(systemFormSchema),
     defaultValues: {
-      name: system?.name || "",
-      type: system?.type || "server",
-      location: system?.location || "",
-      ipAddress: system?.ipAddress || "",
-      status: system?.status || "offline",
-      specifications: system?.specifications || {},
+      name: "",
+      type: "server",
+      location: "",
+      ipAddress: "",
+      status: "offline",
+      specifications: {},
     },
   });
+
+  useEffect(() => {
+    if (isOpen) {
+      if (system) {
+        form.reset({
+          name: system.name || "",
+          type: system.type || "server",
+          location: system.location || "",
+          ipAddress: system.ipAddress || "",
+          status: system.status || "offline",
+          specifications: system.specifications || {},
+        });
+      } else {
+        form.reset({
+          name: "",
+          type: "server",
+          location: "",
+          ipAddress: "",
+          status: "offline",
+          specifications: {},
+        });
+      }
+    }
+  }, [isOpen, system?.id]);
 
   const createMutation = useMutation({
     mutationFn: async (data: z.infer<typeof systemFormSchema>) => {
       const response = await apiRequest("POST", "/api/systems", data);
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (newSystem) => {
+      queryClient.setQueryData(["/api/systems"], (old: any[] | undefined) =>
+        Array.isArray(old) ? [...old, newSystem] : [newSystem]
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/systems"] });
+      setTimeout(() => queryClient.refetchQueries({ queryKey: ["/api/systems"] }), 300);
       toast({
         title: "Успешно",
         description: "Система добавлена",
       });
       onClose();
-      form.reset();
+      form.reset({
+        name: "",
+        type: "server",
+        location: "",
+        ipAddress: "",
+        status: "offline",
+        specifications: {},
+      });
     },
     onError: (error: any) => {
       toast({
@@ -139,7 +174,7 @@ export function SystemForm({ isOpen, onClose, system }: SystemFormProps) {
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto hide-scrollbar">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Server className="w-5 h-5" />

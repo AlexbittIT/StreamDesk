@@ -1,11 +1,12 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ThemeProvider } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
+import { AlertTriangle } from "lucide-react";
 
 import Dashboard from "@/pages/dashboard";
 import Calendar from "@/pages/calendar";
@@ -16,6 +17,7 @@ import Servers from "@/pages/servers";
 import Notifications from "@/pages/notifications";
 import Settings from "@/pages/settings";
 import Tasks from "@/pages/tasks";
+import TasksYouGile from "@/pages/tasks-yougile";
 import Admin from "@/pages/admin";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
@@ -26,14 +28,35 @@ import Transcription from "@/pages/transcription";
 import AITranscription from "@/pages/ai-transcription";
 import VmixScheduler from "@/pages/vmix-scheduler";
 import ManagerDashboard from "@/pages/manager-dashboard";
+import Terminal from "@/pages/terminal";
 import ConnectionSchemas from "@/pages/connection-schemas";
+import OtisOnAir from "@/pages/otis-onair";
+import Maps from "@/pages/maps";
+import RoomBooking from "@/pages/room-booking";
 
 import Sidebar from "@/components/layout/sidebar";
 import Header from "@/components/layout/header";
+import Footer from "@/components/layout/footer";
+import { BottomNav } from "@/components/layout/bottom-nav";
 import { useSidebar } from "@/hooks/use-sidebar";
 import AuthWrapper from "@/components/auth-wrapper";
 import { ProtectedRoute } from "@/components/protected-route";
 import { ErrorBoundary } from "@/components/error-boundary";
+
+function StubModeBanner() {
+  const { data } = useQuery({
+    queryKey: ["/api/health"],
+    retry: false,
+    refetchInterval: false,
+  });
+  if (!data?.stubMode) return null;
+  return (
+    <div className="bg-amber-500/90 text-amber-950 text-center py-1 px-2 sm:px-3 text-xs font-medium flex items-center justify-center gap-1.5 shrink-0">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">Режим заглушки: данные в памяти. Для сохранения запустите PostgreSQL и укажите DATABASE_URL в .env</span>
+    </div>
+  );
+}
 
 function Router({ user }: { user: any }) {
   return (
@@ -47,6 +70,16 @@ function Router({ user }: { user: any }) {
       <Route path="/calendar">
         <ProtectedRoute user={user}>
           <Calendar />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/maps">
+        <ProtectedRoute user={user}>
+          <Maps />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/room-booking">
+        <ProtectedRoute user={user}>
+          <RoomBooking />
         </ProtectedRoute>
       </Route>
       <Route path="/equipment">
@@ -104,6 +137,11 @@ function Router({ user }: { user: any }) {
           <ConnectionSchemas />
         </ProtectedRoute>
       </Route>
+      <Route path="/otis-onair">
+        <ProtectedRoute user={user}>
+          <OtisOnAir />
+        </ProtectedRoute>
+      </Route>
       <Route path="/notifications">
         <ProtectedRoute user={user}>
           <Notifications />
@@ -121,9 +159,21 @@ function Router({ user }: { user: any }) {
           </ErrorBoundary>
         </ProtectedRoute>
       </Route>
+      <Route path="/tasks/yougile">
+        <ProtectedRoute user={user}>
+          <ErrorBoundary>
+            <TasksYouGile />
+          </ErrorBoundary>
+        </ProtectedRoute>
+      </Route>
       <Route path="/admin">
         <ProtectedRoute user={user} requiredRole="admin">
           <Admin />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/terminal">
+        <ProtectedRoute user={user}>
+          <Terminal />
         </ProtectedRoute>
       </Route>
       <Route path="/manager-dashboard">
@@ -157,28 +207,23 @@ function App() {
 
   const [user, setUser] = useState<any>(loadUserSync());
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(!user); // Если пользователь загружен синхронно, не показываем загрузку
-  const [location] = useLocation();
+  const [isLoading, setIsLoading] = useState(false);
   const sidebarCollapsed = useSidebar();
+  const swipeStartX = useRef<number>(0);
+  const swipeStartY = useRef<number>(0);
 
   useEffect(() => {
     const loadUser = () => {
       try {
         const savedUser = localStorage.getItem('streamstudio_user');
-        console.log("[App] Loading user from localStorage:", savedUser ? "found" : "not found");
         if (savedUser) {
           const parsedUser = JSON.parse(savedUser);
           if (parsedUser && parsedUser.id) {
-            console.log("[App] User loaded successfully:", parsedUser.username || parsedUser.name);
             setUser(parsedUser);
             setIsLoading(false);
             return true;
-          } else {
-            console.warn("[App] Invalid user data in localStorage:", parsedUser);
-            localStorage.removeItem('streamstudio_user');
           }
-        } else {
-          console.log("[App] No user found in localStorage");
+          localStorage.removeItem('streamstudio_user');
         }
       } catch (error: any) {
         console.error("[App] Error loading user:", error);
@@ -188,49 +233,17 @@ function App() {
       return false;
     };
 
-    // Если пользователь не загружен синхронно, загружаем асинхронно
     if (!user) {
       loadUser();
     }
 
-    // Также проверяем через небольшую задержку на случай, если данные были сохранены только что
-    const timeoutId = setTimeout(() => {
-      const savedUser = localStorage.getItem('streamstudio_user');
-      if (savedUser && !user) {
-        try {
-          const parsed = JSON.parse(savedUser);
-          if (parsed && parsed.id) {
-            console.log("[App] Retrying user load after delay - user found");
-            setUser(parsed);
-            setIsLoading(false);
-          }
-        } catch (e) {
-          console.error("[App] Error parsing user on retry:", e);
-        }
-      }
-    }, 300);
-
     // Слушаем изменения localStorage (на случай, если пользователь вошел в другой вкладке)
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'streamstudio_user') {
-        console.log("[App] Storage changed, reloading user");
-        loadUser();
-      }
+      if (e.key === 'streamstudio_user') loadUser();
     };
 
     window.addEventListener('storage', handleStorageChange);
-
-    // Register service worker for push notifications
-    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch((error) => {
-        console.error('Service Worker registration failed:', error);
-      });
-    }
-
-    return () => {
-      clearTimeout(timeoutId);
-      window.removeEventListener('storage', handleStorageChange);
-    };
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
   const handleLogin = (userData: any) => {
@@ -245,7 +258,7 @@ function App() {
     window.location.href = '/login';
   };
 
-  if (isLoading) {
+  if (isLoading && user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
@@ -253,9 +266,7 @@ function App() {
     );
   }
 
-  // Если пользователь не авторизован, показываем только страницу логина (полноэкранную)
   if (!user) {
-    console.log("[App] No user, showing login page");
     return (
       <ThemeProvider defaultTheme="system" storageKey="streamstudio-theme">
         <QueryClientProvider client={queryClient}>
@@ -268,22 +279,16 @@ function App() {
     );
   }
 
-  console.log("[App] User is authenticated, rendering app. User:", user?.username || user?.name);
-
-  // Если пользователь на странице логина и уже авторизован, перенаправляем на главную
+  // Если пользователь авторизован и URL /login — редирект на главную (без useLocation, т.к. на экране входа Router не смонтирован)
   useEffect(() => {
-    if (user && location === "/login") {
-      const timer = setTimeout(() => {
-        window.location.href = "/";
-      }, 100);
-      return () => clearTimeout(timer);
+    if (user && typeof window !== "undefined" && window.location.pathname === "/login") {
+      const t = setTimeout(() => { window.location.href = "/"; }, 100);
+      return () => clearTimeout(t);
     }
-  }, [user, location]);
+  }, [user]);
 
-  // Если пользователь не загружен, показываем логин или загрузку
   if (!user || !user.id) {
     if (isLoading) {
-      console.log("[App] Still loading user, showing loading screen");
       return (
         <ThemeProvider defaultTheme="system" storageKey="streamstudio-theme">
           <QueryClientProvider client={queryClient}>
@@ -300,8 +305,6 @@ function App() {
         </ThemeProvider>
       );
     }
-    
-    console.log("[App] User not loaded, showing login page");
     return (
       <ThemeProvider defaultTheme="system" storageKey="streamstudio-theme">
         <QueryClientProvider client={queryClient}>
@@ -318,13 +321,36 @@ function App() {
     <ThemeProvider defaultTheme="system" storageKey="streamstudio-theme">
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <div className="min-h-screen bg-background font-inter transition-colors duration-300">
+          <div className="app-layout min-h-screen bg-background font-sans antialiased transition-colors duration-300 overflow-x-hidden w-full max-w-[100vw] flex">
             {mobileNavOpen && (
-              <div 
+              <div
                 className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
                 onClick={() => setMobileNavOpen(false)}
+                onTouchStart={(e) => {
+                  swipeStartX.current = e.touches[0].clientX;
+                  swipeStartY.current = e.touches[0].clientY;
+                }}
+                onTouchEnd={(e) => {
+                  const dx = e.changedTouches[0].clientX - swipeStartX.current;
+                  const dy = Math.abs(e.changedTouches[0].clientY - swipeStartY.current);
+                  if (dx < -50 && dy < 80) setMobileNavOpen(false);
+                }}
               />
             )}
+            {/* Зона свайпа слева: потянуть вправо — открыть меню (только на мобильных) */}
+            <div
+              className="fixed left-0 top-0 bottom-0 w-6 z-30 lg:hidden touch-none"
+              onTouchStart={(e) => {
+                swipeStartX.current = e.touches[0].clientX;
+                swipeStartY.current = e.touches[0].clientY;
+              }}
+              onTouchEnd={(e) => {
+                const dx = e.changedTouches[0].clientX - swipeStartX.current;
+                const dy = Math.abs(e.changedTouches[0].clientY - swipeStartY.current);
+                if (dx > 50 && dy < 80 && !mobileNavOpen) setMobileNavOpen(true);
+              }}
+              aria-hidden
+            />
             
             <Sidebar 
               user={user} 
@@ -333,22 +359,32 @@ function App() {
               onLogout={handleLogout}
             />
             
-            <div 
+            {/* Spacer под сайдбар: на lg+ занимает место, контент не уезжает */}
+            <div
               className={cn(
-                "transition-all duration-300",
-                sidebarCollapsed ? "lg:ml-20" : "lg:ml-72",
-                "min-h-screen"
+                "hidden lg:block flex-shrink-0 transition-all duration-300",
+                sidebarCollapsed ? "w-16 xl:w-20" : "w-[260px] xl:w-72"
               )}
+              aria-hidden
+            />
+            
+            <div
+              className="flex-1 min-w-0 min-h-screen flex flex-col overflow-x-hidden hide-scrollbar bg-starry w-full"
               id="main-content"
             >
-              <Header 
+              <StubModeBanner />
+              <Header
                 onMobileMenuClick={() => setMobileNavOpen(true)}
                 user={user}
                 onLogout={handleLogout}
               />
-              <main className="p-4 sm:p-6">
-                <Router user={user} />
+              <main className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto hide-scrollbar safe-area-top page-content w-full max-w-full pb-24 md:pb-0 safe-area-bottom">
+                <div className="w-full min-w-0 max-w-[1600px] mx-auto">
+                  <Router user={user} />
+                </div>
               </main>
+              <Footer />
+              <BottomNav user={user} onOpenMenu={() => setMobileNavOpen(true)} />
             </div>
           </div>
           <Toaster />

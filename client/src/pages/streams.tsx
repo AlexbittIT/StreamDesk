@@ -60,8 +60,8 @@ export default function Streams() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 sm:space-y-6 w-full min-w-0 max-w-full">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div />
         <Button>
           <Plus className="w-4 h-4 mr-2" />
@@ -70,7 +70,7 @@ export default function Streams() {
       </div>
 
       {/* Live Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
@@ -121,7 +121,7 @@ export default function Streams() {
       </div>
 
       {/* Platform Statistics */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* YouTube Stats */}
         <Card>
           <CardHeader>

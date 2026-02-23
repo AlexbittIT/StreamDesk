@@ -33,61 +33,48 @@ export default function CurrentActivity({ streams, events }: CurrentActivityProp
   ];
 
   return (
-    <Card className="bg-white dark:bg-slate-800/90 border-slate-200 dark:border-slate-700">
-      <CardHeader className="pb-3">
+    <Card className="bg-card/80 dark:bg-card/90 backdrop-blur-sm border border-border rounded-xl overflow-hidden min-w-0 border-l-4 border-l-red-500/70">
+      <CardHeader className="py-2 px-3 sm:px-3 pb-1">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-          <CardTitle className="text-slate-900 dark:text-white">Текущая активность</CardTitle>
+          <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse shrink-0" />
+          <CardTitle className="text-sm font-semibold text-foreground">Текущая активность</CardTitle>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-0 sm:px-0 pb-0 pt-0">
         {activities.length === 0 ? (
-          <div className="text-center py-8">
-            <Radio className="w-12 h-12 mx-auto mb-4 text-slate-300 dark:text-slate-600" />
-            <p className="text-slate-500 dark:text-slate-400">Нет активных трансляций</p>
-            <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">Запланированные события появятся здесь</p>
+          <div className="text-center py-4">
+            <Radio className="w-8 h-8 mx-auto mb-1.5 text-slate-300 dark:text-slate-600" />
+            <p className="text-xs text-slate-500 dark:text-slate-400">Нет активных трансляций</p>
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Запланированные события появятся здесь</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-1.5">
             {activities.map((activity, index) => {
               const Icon = activity.icon;
               const isStream = activity.type === 'stream';
               return (
                 <div
                   key={index}
-                  className={`
-                    flex items-center justify-between p-3 rounded-lg
-                    ${isStream 
-                      ? 'bg-gradient-to-r from-red-500/10 to-transparent dark:from-red-500/20 border-l-4 border-red-500' 
-                      : 'bg-gradient-to-r from-amber-500/10 to-transparent dark:from-amber-500/20 border-l-4 border-amber-500'
-                    }
-                  `}
+                  className={cn(
+                    "flex items-center justify-between rounded-r-xl overflow-hidden bg-card/70 dark:bg-card/80 backdrop-blur-sm border border-border min-w-0 border-l-4",
+                    isStream ? "border-l-red-500/70" : "border-l-amber-500/70"
+                  )}
                   data-testid={`activity-${index}`}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className={`
-                      w-10 h-10 rounded-lg flex items-center justify-center
-                      ${isStream ? 'bg-red-500' : 'bg-amber-500'}
-                    `}>
-                      <Icon className="text-white h-5 w-5" />
+                  <div className={`flex items-center gap-3 p-3 w-full`}>
+                    <div className={`flex items-center justify-center w-12 h-12 rounded-lg shadow ${isStream ? 'bg-gradient-to-br from-red-500 to-pink-500' : 'bg-gradient-to-br from-amber-400 to-orange-400'}`}>
+                      <Icon className="text-white w-5 h-5" />
                     </div>
-                    <div>
-                      <p className="font-medium text-slate-900 dark:text-white">{activity.title}</p>
-                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm sm:text-base font-semibold text-slate-900 dark:text-white truncate">{activity.title}</p>
+                      <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 truncate mt-0.5">
                         {activity.location} • {isStream ? 'В эфире' : `Начало в ${new Date(activity.startTime).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`}
                       </p>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2 h-2 rounded-full ${isStream ? 'bg-red-500 animate-pulse' : 'bg-amber-500'}`} />
-                      <span className={`text-sm font-medium ${isStream ? 'text-red-500' : 'text-amber-500'}`}>
-                        {activity.status}
-                      </span>
+                    <div className="text-right flex flex-col items-end justify-center gap-0.5">
+                      <span className={`text-sm font-semibold ${isStream ? 'text-red-500' : 'text-amber-500'}`}>{activity.status}</span>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{activity.duration || activity.timeLeft}</p>
                     </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {activity.duration || activity.timeLeft}
-                    </p>
                   </div>
                 </div>
               );

@@ -8,7 +8,7 @@ interface StatusCardsProps {
 export default function StatusCards({ stats }: StatusCardsProps) {
   if (!stats) {
     return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 sm:gap-2">
       {[...Array(4)].map((_, i) => (
           <Card key={i} className="bg-white dark:bg-slate-800/90 border-slate-200 dark:border-slate-700 animate-pulse">
             <CardContent className="p-2.5 sm:p-3">
@@ -61,31 +61,31 @@ export default function StatusCards({ stats }: StatusCardsProps) {
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 w-full min-w-0">
       {cards.map((card, index) => {
         const Icon = card.icon;
         return (
           <Card
             key={index}
-            className={"overflow-hidden relative border-0 bg-transparent"}
+            className="overflow-hidden relative border-0 bg-transparent min-w-0"
             data-testid={`status-card-${index}`}
           >
-            <CardContent className="p-0">
-              <div className="flex items-stretch gap-0 bg-white dark:bg-slate-800/95 rounded-xl shadow-sm overflow-hidden">
-                <div className="flex items-center justify-center w-24 sm:w-28 p-3 bg-gradient-to-br from-[rgb(var(--color-brand-gradient-start-rgb))] to-[rgb(var(--color-brand-gradient-end-rgb))]">
-                  <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-white/10 shadow-lg">
-                    <Icon className="w-6 h-6 text-white" />
+            <CardContent className="p-0 min-w-0">
+              <div className="flex items-stretch gap-0 bg-card/80 dark:bg-card/90 backdrop-blur-sm rounded-xl border border-border overflow-hidden min-w-0 border-l-4 border-l-primary/80">
+                <div className="flex items-center justify-center w-14 sm:w-24 md:w-28 p-2 sm:p-3 bg-gradient-to-br from-[rgb(var(--color-brand-gradient-start-rgb))] to-[rgb(var(--color-brand-gradient-end-rgb))] shrink-0">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-lg flex items-center justify-center bg-white/10 shadow-lg">
+                    <Icon className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-white" />
                   </div>
                 </div>
 
-                <div className="flex-1 p-3 sm:p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white selected">{card.value}</span>
-                        <span className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">{card.description}</span>
+                <div className="flex-1 p-2 sm:p-3 md:p-4 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0 overflow-hidden">
+                      <div className="flex items-baseline gap-1 flex-wrap">
+                        <span className="text-lg sm:text-2xl md:text-3xl font-extrabold text-foreground selected truncate">{card.value}</span>
+                        <span className="text-xs text-muted-foreground shrink-0">{card.description}</span>
                       </div>
-                      <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 truncate">{card.title}</p>
+                      <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 truncate">{card.title}</p>
                     </div>
                     {card.indicator === "pulse" && (
                       <div className="flex-shrink-0">

@@ -49,24 +49,37 @@ export default function AITranscription() {
   const [enableDiarization, setEnableDiarization] = useState(true);
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
   const [apiAvailable, setApiAvailable] = useState<boolean | null>(null);
+  const [connectionChecked, setConnectionChecked] = useState(false);
 
-  // Проверка доступности API при загрузке
-  useQuery({
+  // Проверка подключения только по кнопке «Подключиться» — без авто-повторов
+  const { refetch: checkHealth, isFetching: isChecking } = useQuery({
     queryKey: ["/api/ai-transcription/health"],
     queryFn: async () => {
-      try {
-        const res = await fetch("/api/ai-transcription/health");
-        return res.ok;
-      } catch {
-        return false;
-      }
+      const res = await fetch("/api/ai-transcription/health");
+      const data = await res.json().catch(() => ({}));
+      return !!data?.available;
     },
-    onSuccess: (available) => {
-      setApiAvailable(available);
-    },
+    enabled: false,
     retry: false,
-    staleTime: 60000, // Проверяем раз в минуту
+    staleTime: 60000,
   });
+
+  const handleCheckConnection = async () => {
+    setConnectionChecked(true);
+    try {
+      const result = await checkHealth();
+      const available = result.data === true;
+      setApiAvailable(available);
+      if (available) {
+        toast({ title: "Подключено", description: "Сервис транскрибации доступен" });
+      } else {
+        toast({ title: "Недоступно", description: "Whisper X API не настроен или не запущен", variant: "destructive" });
+      }
+    } catch {
+      setApiAvailable(false);
+      toast({ title: "Ошибка", description: "Не удалось проверить подключение", variant: "destructive" });
+    }
+  };
 
   async function handleTranscribe(file: File) {
     setTranscribing(true);
@@ -130,43 +143,36 @@ export default function AITranscription() {
         </p>
       </div>
 
-      {/* Статус подключения */}
-      {apiAvailable !== null && (
-        <Card className={cn(
-          "border-2",
-          apiAvailable ? "border-green-500/50 bg-green-50/50 dark:bg-green-950/20" : "border-red-500/50 bg-red-50/50 dark:bg-red-950/20"
-        )}>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              {apiAvailable ? (
-                <>
-                  <CheckCircle2 className="w-5 h-5 text-green-600" />
-                  <div>
-                    <p className="font-semibold text-green-900 dark:text-green-100">
-                      Нейросеть подключена
-                    </p>
-                    <p className="text-sm text-green-700 dark:text-green-300">
-                      Whisper X API доступен и готов к работе
-                    </p>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="w-5 h-5 text-red-600" />
-                  <div>
-                    <p className="font-semibold text-red-900 dark:text-red-100">
-                      Нейросеть недоступна
-                    </p>
-                    <p className="text-sm text-red-700 dark:text-red-300">
-                      Whisper X API не подключен. Транскрибация недоступна, но остальные функции CRM работают нормально.
-                    </p>
-                  </div>
-                </>
-              )}
+      {/* Проверка подключения только по кнопке — без авто-повторов */}
+      <Card className="border border-border">
+        <CardContent className="pt-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-medium text-foreground">Сервис транскрибации (Whisper X)</p>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {connectionChecked
+                  ? apiAvailable === true
+                    ? "Подключено и готово к работе"
+                    : "Недоступно — проверьте настройки сервера"
+                  : "Нажмите «Подключиться», чтобы проверить доступность"}
+              </p>
             </div>
-          </CardContent>
-        </Card>
-      )}
+            <Button
+              variant={connectionChecked && apiAvailable ? "outline" : "default"}
+              onClick={handleCheckConnection}
+              disabled={isChecking}
+            >
+              {isChecking ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              {connectionChecked && apiAvailable ? "Проверить снова" : "Подключиться"}
+            </Button>
+          </div>
+          {connectionChecked && apiAvailable === false && (
+            <p className="text-sm text-destructive mt-3">
+              Whisper X API не подключен. Транскрибация недоступна.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Форма транскрибации */}
       <Card>
@@ -190,7 +196,7 @@ export default function AITranscription() {
                     handleTranscribe(file);
                   }
                 }}
-                disabled={transcribing || apiAvailable === false}
+                disabled={transcribing || (connectionChecked && apiAvailable === false)}
               />
               <p className="text-xs text-muted-foreground">
                 Поддерживаются аудио и видео файлы
@@ -202,7 +208,7 @@ export default function AITranscription() {
               <Select
                 value={transcriptionFormat}
                 onValueChange={(value: "txt" | "doc" | "pdf") => setTranscriptionFormat(value)}
-                disabled={transcribing || apiAvailable === false}
+                disabled={transcribing || (connectionChecked && apiAvailable === false)}
               >
                 <SelectTrigger id="transcription-format">
                   <SelectValue />
@@ -220,7 +226,7 @@ export default function AITranscription() {
               <Select
                 value={transcriptionLanguage}
                 onValueChange={setTranscriptionLanguage}
-                disabled={transcribing || apiAvailable === false}
+                disabled={transcribing || (connectionChecked && apiAvailable === false)}
               >
                 <SelectTrigger id="transcription-language">
                   <SelectValue />
@@ -241,7 +247,7 @@ export default function AITranscription() {
                   id="enable-diarization"
                   checked={enableDiarization}
                   onChange={(e) => setEnableDiarization(e.target.checked)}
-                  disabled={transcribing || apiAvailable === false}
+                  disabled={transcribing || (connectionChecked && apiAvailable === false)}
                   className="w-4 h-4"
                 />
                 <label htmlFor="enable-diarization" className="text-sm text-muted-foreground">
@@ -261,7 +267,7 @@ export default function AITranscription() {
                   placeholder="Автоопределение"
                   value={numSpeakers}
                   onChange={(e) => setNumSpeakers(e.target.value)}
-                  disabled={transcribing || apiAvailable === false}
+                  disabled={transcribing || (connectionChecked && apiAvailable === false)}
                 />
                 <p className="text-xs text-muted-foreground">
                   Оставьте пустым для автоматического определения
@@ -330,7 +336,7 @@ export default function AITranscription() {
               </div>
 
               {transcriptionResult.transcription && (
-                <div className="mt-4 p-3 bg-background rounded border max-h-64 overflow-y-auto">
+                <div className="mt-4 p-3 bg-background rounded border max-h-64 overflow-y-auto hide-scrollbar">
                   <p className="text-sm whitespace-pre-wrap">
                     {transcriptionResult.transcription}
                   </p>
@@ -340,7 +346,7 @@ export default function AITranscription() {
               {transcriptionResult.segments && transcriptionResult.segments.length > 0 && (
                 <div className="mt-4 space-y-2">
                   <h4 className="font-semibold text-sm">Детальная транскрипция с спикерами:</h4>
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                  <div className="space-y-2 max-h-64 overflow-y-auto hide-scrollbar">
                     {transcriptionResult.segments.map((segment, index) => (
                       <div key={index} className="p-2 bg-background rounded border text-sm">
                         {segment.speakerLabel && (

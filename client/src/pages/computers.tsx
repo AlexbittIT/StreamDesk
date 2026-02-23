@@ -9,7 +9,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { 
-  Plus, Search, Cpu, HardDrive, Monitor, MemoryStick, 
+  Plus, Cpu, HardDrive, Monitor, MemoryStick, 
   Wifi, Power, Settings, Edit, Trash2, ChevronDown, ChevronUp
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -88,8 +88,12 @@ export default function Computers() {
       const response = await apiRequest("POST", "/api/computers", data);
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (newComputer) => {
+      queryClient.setQueryData(["/api/computers"], (old: any[] | undefined) =>
+        Array.isArray(old) ? [...old, newComputer] : [newComputer]
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/computers"] });
+      setTimeout(() => queryClient.refetchQueries({ queryKey: ["/api/computers"] }), 300);
       toast({ title: "Успешно", description: "Компьютер добавлен" });
       setIsFormOpen(false);
       form.reset();
@@ -106,6 +110,7 @@ export default function Computers() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/computers"] });
+      queryClient.refetchQueries({ queryKey: ["/api/computers"] });
       toast({ title: "Успешно", description: "Компьютер обновлён" });
       setSelectedComputer(null);
     },
@@ -115,6 +120,7 @@ export default function Computers() {
     mutationFn: (id: string) => apiRequest("DELETE", `/api/computers/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/computers"] });
+      queryClient.refetchQueries({ queryKey: ["/api/computers"] });
       toast({ title: "Успешно", description: "Компьютер удалён" });
     },
   });
@@ -164,12 +170,12 @@ export default function Computers() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
           <DialogTrigger asChild>
-            <Button className="dark:neon-glow-blue" data-testid="button-add-computer">
+            <Button variant="default" data-testid="button-add-computer">
               <Plus className="w-4 h-4 mr-2" />
               Добавить компьютер
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto hide-scrollbar">
             <DialogHeader>
               <DialogTitle>Добавить компьютер</DialogTitle>
             </DialogHeader>
@@ -380,16 +386,6 @@ export default function Computers() {
       <Card className="dark:border-border/50">
         <CardContent className="py-4">
           <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Поиск компьютеров..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-                data-testid="input-search-computers"
-              />
-            </div>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue placeholder="Статус" />

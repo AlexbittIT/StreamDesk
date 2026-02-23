@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Stage, Layer, Group, Rect, Text, Line, Circle } from "react-konva";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -54,6 +54,11 @@ interface SchemaCanvasProps {
   onDeviceUpdate: (deviceId: string, position: { x: number; y: number }) => void;
   onDeviceSelect?: (deviceId: string | null) => void;
   selectedDeviceId?: string | null;
+  fullScreen?: boolean;
+}
+
+export interface SchemaCanvasRef {
+  getViewportCenter: () => { x: number; y: number };
 }
 
 const DEVICE_WIDTH = 200;
@@ -62,7 +67,7 @@ const PORT_HEIGHT = 20;
 const PORT_SPACING = 5;
 const ZONE_PADDING = 20;
 
-export function SchemaCanvas({
+export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(function SchemaCanvas({
   schemaId,
   devices,
   zones,
@@ -70,15 +75,63 @@ export function SchemaCanvas({
   onDeviceUpdate,
   onDeviceSelect,
   selectedDeviceId,
-}: SchemaCanvasProps) {
+  fullScreen = false,
+}, ref) {
   const { toast } = useToast();
   const stageRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [stageSize, setStageSize] = useState({ w: 800, h: 600 });
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [draggedDeviceId, setDraggedDeviceId] = useState<string | null>(null);
   const [history, setHistory] = useState<Device[][]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+
+  useImperativeHandle(ref, () => ({
+    getViewportCenter() {
+      const cx = (-position.x + stageSize.w / 2) / scale;
+      const cy = (-position.y + stageSize.h / 2) / scale;
+      return { x: Math.round(cx), y: Math.round(cy) };
+    },
+  }), [position, scale, stageSize]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => {
+      setStageSize({ w: el.clientWidth || 800, h: Math.max(el.clientHeight || 600, 400) });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.08 : 0.08;
+      setScale((s) => {
+        const newScale = Math.min(3, Math.max(0.4, s + delta));
+        const rect = el.getBoundingClientRect();
+        const pointerX = e.clientX - rect.left;
+        const pointerY = e.clientY - rect.top;
+        setPosition((pos) => {
+          const worldX = (-pos.x + pointerX) / s;
+          const worldY = (-pos.y + pointerY) / s;
+          return {
+            x: -worldX * newScale + pointerX,
+            y: -worldY * newScale + pointerY,
+          };
+        });
+        return newScale;
+      });
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []);
 
   const updateDeviceMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Partial<Device> }) => {
@@ -150,8 +203,15 @@ export function SchemaCanvas({
       LAN: "#ffd700",
       "USB-C": "#0066cc",
       BNC: "#808080",
+      Wireless: "#7c3aed",
+      DC: "#4a5568",
     };
     return colors[portType || ""] || "#666666";
+  };
+
+  /** Проверка: соединение допустимо только выход → вход (out → in) */
+  const isConnectionValid = (fromDevice: Device, fromPort: Port, toDevice: Device, toPort: Port): boolean => {
+    return fromPort.type === "out" && toPort.type === "in";
   };
 
   const handleZoomIn = () => {
@@ -307,12 +367,22 @@ export function SchemaCanvas({
         </div>
       </div>
 
-      {/* Canvas */}
-      <div ref={containerRef} className="flex-1 bg-slate-50 dark:bg-slate-950 overflow-hidden">
+      {/* Подсказка: только выход → вход */}
+      {!fullScreen && (
+        <p className="text-xs text-muted-foreground px-2 py-1 border-b bg-muted/30">
+          Соединяйте выход (out) с входом (in). Беспроводные связи отображаются пунктиром.
+        </p>
+      )}
+      {/* Canvas: минимальная высота, сетка, перетаскивание, зум колёсиком как в Figma */}
+      <div
+        ref={containerRef}
+        className={fullScreen ? "flex-1 min-h-0 w-full overflow-hidden" : "flex-1 min-h-[400px] bg-slate-100 dark:bg-slate-900 overflow-hidden"}
+        style={{ touchAction: "none" }}
+      >
         <Stage
           ref={stageRef}
-          width={containerRef.current?.clientWidth || 800}
-          height={containerRef.current?.clientHeight || 600}
+          width={stageSize.w}
+          height={stageSize.h}
           scaleX={scale}
           scaleY={scale}
           x={position.x}
@@ -323,6 +393,27 @@ export function SchemaCanvas({
           }}
         >
           <Layer>
+            {/* Сетка фона (точечная/лёгкая) */}
+            {(function drawGrid() {
+              const step = 48;
+              const w = 2400;
+              const h = 1600;
+              const lines: number[] = [];
+              for (let x = -w; x <= w; x += step) {
+                lines.push(x, -h, x, h);
+              }
+              for (let y = -h; y <= h; y += step) {
+                lines.push(-w, y, w, y);
+              }
+              return (
+                <Line
+                  points={lines}
+                  stroke="rgba(148, 163, 184, 0.2)"
+                  strokeWidth={0.5}
+                  listening={false}
+                />
+              );
+            })()}
             {/* Zones */}
             {zones.map(zone => (
               <Group key={zone.id}>
@@ -331,10 +422,14 @@ export function SchemaCanvas({
                   y={zone.position.y}
                   width={zone.width}
                   height={zone.height}
-                  fill={zone.color || "rgba(59, 130, 246, 0.1)"}
+                  fill={zone.color || "rgba(59, 130, 246, 0.08)"}
                   stroke={zone.color || "#3b82f6"}
                   strokeWidth={2}
-                  dash={[5, 5]}
+                  dash={[8, 6]}
+                  cornerRadius={6}
+                  shadowColor="black"
+                  shadowBlur={4}
+                  shadowOpacity={0.1}
                 />
                 <Text
                   x={zone.position.x + 10}
@@ -347,7 +442,7 @@ export function SchemaCanvas({
               </Group>
             ))}
 
-            {/* Cables */}
+            {/* Cables — только out→in считаются валидными, невалидные рисуем красным */}
             {cables.map(cable => {
               const fromDevice = devices.find(d => d.id === cable.fromDeviceId);
               const toDevice = devices.find(d => d.id === cable.toDeviceId);
@@ -357,21 +452,24 @@ export function SchemaCanvas({
               const toPort = [...(toDevice.portsIn || []), ...(toDevice.portsOut || [])].find(p => p.id === cable.toPortId);
               if (!fromPort || !toPort) return null;
 
-              const fromPortIndex = fromDevice.portsOut?.findIndex(p => p.id === cable.fromPortId) ?? -1;
-              const toPortIndex = toDevice.portsIn?.findIndex(p => p.id === cable.toPortId) ?? -1;
-              
+              const valid = isConnectionValid(fromDevice, fromPort, toDevice, toPort);
+              const fromPortIndex = (fromPort.type === "out" ? fromDevice.portsOut : fromDevice.portsIn)?.findIndex(p => p.id === cable.fromPortId) ?? 0;
+              const toPortIndex = (toPort.type === "in" ? toDevice.portsIn : toDevice.portsOut)?.findIndex(p => p.id === cable.toPortId) ?? 0;
               const fromPos = getPortPosition(fromDevice, fromPort, fromPortIndex);
               const toPos = getPortPosition(toDevice, toPort, toPortIndex);
+
+              const isWireless = cable.cableType === "wireless" || fromPort.portType === "Wireless" || toPort.portType === "Wireless";
+              const strokeColor = valid ? (isWireless ? "#7c3aed" : "#334155") : "#dc2626";
 
               return (
                 <Line
                   key={cable.id}
                   points={[fromPos.x, fromPos.y + PORT_HEIGHT / 2, toPos.x, toPos.y + PORT_HEIGHT / 2]}
-                  stroke="#666"
-                  strokeWidth={2}
+                  stroke={strokeColor}
+                  strokeWidth={2.5}
                   lineCap="round"
                   lineJoin="round"
-                  dash={cable.cableType === "wireless" ? [5, 5] : undefined}
+                  dash={isWireless ? [8, 6] : undefined}
                 />
               );
             })}
@@ -407,10 +505,14 @@ export function SchemaCanvas({
                   <Rect
                     width={DEVICE_WIDTH}
                     height={deviceHeight}
-                    fill={isSelected ? "#3b82f6" : "#1f2937"}
-                    stroke={isSelected ? "#60a5fa" : "#374151"}
+                    fill={isSelected ? "#2563eb" : "#1e293b"}
+                    stroke={isSelected ? "#60a5fa" : "#475569"}
                     strokeWidth={isSelected ? 3 : 2}
-                    cornerRadius={4}
+                    cornerRadius={8}
+                    shadowColor="black"
+                    shadowBlur={6}
+                    shadowOpacity={0.2}
+                    shadowOffsetY={2}
                   />
 
                   {/* Device name */}
@@ -436,6 +538,22 @@ export function SchemaCanvas({
                       align="center"
                     />
                   )}
+
+                  {/* Labels IN / OUT для наглядности, где входы и выходы */}
+                  <Text
+                    x={4}
+                    y={4}
+                    text="IN"
+                    fontSize={10}
+                    fill="#e5e7eb"
+                  />
+                  <Text
+                    x={4}
+                    y={deviceHeight - PORT_HEIGHT - 12}
+                    text="OUT"
+                    fontSize={10}
+                    fill="#e5e7eb"
+                  />
 
                   {/* Input ports */}
                   {device.portsIn?.map((port, index) => {
@@ -503,5 +621,5 @@ export function SchemaCanvas({
       </div>
     </div>
   );
-}
+});
 

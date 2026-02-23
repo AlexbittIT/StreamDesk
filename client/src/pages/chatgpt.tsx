@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
   Send, Loader2, Bot, User as UserIcon, AlertCircle, 
-  Plus, Paperclip, X, FileIcon, Music, Image as ImageIcon, FileText, Download, Menu
+  Plus, Paperclip, X, FileIcon, Music, Image as ImageIcon, FileText, Download, Menu, MessageSquare
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -99,7 +100,7 @@ export default function ChatGPT() {
       id: "local-llama",
       name: "Llama 3.1",
       description: "Локальная модель Llama 3.1",
-      status: "online",
+      status: "offline",
       endpoint: "http://localhost:8080/v1/chat/completions",
     },
     {
@@ -162,6 +163,7 @@ export default function ChatGPT() {
   useEffect(() => {
     if (chatMessages.length > 0) {
       setMessages(chatMessages);
+      setTimeout(scrollToBottom, 150);
     } else if (!selectedChatId) {
       setMessages([{
         id: "1",
@@ -172,16 +174,10 @@ export default function ChatGPT() {
     }
   }, [chatMessages, selectedChatId]);
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  useEffect(() => {
-    checkModelsStatus();
-  }, []);
-
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+    });
   };
 
   const checkModelsStatus = async () => {
@@ -364,6 +360,7 @@ export default function ChatGPT() {
       textareaRef.current.style.height = '52px';
     }
     setIsLoading(true);
+    setTimeout(scrollToBottom, 50);
 
     try {
       // Сохраняем сообщение пользователя
@@ -408,6 +405,7 @@ export default function ChatGPT() {
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
+      setTimeout(scrollToBottom, 50);
 
       // Сохраняем ответ ассистента
       await apiRequest("POST", `/api/chat/sessions/${chatId}/messages`, {
@@ -426,6 +424,7 @@ export default function ChatGPT() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
+      setTimeout(scrollToBottom, 50);
       toast({
         title: "Ошибка",
         description: error.message || "Не удалось получить ответ от модели",
@@ -470,30 +469,47 @@ export default function ChatGPT() {
   // Если пользователь не загружен, показываем сообщение
   if (!currentUser?.id) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-8rem)] bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/20 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
-        <div className="max-w-md p-8 text-center border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900 shadow-lg">
-          <AlertCircle className="w-12 h-12 mx-auto mb-4 text-yellow-500" />
-          <h3 className="text-lg font-semibold mb-2 text-slate-900 dark:text-slate-100">Требуется авторизация</h3>
-          <p className="text-slate-600 dark:text-slate-400 mb-4">
-            Пожалуйста, войдите в систему для использования ChatGPT.
-          </p>
-          <Button onClick={() => window.location.href = "/login"}>
-            Войти
-          </Button>
-        </div>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/30 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 flex items-center justify-center p-4">
+        <Card className="max-w-md w-full shadow-xl border-2">
+          <CardContent className="pt-8 pb-8 text-center">
+            <AlertCircle className="w-12 h-12 mx-auto mb-4 text-amber-500" />
+            <h3 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">Требуется авторизация</h3>
+            <p className="text-muted-foreground mb-6">
+              Пожалуйста, войдите в систему для использования AI Ассистента.
+            </p>
+            <Button onClick={() => window.location.href = "/login"} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white">
+              Войти
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col sm:flex-row h-[calc(100vh-8rem)] bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/20 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 relative">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/30 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
+      <div className="container max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+        {/* Заголовок в стиле приложения */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent flex items-center gap-2">
+              <MessageSquare className="w-8 h-8 text-purple-500" />
+              AI Ассистент
+            </h1>
+            <p className="text-sm sm:text-base text-muted-foreground mt-1">
+              Локальные модели и чаты — общение с AI в едином стиле
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row h-[calc(100vh-11rem)] min-h-[320px] rounded-xl overflow-hidden shadow-xl border border-slate-200/80 dark:border-slate-700/80 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm relative flex-1">
       {/* Боковая панель с чатами */}
-      <div className={`${sidebarOpen ? 'block' : 'hidden'} sm:block absolute sm:relative z-50 sm:z-auto w-full sm:w-72 flex-shrink-0 flex flex-col border-r border-slate-200/80 dark:border-slate-800/80 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm h-full shadow-lg sm:shadow-none`}>
-        <div className="p-3 sm:p-4 border-b border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between sm:block bg-gradient-to-r from-slate-50 to-white dark:from-slate-900 dark:to-slate-950">
+      <div className={`${sidebarOpen ? 'block' : 'hidden'} sm:block absolute sm:relative z-50 sm:z-auto w-full sm:w-72 flex-shrink-0 flex flex-col border-r border-slate-200/80 dark:border-slate-700/80 bg-slate-50/80 dark:bg-slate-900/80 h-full min-h-0`}>
+        <div className="p-3 sm:p-4 border-b border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between sm:block">
           <Button
             size="sm"
             onClick={handleCreateChat}
-            className="w-full sm:w-full justify-start gap-2 h-9 sm:h-10 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-md hover:shadow-lg transition-all duration-200 border-0 text-sm font-medium"
+            className="w-full sm:w-full justify-start gap-2 h-9 sm:h-10 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md hover:shadow-lg transition-all duration-200 border-0 text-sm font-medium"
           >
             <Plus className="w-4 h-4" />
             <span>Новый чат</span>
@@ -641,9 +657,9 @@ export default function ChatGPT() {
       </div>
 
       {/* Основная область чата */}
-      <div className="flex-1 flex flex-col min-w-0 bg-white dark:bg-slate-900">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-white dark:bg-slate-900/50">
         {/* Header с выбором модели */}
-        <div className="border-b border-slate-200/80 dark:border-slate-800/80 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between bg-gradient-to-r from-white to-slate-50 dark:from-slate-900 dark:to-slate-950 gap-3 shadow-sm">
+        <div className="border-b border-slate-200/80 dark:border-slate-700/80 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm gap-3">
           <div className="flex items-center gap-3">
             <Button
               variant="ghost"
@@ -654,7 +670,7 @@ export default function ChatGPT() {
               <Menu className="w-5 h-5" />
             </Button>
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-md">
+              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-md">
                 <Bot className="w-5 h-5 text-white" />
               </div>
               <div>
@@ -691,7 +707,7 @@ export default function ChatGPT() {
         </div>
 
         {/* Чат */}
-        <div className="flex-1 overflow-y-auto bg-gradient-to-b from-white via-slate-50/50 to-white dark:from-slate-900 dark:via-slate-950/50 dark:to-slate-900">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden hide-scrollbar bg-gradient-to-b from-white via-slate-50/50 to-white dark:from-slate-900 dark:via-slate-950/50 dark:to-slate-900 overscroll-contain">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-8">
             {messagesLoading ? (
               <div className="flex items-center justify-center py-16">
@@ -780,10 +796,10 @@ export default function ChatGPT() {
                       )}
                       
                       {/* Текст сообщения */}
-                      <div className={cn(
-                        "leading-relaxed whitespace-pre-wrap text-sm sm:text-base break-words rounded-2xl px-4 py-3 shadow-sm",
-                        message.role === "user"
-                          ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
+                    <div className={cn(
+                      "leading-relaxed whitespace-pre-wrap text-sm sm:text-base break-words rounded-2xl px-4 py-3 shadow-sm",
+                      message.role === "user"
+                          ? "bg-gradient-to-br from-blue-500 to-purple-600 text-white"
                           : "bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700"
                       )}>
                         {message.content.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim() || message.content}
@@ -879,7 +895,7 @@ export default function ChatGPT() {
                 <button
                   onClick={handleSend}
                   disabled={isLoading || (!input.trim() && attachedFiles.length === 0) || !selectedModel}
-                  className="absolute right-2 bottom-2 p-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                  className="absolute right-2 bottom-2 p-2 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                   title="Отправить"
                 >
                   {isLoading ? (
@@ -894,6 +910,8 @@ export default function ChatGPT() {
               AI может делать ошибки. Проверяйте важную информацию.
             </p>
           </div>
+        </div>
+      </div>
         </div>
       </div>
     </div>

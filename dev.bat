@@ -30,19 +30,24 @@ if not exist "node_modules" (
     echo.
 )
 
-:: Проверка .env файла
+:: Проверка .env файла — создаём из .env.example, если нет .env
 if not exist ".env" (
     echo ⚠️  Файл .env не найден!
-    echo Создаю файл .env с настройками по умолчанию...
+    if exist ".env.example" (
+        echo Копирую настройки из .env.example...
+        copy /Y .env.example .env >nul
+        echo ✅ Файл .env создан из .env.example
+    ) else (
+        echo Создаю файл .env с настройками по умолчанию...
+        (
+            echo DATABASE_URL=postgresql://postgres:postgres@localhost:5432/streamdesk
+            echo PORT=5000
+            echo NODE_ENV=development
+        ) > .env
+        echo ✅ Файл .env создан
+    )
     echo.
-    (
-        echo DATABASE_URL=postgresql://postgres:postgres@localhost:5432/streamdesk
-        echo PORT=5000
-        echo NODE_ENV=development
-    ) > .env
-    echo ✅ Файл .env создан
-    echo.
-    echo ⚠️  ВАЖНО: Откройте файл .env и укажите правильные данные для PostgreSQL!
+    echo ⚠️  ВАЖНО: Откройте файл .env и укажите DATABASE_URL для PostgreSQL!
     echo.
     timeout /t 3 /nobreak >nul
 )
@@ -60,7 +65,7 @@ if %errorlevel% neq 0 (
 echo ✅ Все проверки пройдены
 echo.
 echo Запуск сервера разработки...
-echo Приложение будет доступно по адресу: http://localhost:5000
+echo Порт берётся из .env (переменная PORT). Адрес будет выведен ниже.
 echo.
 echo Для остановки нажмите Ctrl+C
 echo.

@@ -3,6 +3,8 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { seedDatabase } from "./seed-data";
+import { initDatabase, isStubStorage } from "./database";
+import { addTerminalLog } from "./terminal-log";
 
 const app = express();
 app.use(express.json());
@@ -23,15 +25,15 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
+      const isAuthPath = path === "/api/auth/login" || path === "/api/auth/logout";
+      if (capturedJsonResponse && !isAuthPath) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
-
       if (logLine.length > 80) {
         logLine = logLine.slice(0, 79) + "…";
       }
-
       log(logLine);
+      addTerminalLog(`[${new Date().toISOString()}] ${logLine}`);
     }
   });
 
@@ -39,28 +41,24 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  await initDatabase();
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    if (res.headersSent) return;
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-
     res.status(status).json({ message });
-    throw err;
   });
 
-  // Seed database with sample data in development
-  if (app.get("env") === "development") {
+  // Seed database with sample data in development (только при реальной БД)
+  if (app.get("env") === "development" && !isStubStorage) {
     try {
       await seedDatabase();
       log("✅ Database seeding completed");
     } catch (error: any) {
-      log(`\n❌ Database seeding failed: ${error.message}\n`);
-      log(`⚠️  Please check:`);
-      log(`   1. PostgreSQL is running`);
-      log(`   2. DATABASE_URL in .env file is correct`);
-      log(`   3. Database exists and is accessible\n`);
-      log(`⚠️  Server will continue, but database operations may fail.\n`);
+      log(`\n❌ Database seeding failed: ${error?.message}\n`);
     }
   }
 
@@ -73,30 +71,32 @@ app.use((req, res, next) => {
     serveStatic(app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || '5000', 10);
-  
-  // Обработка ошибок сервера
-  server.on('error', (err: any) => {
-    if (err.code === 'EADDRINUSE') {
-      log(`❌ Port ${port} is already in use. Try a different port.`);
-      process.exit(1);
-    } else {
-      log(`❌ Server error: ${err.message} (code: ${err.code})`);
-      if (err.code !== 'ENOTSUP') {
-        throw err;
+  // Порт из .env (или 5000). Если занят — пробуем следующие (port+1 … port+10).
+  const basePort = parseInt(process.env.PORT || '5000', 10);
+  const maxTries = 10;
+
+  function tryListen(port: number) {
+    server.once('error', (err: any) => {
+      const tryNext = port < basePort + maxTries;
+      if ((err.code === 'EADDRINUSE' || err.code === 'EACCES') && tryNext) {
+        log(`⚠️ Порт ${port} недоступен (${err.code === 'EACCES' ? 'нет прав / системный' : 'занят'}), пробуем ${port + 1}...`);
+        tryListen(port + 1);
+      } else if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
+        log(`❌ Порты ${basePort}–${basePort + maxTries - 1} недоступны. Смените PORT в .env (например 5000) или запустите от имени администратора.`);
+        process.exit(1);
+      } else {
+        log(`❌ Ошибка сервера: ${err.message}`);
+        process.exit(1);
       }
-    }
-  });
-  
-  // Исправление для Windows - используем простой метод listen без параметров объекта
-  // Для доступа извне слушаем на всех интерфейсах (0.0.0.0)
-  server.listen(port, '0.0.0.0', () => {
-    log(`✅ Server running on http://localhost:${port}`);
-    log(`✅ Server accessible from network on port ${port}`);
-    log(`💡 To access via domain, configure DNS and port forwarding`);
-  });
+    });
+
+    const protocol = process.env.SSL_CERT_PATH && process.env.SSL_KEY_PATH ? "https" : "http";
+    server.listen(port, "0.0.0.0", () => {
+      server.removeAllListeners("error");
+      log(`✅ Сервер: ${protocol}://localhost:${port} — откройте в браузере`);
+      addTerminalLog(`[${new Date().toISOString()}] Server listening ${protocol}://0.0.0.0:${port} NODE_ENV=${process.env.NODE_ENV || "development"}`);
+    });
+  }
+
+  tryListen(basePort);
 })();

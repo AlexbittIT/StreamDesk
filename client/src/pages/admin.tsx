@@ -12,13 +12,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { 
-  Users, Shield, Settings, Search, Edit, Trash2, 
+  Users, Shield, Settings, Edit, Trash2, 
   UserPlus, Key, Check, X, AlertCircle, Github, Plus, History, Clock, FileText
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { User, Role } from "@shared/schema";
-import { PERMISSIONS } from "@shared/schema";
+import { PERMISSIONS, TAB_KEYS, TAB_LABELS, tabPermission } from "@shared/schema";
 
 const permissionGroups = {
   tasks: {
@@ -177,7 +177,9 @@ export default function Admin() {
     setUserRole(newRole);
     const role = roles.find(r => r.name === newRole);
     if (role) {
-      setUserPermissions(role.permissions as string[]);
+      const rolePerms = (role.permissions as string[]) || [];
+      const tabPerms = userPermissions.filter((p) => p.startsWith("tab:"));
+      setUserPermissions([...rolePerms, ...tabPerms]);
     }
   };
 
@@ -237,22 +239,6 @@ export default function Admin() {
         </TabsList>
 
         <TabsContent value="users" className="mt-6">
-          {/* Search */}
-          <Card className="mb-6">
-            <CardContent className="py-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder="Поиск пользователей..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
-                  data-testid="input-search-users"
-                />
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Users List */}
           <Card>
             <CardHeader>
@@ -271,24 +257,24 @@ export default function Admin() {
                   {filteredUsers.map(user => (
                     <div 
                       key={user.id} 
-                      className="flex items-center justify-between p-4 hover:bg-gray-50"
+                      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 hover:bg-gray-50 dark:hover:bg-gray-800/50"
                       data-testid={`user-row-${user.id}`}
                     >
-                      <div className="flex items-center gap-4">
-                        <Avatar className="w-10 h-10">
+                      <div className="flex items-center gap-4 min-w-0">
+                        <Avatar className="w-10 h-10 shrink-0">
                           <AvatarImage src={user.avatar || undefined} />
                           <AvatarFallback>
                             {user.name.split(' ').map(n => n[0]).join('')}
                           </AvatarFallback>
                         </Avatar>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">{user.name}</span>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium truncate">{user.name}</span>
                             <Badge className={getRoleColor(user.role)}>
                               {getRoleLabel(user.role)}
                             </Badge>
                             {user.active === false && (
-                              <Badge variant="outline" className="text-xs bg-yellow-100 text-yellow-800 border-yellow-300">
+                              <Badge variant="outline" className="text-xs bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/30 dark:text-yellow-300">
                                 Ожидает подтверждения
                               </Badge>
                             )}
@@ -298,14 +284,14 @@ export default function Admin() {
                               </Badge>
                             )}
                           </div>
-                          <div className="text-sm text-gray-500">
+                          <div className="text-sm text-gray-500 dark:text-gray-400 truncate">
                             @{user.username}
                             {user.email && ` • ${user.email}`}
                           </div>
                         </div>
                       </div>
                       
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 shrink-0 sm:flex-nowrap">
                         {user.active === false && (
                           <Button
                             variant="default"
@@ -353,7 +339,7 @@ export default function Admin() {
         </TabsContent>
 
         <TabsContent value="roles" className="mt-6">
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
             {rolesLoading ? (
               <div className="col-span-full flex items-center justify-center py-12">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -418,9 +404,9 @@ export default function Admin() {
             </Button>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
             {repositories.map(repo => (
-              <Card key={repo.id}>
+              <Card key={repo.id} className="min-w-0 overflow-hidden">
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2">
@@ -590,7 +576,7 @@ export default function Admin() {
 
       {/* Permissions Dialog */}
       <Dialog open={isPermissionsOpen} onOpenChange={setIsPermissionsOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto hide-scrollbar">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Key className="w-5 h-5" />
@@ -627,6 +613,35 @@ export default function Admin() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-4">
+                <Label>Доступ к вкладкам</Label>
+                <p className="text-sm text-muted-foreground">
+                  Отметьте вкладки, которые видит сотрудник. Если ничего не отмечено — видны все вкладки. Администратор всегда видит всё.
+                </p>
+                <Card>
+                  <CardContent className="py-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {TAB_KEYS.map((key) => {
+                        const perm = tabPermission(key);
+                        const label = TAB_LABELS[key] || key;
+                        return (
+                          <div key={key} className="flex items-center gap-2">
+                            <Checkbox
+                              id={perm}
+                              checked={userPermissions.includes(perm)}
+                              onCheckedChange={() => handlePermissionToggle(perm)}
+                            />
+                            <label htmlFor={perm} className="text-sm cursor-pointer truncate">
+                              {label}
+                            </label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
 
               <div className="space-y-4">
@@ -793,7 +808,7 @@ function UserLogsTab() {
           ) : logs.length === 0 ? (
             <div className="text-center py-8 text-gray-500">Нет записей</div>
           ) : (
-            <div className="space-y-3 max-h-[600px] overflow-y-auto">
+            <div className="space-y-3 max-h-[600px] overflow-y-auto hide-scrollbar">
               {logs.map((log) => (
                 <div
                   key={log.id}

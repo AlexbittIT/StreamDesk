@@ -50,6 +50,8 @@ export interface IStorage {
   getNotificationsByUser(userId: string): Promise<Notification[]>;
   createNotification(notification: InsertNotification): Promise<Notification>;
   markNotificationRead(id: string): Promise<boolean>;
+  markAllNotificationsRead(userId: string): Promise<number>;
+  deleteNotification(id: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
@@ -368,10 +370,25 @@ export class MemStorage implements IStorage {
   async markNotificationRead(id: string): Promise<boolean> {
     const notification = this.notifications.get(id);
     if (!notification) return false;
-    
     notification.read = true;
     this.notifications.set(id, notification);
     return true;
+  }
+
+  async markAllNotificationsRead(userId: string): Promise<number> {
+    let count = 0;
+    this.notifications.forEach((n, id) => {
+      if (n.userId === userId && !n.read) {
+        n.read = true;
+        this.notifications.set(id, n);
+        count++;
+      }
+    });
+    return count;
+  }
+
+  async deleteNotification(id: string): Promise<boolean> {
+    return this.notifications.delete(id);
   }
 }
 

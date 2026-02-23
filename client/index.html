@@ -1,13 +1,35 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5, minimum-scale=1, viewport-fit=cover, user-scalable=yes" />
+    <meta name="description" content="StreamDesk - Система управления стримингом, оборудованием и схемами подключения" />
+    <meta name="theme-color" content="#3b82f6" />
+    <!-- PWA: открытие без интерфейса браузера при установке на главный экран -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="StreamDesk" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <title>StreamDesk</title>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <p style="padding:2rem;font-family:sans-serif">Включите JavaScript для работы StreamDesk.</p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
-    <!-- This is a replit script which adds a banner on the top of the page when opened in development mode outside the replit environment -->
-    <script type="text/javascript" src="https://replit.com/public/js/replit-dev-banner.js"></script>
+    <script>
+      // PWA: не показывать иконку «Установить» в углу Chrome, если уже открыто как приложение
+      window.addEventListener('beforeinstallprompt', function(e) { e.preventDefault(); });
+      // Если через 8 сек #root пустой — показываем подсказку (белый экран)
+      setTimeout(function(){
+        var r = document.getElementById('root');
+        if (r && !r.innerHTML.trim()) {
+          r.innerHTML = '<div style="padding:2rem;font-family:sans-serif;max-width:500px"><h2>StreamDesk не загрузился</h2><p>Откройте консоль (F12 → Console) и посмотрите ошибки.</p><p>Убедитесь, что открыли тот же адрес, что в логе сервера (например http://localhost:8492).</p></div>';
+        }
+      }, 8000);
+    </script>
   </body>
 </html>

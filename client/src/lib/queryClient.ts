@@ -1,13 +1,48 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+const API_BASE = (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_BASE) || "";
+
+/** Кодирует объект пользователя для заголовка x-user (только ASCII), чтобы избежать ошибки "non ISO-8859-1 code point" при кириллице в имени. */
+export function encodeUserHeader(user: object | null | undefined): string {
+  if (!user) return "";
+  try {
+    const json = JSON.stringify(user);
+    return typeof btoa !== "undefined"
+      ? btoa(unescape(encodeURIComponent(json)))
+      : json;
+  } catch {
+    return "";
+  }
+}
+
+/** Базовый URL для API (учитывает VITE_API_BASE). Используйте для fetch, чтобы не получать HTML вместо JSON. */
+export function apiUrl(path: string): string {
+  if (path.startsWith("http")) return path;
+  const base = API_BASE.replace(/\/$/, "");
+  return base ? `${base}${path.startsWith("/") ? path : `/${path}`}` : path;
+}
+
+/** Безопасный разбор JSON из Response. При ответе с HTML (например 404) не бросает "Unexpected token '<'". */
+export async function safeJson<T>(res: Response, fallback: T): Promise<T> {
+  const text = await res.text();
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) return fallback;
+  try {
+    const data = JSON.parse(text);
+    return data as T;
+  } catch {
+    return fallback;
+  }
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    // Если 401 (Unauthorized), очищаем localStorage и перенаправляем на логин
     if (res.status === 401) {
       localStorage.removeItem('streamstudio_user');
-      // Перенаправляем на страницу логина только если мы не на ней уже
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      const path = typeof window !== "undefined" ? window.location.pathname : "";
+      // Не делаем полную перезагрузку на / или /login — иначе форма входа сбрасывается
+      if (path !== "/" && path !== "/login") {
+        window.location.href = "/login";
       }
     }
     const text = (await res.text()) || res.statusText;
@@ -38,7 +73,7 @@ export async function apiRequest(
       headers["Content-Type"] = "application/json";
     }
 
-    const res = await fetch(url, {
+    const res = await fetch(apiUrl(url), {
       method,
       headers,
       body: data ? (isFormData ? data as FormData : JSON.stringify(data)) : undefined,
@@ -71,7 +106,8 @@ export const getQueryFn: <T>(options: {
       const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 секунд для GET запросов
 
     try {
-      const res = await fetch(queryKey.join("/") as string, {
+      const url = apiUrl(queryKey.join("/") as string);
+      const res = await fetch(url, {
         credentials: "include",
         signal: controller.signal,
       });

@@ -23,7 +23,7 @@ interface ManagerStats {
   inProgressTasks: number;
   overdueTasks: number;
   averageCompletionTime: number;
-  tasksByStatus: { status: string; count: number }[];
+  tasksByStatus: { status: string; label?: string; count: number }[];
   tasksByPriority: { priority: string; count: number }[];
   tasksByAssignee: { assigneeId: string; assigneeName: string; count: number }[];
   recentActivity: {
@@ -170,7 +170,7 @@ export default function ManagerDashboard() {
               <div className="space-y-3">
                 {statsData.tasksByStatus.map((item) => (
                   <div key={item.status} className="flex items-center justify-between">
-                    <span className="text-sm font-medium capitalize">{item.status}</span>
+                    <span className="text-sm font-medium" title={item.status}>{item.label ?? item.status}</span>
                     <div className="flex items-center space-x-2">
                       <div className="w-32 h-2 bg-muted rounded-full overflow-hidden">
                         <div
@@ -248,33 +248,47 @@ export default function ManagerDashboard() {
           </CardHeader>
           <CardContent>
             {statsData.topPerformers.length > 0 ? (
-              <div className="space-y-4">
-                {statsData.topPerformers.map((performer, index) => (
-                  <div key={performer.userId} className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <div className="relative">
-                        <Avatar className="w-10 h-10">
-                          <AvatarImage src={performer.avatar} />
-                          <AvatarFallback>
-                            {performer.userName.split(' ').map(n => n[0]).join('')}
-                          </AvatarFallback>
-                        </Avatar>
-                        {index < 3 && (
-                          <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-500 rounded-full flex items-center justify-center text-xs font-bold text-white">
-                            {index + 1}
-                          </div>
-                        )}
+              <div className="space-y-3">
+                {statsData.topPerformers.map((performer, index) => {
+                  const place = index + 1;
+                  const isPodium = place <= 3;
+                  const placeStyle = place === 1 ? "ring-2 ring-amber-400 bg-amber-500/10 dark:bg-amber-500/20" : place === 2 ? "ring-2 ring-slate-300 dark:ring-slate-500 bg-slate-500/10 dark:bg-slate-500/20" : place === 3 ? "ring-2 ring-amber-700 dark:ring-amber-600 bg-amber-700/10 dark:bg-amber-700/20" : "";
+                  const placeLabel = place === 1 ? "1 место" : place === 2 ? "2 место" : place === 3 ? "3 место" : `${place} место`;
+                  return (
+                    <div
+                      key={performer.userId}
+                      className={cn(
+                        "flex items-center justify-between p-3 rounded-xl border transition-colors",
+                        isPodium ? placeStyle : "border-border bg-muted/30"
+                      )}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="relative">
+                          <Avatar className={cn("w-10 h-10", isPodium && "ring-2 ring-background")}>
+                            <AvatarImage src={performer.avatar} />
+                            <AvatarFallback>
+                              {performer.userName.split(" ").map((n: string) => n[0]).join("") || "?"}
+                            </AvatarFallback>
+                          </Avatar>
+                          {isPodium && (
+                            <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                              {place}
+                            </span>
+                          )}
+                        </div>
+                        <div>
+                          <p className="font-medium">{performer.userName}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {placeLabel} · {performer.completedTasks} {t("managerDashboard.completedTasks").toLowerCase()}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium">{performer.userName}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {performer.completedTasks} {t('managerDashboard.completedTasks').toLowerCase()}
-                        </p>
-                      </div>
+                      <Badge variant={isPodium ? "default" : "secondary"} className="tabular-nums">
+                        {performer.completedTasks}
+                      </Badge>
                     </div>
-                    <Badge variant="secondary">{performer.completedTasks}</Badge>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground text-center py-4">

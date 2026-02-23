@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,12 +17,14 @@ import {
   Download,
   Share2,
   List,
-  Package
+  Package,
+  Maximize2,
+  Minimize2
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
-import { SchemaCanvas } from "@/components/connection-schemas/schema-canvas";
+import { SchemaCanvas, type SchemaCanvasRef } from "@/components/connection-schemas/schema-canvas";
 import { AddEquipmentDialog } from "@/components/connection-schemas/add-equipment-dialog";
 import { AddZoneDialog } from "@/components/connection-schemas/add-zone-dialog";
 
@@ -88,6 +90,9 @@ export default function ConnectionSchemas() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [newSchemaName, setNewSchemaName] = useState("");
   const [newSchemaDescription, setNewSchemaDescription] = useState("");
+  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [newlyCreatedSchemaId, setNewlyCreatedSchemaId] = useState<string | null>(null);
+  const schemaCanvasRef = useRef<SchemaCanvasRef>(null);
 
   // Получение всех схем
   const { data: schemas = [], refetch: refetchSchemas } = useQuery<ConnectionSchema[]>({
@@ -181,16 +186,18 @@ export default function ConnectionSchemas() {
         throw error;
       }
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       toast({ title: "Схема создана", description: "Схема подключения успешно создана" });
       setIsCreatingSchema(false);
       setNewSchemaName("");
       setNewSchemaDescription("");
-      refetchSchemas().then(() => {
-        if (data?.id) {
-          setSelectedSchema(data.id);
-        }
-      });
+      queryClient.invalidateQueries({ queryKey: ["/api/connection-schemas"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/connection-schemas"] });
+      if (data?.id) {
+        setSelectedSchema(data.id);
+        setNewlyCreatedSchemaId(data.id);
+        setTimeout(() => setNewlyCreatedSchemaId(null), 2500);
+      }
     },
     onError: (error: any) => {
       toast({
@@ -339,16 +346,16 @@ export default function ConnectionSchemas() {
       return;
     }
 
-    // Находим свободное место на схеме
-    const existingDevices = devices;
-    const gridX = Math.floor(existingDevices.length / 3) * 250;
-    const gridY = (existingDevices.length % 3) * 150;
+    // Размещаем в центре текущего вида (как в Figma), чтобы не переносить пользователя на другой край
+    const center = schemaCanvasRef.current?.getViewportCenter();
+    const x = center ? Math.round(center.x - 100) : Math.floor(devices.length / 3) * 250 + 50;
+    const y = center ? Math.round(center.y - 40) : (devices.length % 3) * 150 + 50;
 
     createComponentMutation.mutate({
       schemaId: selectedSchema,
       type: equipment.type,
       name: equipment.name,
-      position: { x: gridX + 50, y: gridY + 50 },
+      position: { x, y },
       properties: {
         manufacturer: equipment.manufacturer,
         model: equipment.model,
@@ -388,12 +395,12 @@ export default function ConnectionSchemas() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/30 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
-      <div className="container max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-4 sm:space-y-6">
+    <div className="min-h-screen min-w-0 overflow-x-hidden bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/30 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
+      <div className="container max-w-[1920px] mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6">
         {/* Заголовок */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            <h1 className="text-xl sm:text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent truncate">
               Схемы подключения
             </h1>
             <p className="text-sm sm:text-base text-muted-foreground mt-1">
@@ -452,24 +459,59 @@ export default function ConnectionSchemas() {
           </Dialog>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[calc(100vh-200px)]">
-          {/* Список схем */}
-          <div className="lg:col-span-1">
-            <Card className="shadow-lg h-full flex flex-col">
-              <CardHeader>
-                <CardTitle>Схемы</CardTitle>
-                <CardDescription>Выберите схему для редактирования</CardDescription>
+        {/* Полноэкранный холст */}
+        {isFullScreen && selectedSchemaData && (
+          <div className="fixed inset-0 z-50 bg-slate-900 flex flex-col">
+            <div className="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+              <span className="text-white font-medium">{selectedSchemaData.name} — полноэкранный режим</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsFullScreen(false)}
+                className="border-slate-600 text-white hover:bg-slate-700"
+              >
+                <Minimize2 className="w-4 h-4 mr-2" />
+                Выйти
+              </Button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <SchemaCanvas
+                ref={schemaCanvasRef}
+                schemaId={selectedSchema}
+                devices={devices}
+                zones={zones}
+                cables={cables}
+                onDeviceUpdate={handleDeviceUpdate}
+                onDeviceSelect={setSelectedDeviceId}
+                selectedDeviceId={selectedDeviceId}
+                fullScreen
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 min-h-0 h-[calc(100vh-180px)] sm:h-[calc(100vh-200px)]">
+          {/* Список схем — на мобильном сверху, компактно */}
+          <div className="lg:col-span-1 min-w-0 flex flex-col min-h-[140px] sm:min-h-0">
+            <Card className="shadow-lg flex flex-col flex-1 min-h-0">
+              <CardHeader className="p-3 sm:p-6">
+                <CardTitle className="text-base sm:text-lg">Схемы</CardTitle>
+                <CardDescription className="text-xs sm:text-sm">Выберите схему для редактирования</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-2 flex-1 overflow-y-auto">
+              <CardContent className="space-y-2 flex-1 overflow-y-auto hide-scrollbar p-3 sm:p-6 pt-0">
                 {schemas.length > 0 ? (
                   schemas.map((schema) => (
                     <div
                       key={schema.id}
+                      ref={(el) => {
+                        if (el && newlyCreatedSchemaId === schema.id) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                      }}
                       className={cn(
                         "p-3 rounded-lg border-2 cursor-pointer transition-all",
                         selectedSchema === schema.id
                           ? "border-primary bg-primary/5"
-                          : "border-transparent hover:border-muted-foreground/50"
+                          : "border-transparent hover:border-muted-foreground/50",
+                        newlyCreatedSchemaId === schema.id && "ring-2 ring-primary ring-offset-2 animate-pulse"
                       )}
                       onClick={() => setSelectedSchema(schema.id)}
                     >
@@ -505,19 +547,22 @@ export default function ConnectionSchemas() {
             </Card>
           </div>
 
-          {/* Редактор схемы */}
-          <div className="lg:col-span-3">
+          {/* Редактор схемы: канвас с перемещением и рисованием */}
+          <div className="lg:col-span-3 min-h-0 flex flex-col min-w-0">
             {selectedSchemaData ? (
-              <Card className="shadow-lg h-full flex flex-col">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>{selectedSchemaData.name}</CardTitle>
+              <Card className="shadow-lg flex flex-col flex-1 min-h-[320px] sm:min-h-[420px] md:min-h-[520px]">
+                <CardHeader className="p-3 sm:p-6">
+                  <div className="flex flex-col gap-3 sm:gap-0 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <CardTitle className="text-base sm:text-lg truncate">{selectedSchemaData.name}</CardTitle>
                       {selectedSchemaData.description && (
-                        <CardDescription className="mt-1">{selectedSchemaData.description}</CardDescription>
+                        <CardDescription className="mt-1 truncate">{selectedSchemaData.description}</CardDescription>
                       )}
+                      <p className="text-xs text-muted-foreground mt-1 hidden sm:block">
+                        Перетаскивайте блоки; зум и панорама — в панели над схемой.
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                       <AddEquipmentDialog
                         open={isAddingEquipment}
                         onClose={() => setIsAddingEquipment(false)}
@@ -528,27 +573,37 @@ export default function ConnectionSchemas() {
                         onClose={() => setIsAddingZone(false)}
                         onAdd={handleAddZone}
                       />
-                      <Button onClick={() => setIsAddingEquipment(true)}>
-                        <Package className="w-4 h-4 mr-2" />
-                        Добавить оборудование
+                      <Button size="sm" className="h-9 touch-manipulation" onClick={() => setIsAddingEquipment(true)}>
+                        <Package className="w-4 h-4 sm:mr-2" />
+                        <span className="hidden sm:inline">Оборудование</span>
                       </Button>
-                      <Button variant="outline" onClick={() => setIsAddingZone(true)}>
-                        <Square className="w-4 h-4 mr-2" />
-                        Зона
+                      <Button size="sm" variant="outline" className="h-9 touch-manipulation" onClick={() => setIsAddingZone(true)}>
+                        <Square className="w-4 h-4 sm:mr-2" />
+                        <span className="hidden sm:inline">Зона</span>
                       </Button>
-                      <Button variant="outline">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-9 touch-manipulation"
+                        onClick={() => setIsFullScreen(true)}
+                        title="На весь экран"
+                      >
+                        <Maximize2 className="w-4 h-4" />
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-9 touch-manipulation hidden md:inline-flex">
                         <Type className="w-4 h-4 mr-2" />
                         Текст
                       </Button>
-                      <Button variant="outline">
+                      <Button size="sm" variant="outline" className="h-9 touch-manipulation hidden md:inline-flex">
                         <Wrench className="w-4 h-4 mr-2" />
                         Собрать
                       </Button>
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="flex-1 min-h-0 p-0">
+                <CardContent className="flex-1 min-h-0 p-0 overflow-hidden">
                   <SchemaCanvas
+                    ref={schemaCanvasRef}
                     schemaId={selectedSchema}
                     devices={devices}
                     zones={zones}
@@ -556,6 +611,7 @@ export default function ConnectionSchemas() {
                     onDeviceUpdate={handleDeviceUpdate}
                     onDeviceSelect={setSelectedDeviceId}
                     selectedDeviceId={selectedDeviceId}
+                    fullScreen={false}
                   />
                 </CardContent>
               </Card>

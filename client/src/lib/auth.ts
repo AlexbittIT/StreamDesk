@@ -12,12 +12,13 @@ export class AuthService {
 
   static async login(username: string, password: string): Promise<AuthUser> {
     try {
-      const response = await fetch("/api/auth/login", {
+      const base = (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_BASE) || "";
+      const url = base ? `${base.replace(/\/$/, "")}/api/auth/login` : "/api/auth/login";
+      const response = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
+        credentials: "include",
       });
 
       if (!response.ok) {
@@ -35,6 +36,9 @@ export class AuthService {
   }
 
   static logout(): void {
+    const base = (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_BASE) || "";
+    const url = base ? `${base.replace(/\/$/, "")}/api/auth/logout` : "/api/auth/logout";
+    fetch(url, { method: "POST", credentials: "include" }).catch(() => {});
     localStorage.removeItem(this.USER_KEY);
   }
 

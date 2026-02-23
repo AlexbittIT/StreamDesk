@@ -68,16 +68,15 @@ export default function VmixScheduler() {
   const [isConnecting, setIsConnecting] = useState(false);
   const { toast } = useToast();
 
-  // Проверка подключения к vMix
-  const { data: connection, refetch: checkConnection, isLoading: isCheckingConnection } = useQuery<VmixConnection>({
+  // Проверка подключения только по кнопке «Подключиться» или «Обновить» — без авто-опросов и повторов
+  const { data: connection, refetch: checkConnection, isFetching: isCheckingConnection } = useQuery<VmixConnection>({
     queryKey: ["/api/vmix/status", vmixHost, vmixPort],
     queryFn: async () => {
       const response = await apiRequest("GET", `/api/vmix/status?host=${vmixHost}&port=${vmixPort}`);
       return response.json();
     },
-    enabled: !!vmixHost && !!vmixPort,
-    refetchInterval: 3000, // Обновление каждые 3 секунды
-    retry: 2,
+    enabled: false,
+    retry: 0,
   });
 
   // Получение событий расписания
@@ -495,7 +494,7 @@ export default function VmixScheduler() {
                 />
               </div>
               <Button
-                onClick={handleConnect}
+                onClick={() => (connection?.connected ? checkConnection() : handleConnect())}
                 disabled={isConnecting || connectMutation.isPending || isCheckingConnection}
                 className="w-full sm:w-auto min-w-[140px]"
                 size="lg"
@@ -890,7 +889,7 @@ export default function VmixScheduler() {
                     Выберите вход для Preview или Program
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-2 sm:space-y-3 max-h-[600px] overflow-y-auto">
+                <CardContent className="space-y-2 sm:space-y-3 max-h-[600px] overflow-y-auto hide-scrollbar">
                   {connection?.inputs && connection.inputs.length > 0 ? (
                     connection.inputs.map((input) => (
                       <div 
@@ -1064,7 +1063,7 @@ export default function VmixScheduler() {
                         Добавить событие
                       </Button>
                     </DialogTrigger>
-                    <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                    <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto hide-scrollbar">
                       <DialogHeader>
                         <DialogTitle>Новое событие</DialogTitle>
                         <DialogDescription>

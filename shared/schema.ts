@@ -161,13 +161,16 @@ export const tasks = pgTable("tasks", {
   category: text("category"), // production, equipment, stream, admin, other
   projectId: varchar("project_id").references(() => projects.id), // связь с проектом
   projectColumnId: varchar("project_column_id").references(() => projectColumns.id), // связь со столбцом проекта
-  tags: jsonb("tags").default('[]'),
+  tags: jsonb("tags").default('[]'), // теги/наклейки (в т.ч. из YouGile): [{ id?, name?, color? }]
+  subtasks: jsonb("subtasks").default('[]'), // чеклист подзадач: [{ id, title, completed }]
   attachments: jsonb("attachments").default('[]'),
-  parentTaskId: varchar("parent_task_id"), // для подзадач
+  parentTaskId: varchar("parent_task_id"), // для подзадач (связь с другой задачей)
   estimatedHours: integer("estimated_hours"),
   actualHours: integer("actual_hours"),
   repository: text("repository"), // ссылка на репозиторий (GitHub, GitLab и т.д.)
   links: jsonb("links").default('[]'), // массив ссылок [{ title: string, url: string }]
+  yougileTaskId: text("yougile_task_id"), // ID задачи в YouGile для двусторонней синхронизации
+  yougileBoardId: text("yougile_board_id"), // ID доски YouGile (для фильтрации задач по доске)
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -232,6 +235,7 @@ export const projects = pgTable("projects", {
   estimatedSize: text("estimated_size"),
   notes: text("notes"),
   columns: jsonb("columns").default('[]'), // Кастомные столбцы для Kanban
+  yougileBoardId: text("yougile_board_id"), // ID доски YouGile — доска появляется в таск-менеджере
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -321,6 +325,77 @@ export const connectionSchemaComponents = pgTable("connection_schema_components"
   connections: jsonb("connections").default('[]'), // массив связей с другими компонентами
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Эфир ОТИС — настройки потока для вкладки «Эфир ОТИС»
+export const otisStreamSettings = pgTable("otis_stream_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().default("Эфир ОТИС"),
+  streamUrl: text("stream_url"), // HLS/URL после конвертации SRT или прямой поток
+  streamUrlBackup: text("stream_url_backup"),
+  showTimecode: boolean("show_timecode").default(true),
+  withSound: boolean("with_sound").default(true),
+  timecodeSource: text("timecode_source").default("local"), // local | vmix — локальный или от vMix (режиссёр)
+  vmixHost: text("vmix_host"), // хост vMix для получения таймкода
+  vmixPort: integer("vmix_port"), // порт vMix
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Продакшн: личное дело участника шоу (до эфира)
+export const showParticipantProfiles = pgTable("show_participant_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id").references(() => events.id).notNull(),
+  name: text("name").notNull(),
+  role: text("role"), // ведущий, гость, эксперт и т.д.
+  photo: text("photo"),
+  bio: text("bio"),
+  contacts: jsonb("contacts").default('{}'), // { email, phone, telegram }
+  extra: jsonb("extra").default('{}'), // произвольные поля
+  order: integer("order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Продакшн: маркеры по таймкоду во время эфира (для монтажа)
+export const showMarkers = pgTable("show_markers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: varchar("event_id").references(() => events.id).notNull(),
+  timecode: text("timecode").notNull(), // "00:12:34" или "00:12:34.500"
+  type: text("type").notNull(), // emotion, interest, event, note
+  value: text("value"), // например уровень интереса 1-5, тип эмоции
+  note: text("note"),
+  editorId: varchar("editor_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Кэш YouGile в БД: данные читаются из БД, синхронизация с API — по кнопке или по расписанию
+export const yougileProjects = pgTable("yougile_projects", {
+  id: varchar("id").primaryKey(), // id из YouGile
+  title: text("title"),
+  syncedAt: timestamp("synced_at").defaultNow(),
+});
+
+export const yougileBoards = pgTable("yougile_boards", {
+  id: varchar("id").primaryKey(),
+  projectId: varchar("project_id").notNull(),
+  title: text("title"),
+  syncedAt: timestamp("synced_at").defaultNow(),
+});
+
+export const yougileColumns = pgTable("yougile_columns", {
+  id: varchar("id").primaryKey(),
+  boardId: varchar("board_id").notNull(),
+  title: text("title"),
+  order: integer("order").default(0),
+  color: integer("color"),
+  syncedAt: timestamp("synced_at").defaultNow(),
+});
+
+export const yougileUsers = pgTable("yougile_users", {
+  id: varchar("id").primaryKey(),
+  email: text("email"),
+  username: text("username"),
+  syncedAt: timestamp("synced_at").defaultNow(),
 });
 
 // Insert schemas
@@ -448,6 +523,22 @@ export const insertConnectionSchemaComponentSchema = createInsertSchema(connecti
   updatedAt: true,
 });
 
+export const insertOtisStreamSettingsSchema = createInsertSchema(otisStreamSettings).omit({
+  id: true,
+  updatedAt: true,
+});
+
+export const insertShowParticipantProfileSchema = createInsertSchema(showParticipantProfiles).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertShowMarkerSchema = createInsertSchema(showMarkers).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -524,6 +615,20 @@ export type InsertConnectionSchema = z.infer<typeof insertConnectionSchemaSchema
 export type ConnectionSchemaComponent = typeof connectionSchemaComponents.$inferSelect;
 export type InsertConnectionSchemaComponent = z.infer<typeof insertConnectionSchemaComponentSchema>;
 
+export type OtisStreamSettings = typeof otisStreamSettings.$inferSelect;
+export type InsertOtisStreamSettings = z.infer<typeof insertOtisStreamSettingsSchema>;
+
+export type ShowParticipantProfile = typeof showParticipantProfiles.$inferSelect;
+export type InsertShowParticipantProfile = z.infer<typeof insertShowParticipantProfileSchema>;
+
+export type ShowMarker = typeof showMarkers.$inferSelect;
+export type InsertShowMarker = z.infer<typeof insertShowMarkerSchema>;
+
+export type YougileProject = typeof yougileProjects.$inferSelect;
+export type YougileBoard = typeof yougileBoards.$inferSelect;
+export type YougileColumn = typeof yougileColumns.$inferSelect;
+export type YougileUser = typeof yougileUsers.$inferSelect;
+
 // Константы для разрешений
 export const PERMISSIONS = {
   // Задачи
@@ -565,3 +670,52 @@ export const PERMISSIONS = {
 } as const;
 
 export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];
+
+// Ключи вкладок для разграничения доступа (permission = "tab:" + key)
+export const TAB_KEYS = [
+  "dashboard",
+  "tasks",
+  "calendar",
+  "maps",
+  "room-booking",
+  "equipment",
+  "transcription",
+  "computers",
+  "projects",
+  "monitoring",
+  "streams",
+  "servers",
+  "connection-schemas",
+  "chatgpt",
+  "notifications",
+  "settings",
+  "vmix-scheduler",
+  "otis-onair",
+  "production",
+] as const;
+
+export const TAB_LABELS: Record<string, string> = {
+  dashboard: "Панель управления",
+  tasks: "Задачи",
+  calendar: "Календарь",
+  maps: "Карты",
+  "room-booking": "Бронирование комнат",
+  equipment: "Склад техники",
+  transcription: "Транскрибация",
+  computers: "Компьютеры",
+  projects: "Видеопроекты",
+  monitoring: "Мониторинг системы",
+  streams: "Стриминг",
+  servers: "Серверы",
+  "connection-schemas": "Схемы подключения",
+  chatgpt: "ChatGPT",
+  notifications: "Уведомления",
+  settings: "Настройки",
+  "vmix-scheduler": "Расписатель vMix",
+  "otis-onair": "Эфир ОТИС",
+  production: "Продакшн / Шоу",
+};
+
+export function tabPermission(key: string): string {
+  return `tab:${key}`;
+}

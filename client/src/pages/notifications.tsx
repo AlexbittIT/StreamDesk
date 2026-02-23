@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,35 +10,60 @@ import { formatDistanceToNow } from "date-fns";
 import { ru } from "date-fns/locale";
 
 type Notification = {
-  id: number;
+  id: string;
   title: string;
   message: string;
   type: "info" | "success" | "warning" | "error";
   read: boolean;
-  userId: number | null;
+  userId: string | null;
   createdAt: string;
 };
 
+function getCurrentUserId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("streamstudio_user");
+    if (!raw) return null;
+    const user = JSON.parse(raw);
+    return user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export default function Notifications() {
   const { toast } = useToast();
+  const [userId, setUserId] = useState<string | null>(() => getCurrentUserId());
+
+  useEffect(() => {
+    setUserId(getCurrentUserId());
+  }, []);
 
   const { data: notifications = [], isLoading } = useQuery<Notification[]>({
-    queryKey: ["/api/notifications"]
+    queryKey: ["/api/notifications", userId],
+    queryFn: async () => {
+      if (!userId) return [];
+      const res = await fetch(`/api/notifications/${userId}`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
+    enabled: !!userId,
   });
 
   const markAsReadMutation = useMutation({
-    mutationFn: (id: number) =>
+    mutationFn: (id: string) =>
       apiRequest("PUT", `/api/notifications/${id}/read`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications", userId] });
     },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) =>
+    mutationFn: (id: string) =>
       apiRequest("DELETE", `/api/notifications/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications", userId] });
       toast({
         title: "Успешно",
         description: "Уведомление удалено",
@@ -47,9 +73,9 @@ export default function Notifications() {
 
   const markAllAsReadMutation = useMutation({
     mutationFn: () =>
-      apiRequest("PUT", "/api/notifications/mark-all-read"),
+      apiRequest("PUT", "/api/notifications/mark-all-read", { userId }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications", userId] });
       toast({
         title: "Успешно",
         description: "Все уведомления отмечены как прочитанные",
@@ -131,13 +157,19 @@ export default function Notifications() {
           <Button 
             variant="outline"
             onClick={() => markAllAsReadMutation.mutate()}
-            disabled={markAllAsReadMutation.isPending}
+            disabled={!userId || markAllAsReadMutation.isPending}
           >
             <Check className="w-4 h-4 mr-2" />
             Отметить все как прочитанные
           </Button>
         )}
       </div>
+
+      <Card className="bg-muted/30 border-muted">
+        <CardContent className="py-3 px-4 text-sm text-muted-foreground">
+          <strong className="text-foreground">Уведомления как на телефоне:</strong> чтобы новые задачи и события приходили push-уведомлениями (даже когда вкладка закрыта), нужно разрешить уведомления в браузере при первом запросе. На мобильном устройстве для стабильной доставки рекомендуется установить приложение (PWA) через «Добавить на экран» / «Установить приложение».
+        </CardContent>
+      </Card>
 
       <div className="space-y-4">
         {notifications.length === 0 ? (

@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Search, Loader2, Plus, ExternalLink } from "lucide-react";
+import { Search, Loader2, Plus, ExternalLink, Radio, Signal } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Equipment } from "@shared/schema";
@@ -270,6 +270,48 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
 
           <TabsContent value="stock" className="flex-1 flex flex-col min-h-0 mt-4">
             <div className="space-y-4">
+              {/* Быстрое добавление: беспроводные блоки */}
+              <div className="rounded-lg border bg-muted/40 p-3">
+                <Label className="text-xs font-medium text-muted-foreground mb-2 block">Беспроводная связь</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => {
+                      onAdd({
+                        name: "Wireless TX",
+                        type: "wireless_sender",
+                        portsIn: [],
+                        portsOut: [{ id: "tx", name: "RF", type: "out", portType: "Wireless" }],
+                      });
+                      onClose();
+                    }}
+                  >
+                    <Radio className="w-4 h-4 mr-2" />
+                    Wireless TX (передатчик)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => {
+                      onAdd({
+                        name: "Wireless RX",
+                        type: "wireless_receiver",
+                        portsIn: [{ id: "rx", name: "RF", type: "in", portType: "Wireless" }],
+                        portsOut: [],
+                      });
+                      onClose();
+                    }}
+                  >
+                    <Signal className="w-4 h-4 mr-2" />
+                    Wireless RX (приёмник)
+                  </Button>
+                </div>
+              </div>
               <div>
                 <Input
                   placeholder="Поиск в моем складе..."
@@ -335,40 +377,51 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {filteredEquipment.map(item => (
-                        <div
-                          key={item.id}
-                          className="p-4 border rounded-lg hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer"
-                          onClick={() => handleAddFromStock(item)}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <h4 className="font-semibold">{item.name}</h4>
-                              {item.model && <p className="text-sm text-muted-foreground">{item.model}</p>}
-                              <div className="flex gap-2 mt-2">
-                                <Badge variant="secondary">{item.type}</Badge>
-                                {item.specifications?.portsIn && (
-                                  <Badge variant="outline">
-                                    IN: {(item.specifications.portsIn as Port[]).length}
-                                  </Badge>
-                                )}
-                                {item.specifications?.portsOut && (
-                                  <Badge variant="outline">
-                                    OUT: {(item.specifications.portsOut as Port[]).length}
-                                  </Badge>
+                      {filteredEquipment.map(item => {
+                        const portsIn = (item.specifications?.portsIn as Port[]) || [];
+                        const portsOut = (item.specifications?.portsOut as Port[]) || [];
+                        return (
+                          <div
+                            key={item.id}
+                            className="p-4 border rounded-xl hover:bg-slate-50 dark:hover:bg-slate-900 cursor-pointer bg-card"
+                            onClick={() => handleAddFromStock(item)}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-semibold text-foreground">{item.name}</h4>
+                                {item.model && <p className="text-sm text-muted-foreground mt-0.5">{item.model}</p>}
+                                <div className="flex flex-wrap gap-2 mt-2">
+                                  <Badge variant="secondary">{item.type}</Badge>
+                                </div>
+                                {(portsIn.length > 0 || portsOut.length > 0) && (
+                                  <div className="mt-3 space-y-1.5 text-xs">
+                                    {portsIn.length > 0 && (
+                                      <div>
+                                        <span className="font-medium text-muted-foreground">Входы (IN):</span>
+                                        <span className="ml-1.5 text-foreground">
+                                          {portsIn.map((p: Port) => p.portType || p.name || "—").join(", ")}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {portsOut.length > 0 && (
+                                      <div>
+                                        <span className="font-medium text-muted-foreground">Выходы (OUT):</span>
+                                        <span className="ml-1.5 text-foreground">
+                                          {portsOut.map((p: Port) => p.portType || p.name || "—").join(", ")}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
                                 )}
                               </div>
+                              <Button size="sm" onClick={(e) => { e.stopPropagation(); handleAddFromStock(item); }} className="shrink-0">
+                                <Plus className="w-4 h-4 mr-1" />
+                                Добавить
+                              </Button>
                             </div>
-                            <Button size="sm" onClick={(e) => {
-                              e.stopPropagation();
-                              handleAddFromStock(item);
-                            }}>
-                              <Plus className="w-4 h-4 mr-1" />
-                              Добавить
-                            </Button>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </ScrollArea>
@@ -408,27 +461,39 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                     {searchResults.map((result, index) => (
                       <div
                         key={index}
-                        className="p-4 border rounded-lg hover:bg-slate-50 dark:hover:bg-slate-900"
+                        className="p-4 border rounded-xl hover:bg-slate-50 dark:hover:bg-slate-900 bg-card"
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <h4 className="font-semibold">{result.name}</h4>
-                            {result.manufacturer && (
-                              <p className="text-sm text-muted-foreground">
-                                {result.manufacturer} {result.model}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-semibold text-foreground">{result.name}</h4>
+                            {(result.manufacturer || result.model) && (
+                              <p className="text-sm text-muted-foreground mt-0.5">
+                                {[result.manufacturer, result.model].filter(Boolean).join(" ")}
                               </p>
                             )}
-                            <div className="flex gap-2 mt-2">
+                            <div className="flex flex-wrap gap-2 mt-2">
                               <Badge variant="secondary">{result.type}</Badge>
+                            </div>
+                            <div className="mt-3 space-y-1.5 text-xs">
                               {result.portsIn && result.portsIn.length > 0 && (
-                                <Badge variant="outline">IN: {result.portsIn.length}</Badge>
+                                <div>
+                                  <span className="font-medium text-muted-foreground">Входы (IN):</span>
+                                  <span className="ml-1.5 text-foreground">
+                                    {result.portsIn.map((p: { name?: string; portType?: string }) => p.portType || p.name || "—").join(", ")}
+                                  </span>
+                                </div>
                               )}
                               {result.portsOut && result.portsOut.length > 0 && (
-                                <Badge variant="outline">OUT: {result.portsOut.length}</Badge>
+                                <div>
+                                  <span className="font-medium text-muted-foreground">Выходы (OUT):</span>
+                                  <span className="ml-1.5 text-foreground">
+                                    {result.portsOut.map((p: { name?: string; portType?: string }) => p.portType || p.name || "—").join(", ")}
+                                  </span>
+                                </div>
                               )}
                             </div>
                           </div>
-                          <Button size="sm" onClick={() => handleAddFromSearch(result)}>
+                          <Button size="sm" onClick={() => handleAddFromSearch(result)} className="shrink-0">
                             <Plus className="w-4 h-4 mr-1" />
                             Добавить
                           </Button>

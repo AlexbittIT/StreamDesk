@@ -1,0 +1,6 @@
+# Скопируйте в deploy.config и укажите свои данные (один раз).
+# Тогда деплой будет полностью автоматическим: npm run deploy или deploy-to-server.bat
+
+SERVER_USER=otis-server
+SERVER_IP=194.58.112.174
+SERVER_PATH=/var/www/streamdesk

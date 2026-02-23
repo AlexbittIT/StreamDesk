@@ -40,6 +40,7 @@ out/
 .env.*.local
 .env.production
 .env.development
+.yougile-key
 
 # ============================================
 # Логи
@@ -239,6 +240,8 @@ migrations/
 # ============================================
 # Специфичные для проекта
 # ============================================
+.replit
+replit.md
 server/public/
 *.tar.gz
 encode-password.html

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import {
   FolderPlus,
   Folder,
@@ -14,6 +15,7 @@ import {
   RefreshCw,
   ChevronRight,
   HardDrive,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +34,7 @@ export default function Transcription() {
 
   const [selectedPodcast, setSelectedPodcast] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState<string>("");
+  const [expandedFolderPath, setExpandedFolderPath] = useState<string | null>(null);
   const [newPodcastName, setNewPodcastName] = useState("");
   const [newFolderName, setNewFolderName] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -46,26 +49,30 @@ export default function Transcription() {
     enabled: !!selectedPodcast,
     queryFn: async () => {
       const params = currentPath ? `?path=${encodeURIComponent(currentPath)}` : "";
-      const res = await fetch(
+      const res = await apiRequest(
+        "GET",
         `/api/transcriptions/podcasts/${encodeURIComponent(selectedPodcast!)}/contents${params}`
       );
-      if (!res.ok) {
-        throw new Error("Не удалось загрузить содержимое папки");
-      }
+      return res.json();
+    },
+  });
+
+  const { data: expandedContents, isLoading: expandedLoading } = useQuery<{ folders: FolderItem[]; files: FolderItem[] }>({
+    queryKey: ["/api/transcriptions/podcasts", selectedPodcast, "expanded", expandedFolderPath],
+    enabled: !!selectedPodcast && !!expandedFolderPath,
+    queryFn: async () => {
+      const params = expandedFolderPath ? `?path=${encodeURIComponent(expandedFolderPath)}` : "";
+      const res = await apiRequest(
+        "GET",
+        `/api/transcriptions/podcasts/${encodeURIComponent(selectedPodcast!)}/contents${params}`
+      );
       return res.json();
     },
   });
 
   const createPodcastMutation = useMutation({
     mutationFn: async (name: string) => {
-      const res = await fetch("/api/transcriptions/podcasts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (!res.ok) {
-        throw new Error("Не удалось создать подкаст");
-      }
+      const res = await apiRequest("POST", "/api/transcriptions/podcasts", { name });
       return res.json();
     },
     onSuccess: () => {
@@ -82,20 +89,32 @@ export default function Transcription() {
     },
   });
 
+  const deletePodcastMutation = useMutation({
+    mutationFn: async (podcastName: string) => {
+      await apiRequest("DELETE", `/api/transcriptions/podcasts/${encodeURIComponent(podcastName)}`);
+    },
+    onSuccess: (_, podcastName) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/transcriptions/podcasts"] });
+      if (selectedPodcast === podcastName) {
+        setSelectedPodcast(null);
+        setCurrentPath("");
+        setExpandedFolderPath(null);
+      }
+      toast({ title: "Удалено", description: "Подкаст удалён" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error.message || "Не удалось удалить подкаст", variant: "destructive" });
+    },
+  });
+
   const createFolderMutation = useMutation({
     mutationFn: async (name: string) => {
-      if (!selectedPodcast) return;
-      const res = await fetch(
+      if (!selectedPodcast) throw new Error("Выберите подкаст");
+      const res = await apiRequest(
+        "POST",
         `/api/transcriptions/podcasts/${encodeURIComponent(selectedPodcast)}/folders`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ parentPath: currentPath, name }),
-        }
+        { parentPath: currentPath, name }
       );
-      if (!res.ok) {
-        throw new Error("Не удалось создать папку");
-      }
       return res.json();
     },
     onSuccess: () => {
@@ -123,25 +142,19 @@ export default function Transcription() {
     setUploading(true);
     try {
       const formData = new FormData();
-      formData.append("file", file);
       formData.append("podcast", selectedPodcast);
       formData.append("path", currentPath);
+      formData.append("file", file);
 
-      const res = await fetch("/api/transcriptions/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        throw new Error("Не удалось загрузить файл");
-      }
+      await apiRequest("POST", "/api/transcriptions/upload", formData, true);
 
       toast({ title: "Файл загружен", description: file.name });
-      if (selectedPodcast) {
-        queryClient.invalidateQueries({
-          queryKey: ["/api/transcriptions/podcasts", selectedPodcast, currentPath],
-        });
-      }
+      queryClient.invalidateQueries({
+        queryKey: ["/api/transcriptions/podcasts", selectedPodcast, currentPath],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/transcriptions/podcasts", selectedPodcast, "expanded", expandedFolderPath],
+      });
     } catch (error: any) {
       toast({
         title: "Ошибка",
@@ -152,6 +165,28 @@ export default function Transcription() {
       setUploading(false);
       event.target.value = "";
     }
+  };
+
+  const deleteItemMutation = useMutation({
+    mutationFn: async ({ itemPath }: { itemPath: string; isFolder: boolean }) => {
+      const deleteUrl = `/api/transcriptions/podcasts/${encodeURIComponent(selectedPodcast!)}/contents?path=${encodeURIComponent(itemPath)}`;
+      await apiRequest("DELETE", deleteUrl);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/transcriptions/podcasts", selectedPodcast, currentPath] });
+      queryClient.invalidateQueries({ queryKey: ["/api/transcriptions/podcasts", selectedPodcast, "expanded", expandedFolderPath] });
+      toast({ title: "Удалено" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleDelete = (itemName: string, isFolder: boolean) => {
+    if (!selectedPodcast) return;
+    const itemPath = currentPath ? `${currentPath}/${itemName}` : itemName;
+    if (!confirm(isFolder ? `Удалить папку «${itemName}» и всё её содержимое?` : `Удалить файл «${itemName}»?`)) return;
+    deleteItemMutation.mutate({ itemPath, isFolder });
   };
 
   const breadcrumbs = [
@@ -220,20 +255,40 @@ export default function Transcription() {
                 </div>
               )}
               {podcasts.map((podcast) => (
-                <button
+                <div
                   key={podcast.name}
                   className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover:bg-muted",
+                    "w-full flex items-center gap-1 group rounded-md text-sm",
                     selectedPodcast === podcast.name && "bg-primary/10 text-primary"
                   )}
-                  onClick={() => {
-                    setSelectedPodcast(podcast.name);
-                    setCurrentPath("");
-                  }}
                 >
-                  <Folder className="w-4 h-4" />
-                  <span className="truncate">{podcast.name}</span>
-                </button>
+                  <button
+                    className={cn(
+                      "flex-1 flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted text-left min-w-0"
+                    )}
+                    onClick={() => {
+                      setSelectedPodcast(podcast.name);
+                      setCurrentPath("");
+                    }}
+                  >
+                    <Folder className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{podcast.name}</span>
+                  </button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0 opacity-70 hover:opacity-100 hover:text-destructive"
+                    title="Удалить подкаст"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!confirm(`Удалить подкаст «${podcast.name}» и всё его содержимое?`)) return;
+                      deletePodcastMutation.mutate(podcast.name);
+                    }}
+                    disabled={deletePodcastMutation.isPending}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
               ))}
             </div>
           </ScrollArea>
@@ -337,46 +392,111 @@ export default function Transcription() {
 
               <Separator />
 
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-2">Папки</div>
-                  <div className="space-y-1">
-                    {contents?.folders.length === 0 && (
-                      <div className="text-sm text-muted-foreground">Нет вложенных папок</div>
-                    )}
-                    {contents?.folders.map((folder) => (
-                      <button
-                        key={folder.name}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover:bg-muted"
-                        onClick={() =>
-                          setCurrentPath(
-                            currentPath ? `${currentPath}/${folder.name}` : folder.name
-                          )
-                        }
-                      >
-                        <Folder className="w-4 h-4 text-amber-500" />
-                        <span className="truncate">{folder.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-2">Файлы</div>
-                  <div className="space-y-1">
-                    {contents?.files.length === 0 && (
-                      <div className="text-sm text-muted-foreground">Файлы не загружены</div>
-                    )}
-                    {contents?.files.map((file) => (
-                      <div
-                        key={file.name}
-                        className="flex items-center gap-2 px-2 py-1.5 rounded-md text-sm border border-transparent hover:border-muted"
-                      >
-                        <FileText className="w-4 h-4 text-blue-500" />
-                        <span className="truncate">{file.name}</span>
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground">Папки — нажмите, чтобы открыть файлы</div>
+                <div className="space-y-0">
+                  {contents?.folders.length === 0 && contents?.files.length === 0 && (
+                    <div className="text-sm text-muted-foreground py-2">Нет папок и файлов</div>
+                  )}
+                  {contents?.folders.map((folder) => {
+                    const fullPath = currentPath ? `${currentPath}/${folder.name}` : folder.name;
+                    const isExpanded = expandedFolderPath === fullPath;
+                    return (
+                      <div key={folder.name} className="rounded-md overflow-hidden group">
+                        <div className={cn(
+                          "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left hover:bg-muted transition-colors",
+                          isExpanded && "bg-muted/70"
+                        )}>
+                          <button
+                            type="button"
+                            className="flex items-center gap-2 flex-1 min-w-0"
+                            onClick={() => setExpandedFolderPath(isExpanded ? null : fullPath)}
+                          >
+                            <ChevronRight className={cn("w-4 h-4 shrink-0 text-amber-500 transition-transform", isExpanded && "rotate-90")} />
+                            <Folder className="w-4 h-4 text-amber-500 shrink-0" />
+                            <span className="truncate">{folder.name}</span>
+                          </button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0 opacity-70 hover:opacity-100 hover:text-destructive"
+                            onClick={(e) => { e.stopPropagation(); handleDelete(folder.name, true); }}
+                            disabled={deleteItemMutation.isPending}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                        {isExpanded && (
+                          <div className="pl-6 pr-2 py-2 bg-muted/30 border-l-2 border-amber-500/40 ml-2 mb-2 rounded-r space-y-1">
+                            {expandedLoading ? (
+                              <div className="text-xs text-muted-foreground">Загрузка...</div>
+                            ) : (
+                              <>
+                                {expandedContents?.files.map((file) => (
+                                  <div key={file.name} className="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-background/50 group/item">
+                                    <FileText className="w-4 h-4 text-blue-500 shrink-0" />
+                                    <span className="truncate flex-1">{file.name}</span>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6 shrink-0 opacity-70 hover:opacity-100 hover:text-destructive"
+                                      onClick={() => handleDelete(`${fullPath}/${file.name}`, false)}
+                                      disabled={deleteItemMutation.isPending}
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                ))}
+                                {expandedContents?.folders?.map((sub) => (
+                                  <div key={sub.name} className="flex items-center gap-2 px-2 py-1.5 rounded text-sm text-muted-foreground group/item">
+                                    <Folder className="w-4 h-4 text-amber-500 shrink-0" />
+                                    <span className="truncate flex-1">{sub.name}</span>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6 shrink-0 opacity-70 hover:opacity-100 hover:text-destructive"
+                                      onClick={() => handleDelete(`${fullPath}/${sub.name}`, true)}
+                                      disabled={deleteItemMutation.isPending}
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                ))}
+                                {!expandedLoading && (!expandedContents?.files?.length && !expandedContents?.folders?.length) && (
+                                  <div className="text-xs text-muted-foreground">Пусто</div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })}
+                </div>
+                <div className="text-xs font-medium text-muted-foreground pt-2">Файлы в текущей папке</div>
+                <div className="space-y-1">
+                  {contents?.files.length === 0 && (
+                    <div className="text-sm text-muted-foreground">Нет файлов</div>
+                  )}
+                  {contents?.files.map((file) => (
+                    <div key={file.name} className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm border border-transparent hover:border-muted group">
+                      <FileText className="w-4 h-4 text-blue-500 shrink-0" />
+                      <span className="truncate flex-1">{file.name}</span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 opacity-70 hover:opacity-100 hover:text-destructive"
+                        onClick={() => handleDelete(currentPath ? `${currentPath}/${file.name}` : file.name, false)}
+                        disabled={deleteItemMutation.isPending}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
               </div>
             </>

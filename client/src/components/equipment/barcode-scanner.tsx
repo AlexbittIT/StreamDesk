@@ -175,12 +175,19 @@ export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeSca
       const html5QrCode = new Html5Qrcode("barcode-reader");
       scannerRef.current = html5QrCode;
       
+      const videoConstraints: MediaTrackConstraints = {
+        facingMode: "environment",
+        width: { ideal: 1280, min: 640 },
+        height: { ideal: 720, min: 480 },
+      };
       await html5QrCode.start(
         { facingMode: "environment" },
         {
-          fps: 10,
-          qrbox: { width: 250, height: 150 },
-          aspectRatio: 1.777778
+          fps: 15,
+          qrbox: { width: 260, height: 160 },
+          aspectRatio: 1.777778,
+          disableFlip: false,
+          videoConstraints,
         },
         (decodedText) => {
           setScannedCode(decodedText);
@@ -351,8 +358,8 @@ export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeSca
               <div 
                 id="barcode-reader" 
                 ref={containerRef}
-                className="w-full rounded-xl overflow-hidden bg-black border-2 border-slate-200 dark:border-slate-700"
-                style={{ minHeight: "250px" }}
+                className="barcode-scanner-view w-full rounded-xl overflow-hidden bg-black border-2 border-slate-200 dark:border-slate-700 [&_video]:object-cover [&_video]:min-h-[280px] [&_img]:object-cover"
+                style={{ minHeight: "280px" }}
               />
               {scanning && (
                 <div className="flex items-center justify-center gap-2 text-sm text-slate-500 dark:text-slate-400">
@@ -376,10 +383,10 @@ export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeSca
 
           {/* Result View */}
           {scannedCode && (
-            <div className="space-y-4">
+            <div className="space-y-4 animate-in fade-in duration-200">
               <div className="flex items-center justify-center gap-2 p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
-                <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                <span className="font-mono text-sm text-emerald-800 dark:text-emerald-300">{scannedCode}</span>
+                <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span className="font-mono text-sm text-emerald-800 dark:text-emerald-300 break-all">{scannedCode}</span>
               </div>
 
               {isLoading && (
@@ -416,7 +423,7 @@ export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeSca
               )}
 
               {equipment && (
-                <Card className="border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800" data-testid="scanned-equipment-result">
+                <Card className="border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg animate-in fade-in slide-in-from-bottom-4 duration-300" data-testid="scanned-equipment-result">
                   <CardContent className="py-4">
                     <div className="flex items-start justify-between mb-4">
                       <div>

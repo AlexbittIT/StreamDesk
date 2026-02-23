@@ -1,4 +1,4 @@
-import { Moon, Sun, Monitor, Sparkles, Palette, Droplet, Sunset, Eye, Contrast } from "lucide-react";
+import { Moon, Sun, Monitor, Sunset, Eye, Contrast } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,31 +12,30 @@ import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 
 export function ThemeToggle() {
-  const { theme, setTheme, resolvedTheme, autoTheme, setAutoTheme } = useTheme();
+  const { theme, setTheme, autoTheme, setAutoTheme } = useTheme();
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button 
-          variant="ghost" 
-          size="icon" 
-          className="relative rounded-full hover:bg-primary/10 transition-all"
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative rounded-full hover:bg-primary/10 transition-all h-9 w-9 sm:h-10 sm:w-10 shrink-0"
           data-testid="button-theme-toggle"
         >
-          <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0 neon:hidden" />
-          <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100 neon:hidden" />
-          <Sparkles className="absolute h-5 w-5 hidden neon:block animate-pulse" />
+          <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+          <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
           <span className="sr-only">Переключить тему</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="rounded-xl border-2 shadow-xl w-56">
+      <DropdownMenuContent align="end" className="rounded-lg w-52 sm:w-56">
         <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground">
           Основные темы
         </DropdownMenuLabel>
-        <DropdownMenuItem 
+        <DropdownMenuItem
           onClick={() => setTheme("light")}
           className={cn(
-            "rounded-lg cursor-pointer transition-all",
+            "rounded-lg cursor-pointer transition-all min-h-[44px]",
             theme === "light" ? "bg-primary/10 text-primary font-medium" : ""
           )}
           data-testid="theme-light"
@@ -44,10 +43,10 @@ export function ThemeToggle() {
           <Sun className="mr-2 h-4 w-4" />
           Светлая
         </DropdownMenuItem>
-        <DropdownMenuItem 
+        <DropdownMenuItem
           onClick={() => setTheme("dark")}
           className={cn(
-            "rounded-lg cursor-pointer transition-all",
+            "rounded-lg cursor-pointer transition-all min-h-[44px]",
             theme === "dark" ? "bg-primary/10 text-primary font-medium" : ""
           )}
           data-testid="theme-dark"
@@ -55,10 +54,10 @@ export function ThemeToggle() {
           <Moon className="mr-2 h-4 w-4" />
           Тёмная
         </DropdownMenuItem>
-        <DropdownMenuItem 
+        <DropdownMenuItem
           onClick={() => setTheme("system")}
           className={cn(
-            "rounded-lg cursor-pointer transition-all",
+            "rounded-lg cursor-pointer transition-all min-h-[44px]",
             theme === "system" ? "bg-primary/10 text-primary font-medium" : ""
           )}
           data-testid="theme-system"
@@ -66,106 +65,49 @@ export function ThemeToggle() {
           <Monitor className="mr-2 h-4 w-4" />
           Системная
         </DropdownMenuItem>
-        
+
         <DropdownMenuSeparator />
-        
+
         <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground">
-          Неоновые темы
+          Для зрения
         </DropdownMenuLabel>
-        <DropdownMenuItem 
-          onClick={() => setTheme("neon")}
-          className={cn(
-            "rounded-lg cursor-pointer transition-all",
-            theme === "neon" ? "bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 text-cyan-300 font-medium" : ""
-          )}
-          data-testid="theme-neon"
-        >
-          <Sparkles className="mr-2 h-4 w-4 animate-pulse" />
-          Неоновая (классическая)
-        </DropdownMenuItem>
-        <DropdownMenuItem 
-          onClick={() => setTheme("neon-cyan")}
-          className={cn(
-            "rounded-lg cursor-pointer transition-all",
-            theme === "neon-cyan" ? "bg-cyan-500/20 text-cyan-300 font-medium" : ""
-          )}
-        >
-          <Droplet className="mr-2 h-4 w-4" style={{ color: 'hsl(180, 100%, 60%)' }} />
-          Неоновая Cyan
-        </DropdownMenuItem>
-        <DropdownMenuItem 
-          onClick={() => setTheme("neon-purple")}
-          className={cn(
-            "rounded-lg cursor-pointer transition-all",
-            theme === "neon-purple" ? "bg-purple-500/20 text-purple-300 font-medium" : ""
-          )}
-        >
-          <Droplet className="mr-2 h-4 w-4" style={{ color: 'hsl(280, 100%, 70%)' }} />
-          Неоновая Purple
-        </DropdownMenuItem>
-        <DropdownMenuItem 
-          onClick={() => setTheme("neon-pink")}
-          className={cn(
-            "rounded-lg cursor-pointer transition-all",
-            theme === "neon-pink" ? "bg-pink-500/20 text-pink-300 font-medium" : ""
-          )}
-        >
-          <Droplet className="mr-2 h-4 w-4" style={{ color: 'hsl(320, 100%, 70%)' }} />
-          Неоновая Pink
-        </DropdownMenuItem>
-        <DropdownMenuItem 
-          onClick={() => setTheme("neon-rainbow")}
-          className={cn(
-            "rounded-lg cursor-pointer transition-all",
-            theme === "neon-rainbow" ? "bg-gradient-to-r from-cyan-500/20 via-purple-500/20 via-pink-500/20 to-green-500/20 font-medium" : ""
-          )}
-        >
-          <Palette className="mr-2 h-4 w-4 animate-pulse" />
-          Неоновая Rainbow
-        </DropdownMenuItem>
-        
-        <DropdownMenuSeparator />
-        
-        <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground">
-          Темы для зрения
-        </DropdownMenuLabel>
-        <DropdownMenuItem 
+        <DropdownMenuItem
           onClick={() => setTheme("warm")}
           className={cn(
-            "rounded-lg cursor-pointer transition-all",
-            theme === "warm" ? "bg-orange-500/20 text-orange-300 font-medium" : ""
+            "rounded-lg cursor-pointer transition-all min-h-[44px]",
+            theme === "warm" ? "bg-orange-500/20 text-orange-700 dark:text-orange-300 font-medium" : ""
           )}
         >
-          <Eye className="mr-2 h-4 w-4" style={{ color: 'hsl(35, 90%, 65%)' }} />
-          Теплая (для зрения)
+          <Eye className="mr-2 h-4 w-4" />
+          Теплая
         </DropdownMenuItem>
-        <DropdownMenuItem 
+        <DropdownMenuItem
           onClick={() => setTheme("high-contrast")}
           className={cn(
-            "rounded-lg cursor-pointer transition-all",
-            theme === "high-contrast" ? "bg-blue-500/20 text-blue-300 font-medium" : ""
+            "rounded-lg cursor-pointer transition-all min-h-[44px]",
+            theme === "high-contrast" ? "bg-blue-500/20 text-blue-700 dark:text-blue-300 font-medium" : ""
           )}
         >
-          <Contrast className="mr-2 h-4 w-4" style={{ color: 'hsl(210, 100%, 60%)' }} />
+          <Contrast className="mr-2 h-4 w-4" />
           Высокий контраст
         </DropdownMenuItem>
-        <DropdownMenuItem 
+        <DropdownMenuItem
           onClick={() => setTheme("sepia")}
           className={cn(
-            "rounded-lg cursor-pointer transition-all",
-            theme === "sepia" ? "bg-amber-500/20 text-amber-300 font-medium" : ""
+            "rounded-lg cursor-pointer transition-all min-h-[44px]",
+            theme === "sepia" ? "bg-amber-500/20 text-amber-700 dark:text-amber-300 font-medium" : ""
           )}
         >
-          <Eye className="mr-2 h-4 w-4" style={{ color: 'hsl(35, 60%, 60%)' }} />
+          <Eye className="mr-2 h-4 w-4" />
           Сепия
         </DropdownMenuItem>
-        
+
         <DropdownMenuSeparator />
-        
-        <DropdownMenuItem 
+
+        <DropdownMenuItem
           onClick={() => setAutoTheme(!autoTheme)}
           className={cn(
-            "rounded-lg cursor-pointer transition-all",
+            "rounded-lg cursor-pointer transition-all min-h-[44px]",
             autoTheme ? "bg-primary/10 text-primary font-medium" : ""
           )}
         >

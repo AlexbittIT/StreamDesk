@@ -10,8 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { insertEventSchema } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { AuthService } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { z } from "zod";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -38,9 +39,22 @@ interface User {
 }
 
 export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormProps) {
-  const [selectedParticipants, setSelectedParticipants] = useState<string[]>(event?.participants || []);
+  const [selectedParticipants, setSelectedParticipants] = useState<string[]>(() => {
+    const p = event?.participants;
+    if (!p || !Array.isArray(p)) return [];
+    return p.map((x: any) => (typeof x === "string" ? x : x.userId)).filter(Boolean);
+  });
   const [useCustomLocation, setUseCustomLocation] = useState(!!event?.customLocation);
   const { toast } = useToast();
+
+  useEffect(() => {
+    const p = event?.participants;
+    if (!p || !Array.isArray(p)) {
+      setSelectedParticipants([]);
+      return;
+    }
+    setSelectedParticipants(p.map((x: any) => (typeof x === "string" ? x : x.userId)).filter(Boolean));
+  }, [event?.id, event?.participants]);
 
   const { data: users = [] } = useQuery<User[]>({
     queryKey: ["/api/users"],
@@ -64,7 +78,7 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
           : format(new Date(Date.now() + 60 * 60 * 1000), "yyyy-MM-dd'T'HH:mm"),
       location: event?.location || "Студия А",
       customLocation: event?.customLocation || "",
-      organizerId: event?.organizerId || "admin", // Нужно получить текущего пользователя
+      organizerId: event?.organizerId || AuthService.getCurrentUser()?.id || "admin",
       type: event?.type || "stream",
       status: event?.status || "scheduled",
     },
@@ -88,29 +102,16 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
         startTime: new Date(data.startTime).toISOString(),
         endTime: new Date(data.endTime).toISOString(),
         location: useCustomLocation ? data.customLocation : data.location,
+        participants: selectedParticipants.length > 0 ? selectedParticipants : undefined,
       };
       
       const response = await apiRequest("POST", "/api/events", eventData);
       const newEvent = await response.json();
-      
-      // Добавляем участников
-      if (selectedParticipants.length > 0) {
-        await Promise.all(
-          selectedParticipants.map(userId =>
-            apiRequest("POST", "/api/event-participants", {
-              eventId: newEvent.id,
-              userId,
-              role: "participant",
-              status: "invited"
-            })
-          )
-        );
-      }
-      
       return newEvent;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+      queryClient.refetchQueries({ queryKey: ["/api/events"] });
       toast({
         title: "Успешно",
         description: "Событие создано",
@@ -124,7 +125,9 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
       let errorMessage = "Не удалось создать событие";
       
       if (error.message) {
-        if (error.message.includes("timeout") || error.message.includes("время ожидания")) {
+        if (error.message.includes("404")) {
+          errorMessage = "Сервер не найден (404). Откройте приложение по адресу, где запущен сервер (например http://localhost:PORT из .env). Если деплой — укажите VITE_API_BASE в .env и пересоберите.";
+        } else if (error.message.includes("timeout") || error.message.includes("время ожидания")) {
           errorMessage = "Операция заняла слишком много времени. Попробуйте снова или проверьте подключение к серверу.";
         } else if (error.message.includes("400")) {
           errorMessage = "Неверные данные. Проверьте заполнение всех обязательных полей.";
@@ -148,6 +151,7 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
         startTime: new Date(data.startTime).toISOString(),
         endTime: new Date(data.endTime).toISOString(),
         location: useCustomLocation ? data.customLocation : data.location,
+        participants: selectedParticipants.length > 0 ? selectedParticipants : [],
       };
       
       const response = await apiRequest("PUT", `/api/events/${event.id}`, eventData);
@@ -155,6 +159,7 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/events"] });
+      queryClient.refetchQueries({ queryKey: ["/api/events"] });
       toast({
         title: "Успешно",
         description: "Событие обновлено",
@@ -171,7 +176,7 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
   });
 
   const onSubmit = (data: z.infer<typeof eventFormSchema>) => {
-    if (event) {
+    if (event?.id) {
       updateMutation.mutate(data);
     } else {
       createMutation.mutate(data);
@@ -192,10 +197,10 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto hide-scrollbar">
         <DialogHeader>
           <DialogTitle>
-            {event ? "Редактировать событие" : "Создать событие"}
+            {event?.id ? "Редактировать событие" : "Создать событие"}
           </DialogTitle>
         </DialogHeader>
         
@@ -241,7 +246,7 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
                   <FormItem>
                     <FormLabel>Начало *</FormLabel>
                     <FormControl>
-                      <Input type="datetime-local" {...field} />
+                      <Input type="datetime-local" step="60" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -255,7 +260,7 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
                   <FormItem>
                     <FormLabel>Окончание *</FormLabel>
                     <FormControl>
-                      <Input type="datetime-local" {...field} />
+                      <Input type="datetime-local" step="60" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -428,7 +433,7 @@ export function EventForm({ isOpen, onClose, event, selectedDate }: EventFormPro
               >
                 {createMutation.isPending || updateMutation.isPending
                   ? "Сохранение..." 
-                  : event ? "Обновить" : "Создать"
+                  : event?.id ? "Обновить" : "Создать"
                 }
               </Button>
             </div>

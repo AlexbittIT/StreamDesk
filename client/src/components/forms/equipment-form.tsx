@@ -154,6 +154,7 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/equipment"] });
+      queryClient.refetchQueries({ queryKey: ["/api/equipment"] });
       toast({
         title: "Успешно",
         description: "Оборудование добавлено",
@@ -198,6 +199,7 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/equipment"] });
+      queryClient.refetchQueries({ queryKey: ["/api/equipment"] });
       toast({
         title: "Успешно",
         description: "Оборудование обновлено",
@@ -225,6 +227,7 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/equipment"] });
+      queryClient.refetchQueries({ queryKey: ["/api/equipment"] });
       toast({
         title: "Успешно",
         description: variables.action === 'take' ? "Оборудование взято" : "Оборудование возвращено",
@@ -436,7 +439,7 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-900">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto hide-scrollbar bg-white dark:bg-slate-900">
         <DialogHeader>
           <DialogTitle className="text-slate-900 dark:text-white">
             {equipment ? "Редактировать оборудование" : "Добавить оборудование"}

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
 import StatusCards from "@/components/dashboard/status-cards";
 import CurrentActivity from "@/components/dashboard/current-activity";
 import QuickCalendar from "@/components/dashboard/quick-calendar";
@@ -6,7 +7,9 @@ import SystemStatus from "@/components/dashboard/system-status";
 import EquipmentStatus from "@/components/dashboard/equipment-status";
 import StreamingStats from "@/components/dashboard/streaming-stats";
 import VmixScheduler from "@/components/dashboard/vmix-scheduler";
-import QuickActions from "@/components/dashboard/quick-actions";
+import DashboardProfileCard from "@/components/dashboard/dashboard-profile-card";
+import DashboardCountdownWidget from "@/components/dashboard/dashboard-countdown-widget";
+import DashboardServicesSection from "@/components/dashboard/dashboard-services-section";
 import { useWebSocket } from "@/hooks/use-websocket";
 
 export default function Dashboard() {
@@ -60,30 +63,34 @@ export default function Dashboard() {
     console.warn("[Dashboard] Some data failed to load, showing dashboard with available data");
   }
 
+  const nextEvent = (events as any[])
+    ?.filter((e: any) => e.startTime && new Date(e.startTime) > new Date())
+    ?.sort((a: any, b: any) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())[0];
+
   return (
-    <div className="space-y-6">
-      {/* Status Cards */}
+    <div className="space-y-1.5 sm:space-y-2 w-full min-w-0 max-w-full overflow-hidden pt-0 sm:pt-0">
+      {/* Верхний ряд: профиль + ближайшее событие */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-2 w-full min-w-0">
+        <DashboardProfileCard />
+        <DashboardCountdownWidget nextEvent={nextEvent} />
+      </div>
+
       <StatusCards stats={stats} />
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column */}
-        <div className="lg:col-span-2 space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-1.5 w-full min-w-0">
+        <div className="lg:col-span-2 space-y-1 sm:space-y-1.5 min-w-0">
           <CurrentActivity streams={streams} events={events} />
           <VmixScheduler />
           <QuickCalendar events={events} />
         </div>
-
-        {/* Right Column */}
-        <div className="space-y-6">
+        <div className="space-y-1 sm:space-y-1.5 min-w-0">
           <StreamingStats />
           <SystemStatus systems={systems} />
           <EquipmentStatus equipment={equipment} />
         </div>
       </div>
 
-      {/* Quick Actions */}
-      <QuickActions />
+      <DashboardServicesSection />
     </div>
   );
 }

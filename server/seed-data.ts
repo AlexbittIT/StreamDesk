@@ -1,4 +1,5 @@
 import { storage } from "./database";
+import { hashPassword } from "./auth";
 
 export async function seedDatabase() {
   try {
@@ -137,7 +138,7 @@ export async function seedDatabase() {
         // Admin doesn't exist, create it
         adminUser = await storage.createUser({
           username: "admin",
-          password: "admin123",
+          password: hashPassword("admin123"),
           name: "Администратор",
           email: "admin@streamstudio.local",
           role: "admin",
@@ -154,7 +155,7 @@ export async function seedDatabase() {
       try {
         adminUser = await storage.createUser({
           username: "admin",
-          password: "admin123",
+          password: hashPassword("admin123"),
           name: "Администратор",
           email: "admin@streamstudio.local",
           role: "admin",

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Server, Search, Filter, Plus, Globe, Settings, Edit, Activity } from "lucide-react";
+import { Server, Filter, Plus, Globe, Settings, Edit, Activity } from "lucide-react";
 import { SystemForm } from "@/components/forms/system-form";
 import { useToast } from "@/hooks/use-toast";
 
@@ -72,16 +72,6 @@ export default function Servers() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <Input
-                placeholder="Поиск по названию или IP..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger>
                 <SelectValue placeholder="Статус" />
@@ -94,10 +84,7 @@ export default function Servers() {
               </SelectContent>
             </Select>
 
-            <Button variant="outline" onClick={() => {
-              setSearchTerm("");
-              setStatusFilter("all");
-            }}>
+            <Button variant="outline" onClick={() => setStatusFilter("all")}>
               Сбросить фильтры
             </Button>
           </div>

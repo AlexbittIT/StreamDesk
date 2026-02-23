@@ -1,5 +1,5 @@
-import { useState, useMemo, useCallback, memo, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useMemo, useCallback, memo, useEffect, useRef } from "react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,23 +16,112 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
-  Plus, Search, CheckCircle2, Circle, 
-  Trash2, Edit2, Calendar, X, Columns, GripVertical, Check, Filter,
+  Plus, CheckCircle2, Circle, 
+  Trash2, Edit2, Calendar as CalendarIcon, X, Columns, GripVertical, Check, Filter,
   Paperclip, Link2, Clock, History, FileText, UserPlus, Github, FolderKanban, Tag, Hourglass,
-  MessageSquare, ArrowUpDown, ArrowUp, ArrowDown, MoreVertical, Eye
+  MessageSquare, ArrowUpDown, ArrowUp, ArrowDown, MoreVertical, Eye, BarChart3, ListTodo
 } from "lucide-react";
+import { Calendar as CalendarPicker } from "@/components/ui/calendar";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { apiRequest, encodeUserHeader, apiUrl, safeJson } from "@/lib/queryClient";
 import { type Task, type User as UserType } from "@shared/schema";
 import { format, isPast, differenceInDays, differenceInHours } from "date-fns";
 import { ru } from "date-fns/locale";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
+import { Link } from "wouter";
+
+/** Ссылка на задачи YouGile. Синхронизация только автоматическая (раз в минуту), кнопка не показывается. */
+function YouGileTasksLink() {
+  const { data: status } = useQuery<{ configured: boolean }>({
+    queryKey: ["/api/yougile/status"],
+    retry: false,
+  });
+  const { data: config } = useQuery<{ enabled: boolean }>({
+    queryKey: ["/api/yougile/config"],
+    retry: false,
+  });
+  const enabled = status?.configured || config?.enabled;
+  if (!enabled) return null;
+
+  return (
+    <Link href="/tasks/yougile">
+      <Button size="sm" variant="ghost" className="rounded-xl h-9 sm:h-10 px-3 shrink-0" title="Задачи YouGile">
+        YouGile
+      </Button>
+    </Link>
+  );
+}
+
+/** Поле быстрого добавления задачи: своё состояние внутри, чтобы при ре-рендере родителя (синхронизация и т.д.) не терялся фокус и ввод. */
+function QuickAddTaskInput({
+  columnId,
+  onAdd,
+  disabled,
+  placeholder = "Добавить задачу",
+  className,
+}: {
+  columnId: string;
+  onAdd: (columnId: string, title: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [value, setValue] = useState("");
+  const handleSubmit = () => {
+    const title = value.trim();
+    if (!title) return;
+    onAdd(columnId, title);
+    setValue("");
+  };
+  return (
+    <div className="flex items-center gap-1.5 pt-1">
+      <Input
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSubmit(); } }}
+        className={className}
+        disabled={disabled}
+      />
+      <Button size="icon" variant="ghost" className="h-8 w-8 sm:h-9 sm:w-9 shrink-0" onClick={handleSubmit} disabled={!value.trim()}>
+        <Plus className="w-4 h-4" />
+      </Button>
+    </div>
+  );
+}
+
+function QuickAddSubtaskInput({ onAdd, className }: { taskId?: string; onAdd: (title: string) => void; className?: string }) {
+  const [value, setValue] = useState("");
+  const handleSubmit = () => {
+    const title = value.trim();
+    if (!title) return;
+    onAdd(title);
+    setValue("");
+  };
+  return (
+    <div className="flex items-center gap-1.5">
+      <Input
+        placeholder="Добавить подзадачу"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSubmit(); } }}
+        className={className}
+      />
+      <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={handleSubmit} disabled={!value.trim()}>
+        <Plus className="w-4 h-4" />
+      </Button>
+    </div>
+  );
+}
 
 interface Section {
   id: string;
   name: string;
   columns: Column[];
-  userId?: string; // ID пользователя для фильтрации задач
+  userId?: string;
+  yougileBoardId?: string;
+  yougileProjectId?: string;
 }
 
 interface Column {
@@ -41,11 +130,80 @@ interface Column {
   order: number;
 }
 
-const defaultColumns: Column[] = [
-  { id: "not_ready", name: "Не готово", order: 0 },
+const DEFAULT_COLUMNS: Column[] = [
+  { id: "not_ready", name: "Бэклог", order: 0 },
   { id: "todo", name: "К выполнению", order: 1 },
   { id: "in_progress", name: "В работе", order: 2 },
+  { id: "done", name: "Готово", order: 3 },
 ];
+
+const STORAGE_KEY_COLUMNS = "streamdesk_task_columns";
+
+function getDefaultColumns(): Column[] {
+  if (typeof window === "undefined") return DEFAULT_COLUMNS;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_COLUMNS);
+    if (!raw) return DEFAULT_COLUMNS;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return DEFAULT_COLUMNS;
+    return parsed.map((c: any, i: number) => ({
+      id: String(c?.id ?? `col_${i}`),
+      name: String(c?.name ?? "Столбец"),
+      order: Number(c?.order) ?? i,
+    }));
+  } catch {
+    return DEFAULT_COLUMNS;
+  }
+}
+
+/** Человекочитаемое название статуса: по колонкам или запасные для todo/in_progress/done/not_ready */
+function getStatusLabel(statusId: string | null | undefined, columns: Column[]): string {
+  if (!statusId) return "—";
+  const fromCol = columns.find(c => c.id === statusId)?.name;
+  if (fromCol) return fromCol;
+  const fallback: Record<string, string> = {
+    not_ready: "Бэклог",
+    todo: "К выполнению",
+    in_progress: "В работе",
+    done: "Готово",
+  };
+  return fallback[statusId] ?? statusId;
+}
+
+const KANBAN_CARD_BG = "bg-card/85 dark:bg-card/90";
+const BORDER_BORDER_OPACITY = "border-border/70";
+const BG_BACKGROUND_OPACITY = "bg-background/80";
+
+/** Элемент списка стикеров (с доски YouGile или встроенный) */
+type StickerPresetItem = { id: string; name: string; color: string; icon?: "archive" | "clock" };
+
+/** Стикер доски YouGile с типом и опциями: list — выбор из списка, string — ввод текста, user — исполнитель */
+type BoardStickerItem = { id: string; title: string; type: "list" | "string" | "user"; options?: Array<{ id: string; title?: string }> };
+
+/** Тег задачи с опциональным значением (выбранный вариант или введённый текст) */
+type TaskTagWithValue = { id: string; name: string; color?: string; icon?: string; value?: string };
+
+/** Заготовленные стикеры (как в YouGile) — можно добавлять к задаче и отмечать */
+const STICKER_PRESETS: StickerPresetItem[] = [
+  { id: "archive", name: "Архив", color: "slate", icon: "archive" },
+  { id: "urgent", name: "Срочно", color: "red", icon: "clock" },
+  { id: "in-work", name: "В работе", color: "blue" },
+  { id: "review", name: "На проверке", color: "amber" },
+  { id: "lecture", name: "Лекция", color: "violet" },
+  { id: "lab", name: "Лаба", color: "green", icon: "clock" },
+];
+
+function getStickerClass(color: string | undefined): string {
+  const map: Record<string, string> = {
+    slate: "bg-slate-500/90 text-white dark:bg-slate-600",
+    red: "bg-red-500/90 text-white dark:bg-red-600",
+    green: "bg-emerald-500/90 text-white dark:bg-emerald-600",
+    blue: "bg-blue-500/90 text-white dark:bg-blue-600",
+    amber: "bg-amber-500/90 text-amber-950 dark:bg-amber-500 dark:text-amber-950",
+    violet: "bg-violet-500/90 text-white dark:bg-violet-600",
+  };
+  return map[color ?? "slate"] ?? map.slate;
+}
 
 function getCurrentUser() {
   if (typeof window === 'undefined') return null;
@@ -56,57 +214,11 @@ function getCurrentUser() {
   }
 }
 
-function loadSections(users: UserType[] = [], currentUser: any = null): Section[] {
+/** Разделы только «Мои задачи» (локально). Доски — только из YouGile, подгружаются по API. */
+function loadSections(_users: UserType[] = [], currentUser: any = null): Section[] {
   if (typeof window === 'undefined') return [];
-  try {
-    const saved = localStorage.getItem('streamdesk_task_sections');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // Если есть сохраненные разделы, проверяем наличие "Мои задачи"
-      const hasMyTasks = parsed.some((s: Section) => s.id === 'my-tasks');
-      if (!hasMyTasks && currentUser) {
-        // Добавляем "Мои задачи" в начало, если его нет
-        return [{
-          id: 'my-tasks',
-          name: 'Мои задачи',
-          columns: defaultColumns,
-          userId: currentUser.id,
-        }, ...parsed];
-      }
-      return parsed;
-    }
-    
-    // По умолчанию создаем раздел "Мои задачи"
-    const defaultSections: Section[] = [{
-      id: 'my-tasks',
-      name: 'Мои задачи',
-      columns: defaultColumns,
-      userId: currentUser?.id,
-    }];
-    
-    // Если пользователь - администратор, добавляем разделы для каждого пользователя
-    if (currentUser?.role === 'admin' && users.length > 0) {
-      users.forEach(user => {
-        if (user.id !== currentUser.id) {
-          defaultSections.push({
-            id: `user-${user.id}`,
-            name: user.name || user.username || 'Без имени',
-            columns: defaultColumns,
-            userId: user.id,
-          });
-        }
-      });
-    }
-    
-    return defaultSections;
-  } catch {
-    return [{
-      id: 'my-tasks',
-      name: 'Мои задачи',
-      columns: defaultColumns,
-      userId: currentUser?.id,
-    }];
-  }
+  const cols = getDefaultColumns();
+  return [{ id: 'my-tasks', name: 'Мои задачи', columns: cols, userId: currentUser?.id }];
 }
 
 function saveSections(sections: Section[]) {
@@ -137,11 +249,10 @@ const getDaysInMonth = (month: number, year: number) => {
 
 const timeOptions = ["00", "15", "30", "45"];
 
-// Функция для получения цвета дедлайна
-function getDeadlineColor(dueDate: string | null | undefined): string {
-  if (!dueDate) return "bg-gray-500";
-  
-  const due = new Date(dueDate);
+// Функция для получения цвета дедлайна (принимает ISO-строку или Date из API/схемы)
+function getDeadlineColor(dueDate: string | Date | null | undefined): string {
+  if (dueDate == null) return "bg-gray-500";
+  const due = typeof dueDate === "string" ? new Date(dueDate) : dueDate;
   const now = new Date();
   const daysLeft = differenceInDays(due, now);
   const hoursLeft = differenceInHours(due, now);
@@ -171,12 +282,11 @@ export default function Tasks() {
   const [newColumnName, setNewColumnName] = useState("");
   const [selectedSectionId, setSelectedSectionId] = useState<string>("my-tasks");
   const [newTaskTitle, setNewTaskTitle] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const [newTaskDescription, setNewTaskDescription] = useState("");
   const [newTaskStatus, setNewTaskStatus] = useState("todo");
   const [newTaskPriority, setNewTaskPriority] = useState("medium");
   const [newTaskAssigneeId, setNewTaskAssigneeId] = useState<string>("");
-  const [quickTaskInputs, setQuickTaskInputs] = useState<Record<string, string>>({});
-  
   // Состояния для выбора дедлайна
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
   const [selectedDay, setSelectedDay] = useState<number>(new Date().getDate());
@@ -189,7 +299,13 @@ export default function Tasks() {
   const [subtasks, setSubtasks] = useState<Array<{ id: string; title: string; completed: boolean }>>([]);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<Array<{ id: string; name: string; url: string }>>([]);
+  const [newTaskTags, setNewTaskTags] = useState<TaskTagWithValue[]>([]);
+  /** Значения стикеров доски при создании: id стикера → выбранное/введённое значение */
+  const [newTaskStickerValues, setNewTaskStickerValues] = useState<Record<string, string>>({});
+  /** В просмотре задачи: значение стикера доски перед добавлением (id → значение) */
+  const [editingStickerValues, setEditingStickerValues] = useState<Record<string, string>>({});
   const [selectedTaskForView, setSelectedTaskForView] = useState<Task | null>(null);
+  const [taskDetailTab, setTaskDetailTab] = useState<"info" | "comments" | "history">("info");
   
   // Дополнительные поля для задачи
   const [newTaskRepository, setNewTaskRepository] = useState<string>("");
@@ -203,17 +319,24 @@ export default function Tasks() {
   // Фильтры и сортировка
   const [filterPriority, setFilterPriority] = useState<string>("all");
   const [filterCategory, setFilterCategory] = useState<string>("all");
-  const [filterProject, setFilterProject] = useState<string>("all");
   const [filterAssignee, setFilterAssignee] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"priority" | "dueDate" | "createdAt" | "title">("priority");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+  const [isBoardDragging, setIsBoardDragging] = useState(false);
+  const [deadlinePopoverOpen, setDeadlinePopoverOpen] = useState(false);
+  const [priorityPopoverOpen, setPriorityPopoverOpen] = useState(false);
 
   // Комментарии и история
   const [taskComments, setTaskComments] = useState<Record<string, any[]>>({});
   const [taskHistory, setTaskHistory] = useState<Record<string, any[]>>({});
   const [newComment, setNewComment] = useState<Record<string, string>>({});
   const [isLoadingComments, setIsLoadingComments] = useState<Record<string, boolean>>({});
+  const [isLoadingHistory, setIsLoadingHistory] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (selectedTaskForView?.id) setTaskDetailTab("info");
+  }, [selectedTaskForView?.id]);
 
   // Загрузка комментариев и истории при открытии задачи
   useEffect(() => {
@@ -223,8 +346,8 @@ export default function Tasks() {
       // Загрузка комментариев
       if (!taskComments[taskId] && !isLoadingComments[taskId]) {
         setIsLoadingComments(prev => ({ ...prev, [taskId]: true }));
-        fetch(`/api/tasks/${taskId}/comments`)
-          .then(res => res.json())
+        fetch(apiUrl(`/api/tasks/${taskId}/comments`), { credentials: "include" })
+          .then(res => safeJson(res, []))
           .then(data => {
             setTaskComments(prev => ({ ...prev, [taskId]: Array.isArray(data) ? data : [] }));
             setIsLoadingComments(prev => ({ ...prev, [taskId]: false }));
@@ -236,14 +359,17 @@ export default function Tasks() {
       }
       
       // Загрузка истории
-      if (!taskHistory[taskId]) {
-        fetch(`/api/tasks/${taskId}/history`)
-          .then(res => res.json())
+      if (!taskHistory[taskId] && !isLoadingHistory[taskId]) {
+        setIsLoadingHistory(prev => ({ ...prev, [taskId]: true }));
+        fetch(apiUrl(`/api/tasks/${taskId}/history`), { credentials: "include" })
+          .then(res => safeJson(res, []))
           .then(data => {
             setTaskHistory(prev => ({ ...prev, [taskId]: Array.isArray(data) ? data : [] }));
+            setIsLoadingHistory(prev => ({ ...prev, [taskId]: false }));
           })
           .catch(() => {
             setTaskHistory(prev => ({ ...prev, [taskId]: [] }));
+            setIsLoadingHistory(prev => ({ ...prev, [taskId]: false }));
           });
       }
     }
@@ -255,8 +381,9 @@ export default function Tasks() {
     if (!commentText || !currentUser?.id) return;
 
     try {
-      const response = await fetch(`/api/tasks/${taskId}/comments`, {
+      const response = await fetch(apiUrl(`/api/tasks/${taskId}/comments`), {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content: commentText,
@@ -265,13 +392,21 @@ export default function Tasks() {
       });
 
       if (response.ok) {
-        const comment = await response.json();
+        const comment = await safeJson(response, null);
+        if (!comment) return;
         setTaskComments(prev => ({
           ...prev,
           [taskId]: [...(prev[taskId] || []), comment],
         }));
         setNewComment(prev => ({ ...prev, [taskId]: "" }));
         toast({ title: "Успешно", description: "Комментарий добавлен" });
+        // Обновить историю (там появится запись "Комментарий")
+        fetch(apiUrl(`/api/tasks/${taskId}/history`), { credentials: "include" })
+          .then(res => safeJson(res, []))
+          .then(data => {
+            setTaskHistory(prev => ({ ...prev, [taskId]: Array.isArray(data) ? data : [] }));
+          })
+          .catch(() => {});
       }
     } catch (error) {
       toast({ title: "Ошибка", description: "Не удалось добавить комментарий", variant: "destructive" });
@@ -294,24 +429,80 @@ export default function Tasks() {
     retry: 1,
   });
 
-  // Загрузка проектов
+  // Загрузка проектов (видеопроекты — для создания задач и т.д.)
   const { data: projects = [] } = useQuery<any[]>({
     queryKey: ["/api/projects"],
     retry: 1,
   });
 
-  // Инициализация разделов с учетом пользователей
-  const [sections, setSections] = useState<Section[]>(() => loadSections([], currentUser));
-
-  // Загрузка задач
-  const { data: tasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
-    queryKey: ["/api/tasks"],
+  // Проекты YouGile (первая строка: Мои задачи + названия проектов YouGile). При ошибке не перезаписываем — сохраняем предыдущие данные.
+  const { data: yougileProjects = [] } = useQuery<Array<{ id: string; title?: string }>>({
+    queryKey: ["/api/yougile/projects"],
     retry: 1,
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const res = await fetch(apiUrl("/api/yougile/projects"), { credentials: "include" });
+      if (!res.ok) throw new Error(res.status === 500 ? "YouGile недоступен" : String(res.status));
+      const data = await safeJson(res, [] as any[]);
+      return Array.isArray(data) ? data : [];
+    },
+  });
+
+  const [sections, setSections] = useState<Section[]>(() => loadSections([], currentUser));
+  // Выбранная доска (вторая строка): при клике на доску показываем её колонки
+  const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
+
+  // Первая строка: «Мои задачи» + проекты YouGile (по названиям из YouGile)
+  const displaySections = useMemo((): Section[] => {
+    const myTasks = sections.find(s => s.id === "my-tasks") ?? {
+      id: "my-tasks",
+      name: "Мои задачи",
+      columns: getDefaultColumns(),
+      userId: currentUser?.id,
+    };
+    const ygProjects = (yougileProjects || []).map((p: any) => ({
+      id: "yg-project-" + p.id,
+      name: p.title || "Проект",
+      columns: [] as Column[],
+      yougileProjectId: p.id,
+    }));
+    return [myTasks, ...ygProjects];
+  }, [sections, yougileProjects, currentUser?.id]);
+
+  const selectedYougileProjectId = selectedSectionId?.startsWith("yg-project-") ? selectedSectionId.slice("yg-project-".length) : null;
+  const { data: yougileBoardsOfProject = [] } = useQuery<Array<{ id: string; title?: string; projectId?: string }>>({
+    queryKey: ["/api/yougile/boards", selectedYougileProjectId],
+    queryFn: async () => {
+      if (!selectedYougileProjectId) return [];
+      try {
+        const res = await fetch(apiUrl(`/api/yougile/boards?projectId=${encodeURIComponent(selectedYougileProjectId)}`), { credentials: "include" });
+        const data = await safeJson(res, [] as any[]);
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!selectedYougileProjectId,
+  });
+
+  // Задачи: для «Мои задачи» — локальные; для выбранной доски YouGile — по yougileBoardId
+  const yougileBoardIdForQuery = selectedYougileProjectId && selectedBoardId ? selectedBoardId : null;
+  const selectedSectionForQuery = displaySections.find(s => s.id === selectedSectionId) || displaySections[0];
+
+  const { data: tasks = [], isLoading: tasksLoading, isFetching: tasksFetching } = useQuery<Task[]>({
+    queryKey: ["/api/tasks", currentUser?.id, yougileBoardIdForQuery ?? "all"],
+    retry: 1,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       try {
-        const response = await fetch("/api/tasks");
-        if (!response.ok) return [];
-        const data = await response.json();
+        const user = getCurrentUser();
+        const headers: HeadersInit = {};
+        if (user?.id) headers["x-user"] = encodeUserHeader(user);
+        const path = yougileBoardIdForQuery
+          ? `/api/tasks?yougileBoardId=${encodeURIComponent(yougileBoardIdForQuery)}`
+          : "/api/tasks";
+        const response = await fetch(apiUrl(path), { credentials: "include", headers });
+        const data = await safeJson(response, [] as any[]);
         return Array.isArray(data) ? data : [];
       } catch (error) {
         console.error("[Tasks] Error:", error);
@@ -320,64 +511,154 @@ export default function Tasks() {
     },
   });
 
+  // Синхронизация с YouGile: при загрузке — все доски (чтобы задачи из YouGile попали в нужные проекты/доски), затем раз в минуту — выбранная доска
+  const { data: yougileStatus } = useQuery<{ configured: boolean }>({ queryKey: ["/api/yougile/status"], retry: false });
+  useEffect(() => {
+    if (!yougileStatus?.configured) return;
+    const user = getCurrentUser();
+    const headers: HeadersInit = { "Content-Type": "application/json" };
+    if (user?.id) (headers as any)["x-user"] = encodeUserHeader(user);
+    const runSync = (boardId?: string) => {
+      fetch(apiUrl("/api/yougile/sync"), {
+        method: "POST",
+        credentials: "include",
+        headers,
+        body: JSON.stringify(boardId ? { boardId } : {}),
+      })
+        .then((r) => r.ok ? safeJson(r, {}) : Promise.resolve(null))
+        .then(() => queryClient.invalidateQueries({ queryKey: ["/api/tasks"] }))
+        .catch(() => {});
+    };
+    runSync(); // сразу синхронизируем все задачи YouGile (без boardId = все доски), чтобы задачи появились в проекте/доске
+    runSync(yougileBoardIdForQuery ?? undefined);
+    const t = setInterval(() => runSync(yougileBoardIdForQuery ?? undefined), 60 * 1000);
+    return () => clearInterval(t);
+  }, [yougileStatus?.configured, queryClient, yougileBoardIdForQuery]);
 
-  const currentSection = sections.find(s => s.id === selectedSectionId) || sections[0];
-  const allColumnIds = useMemo(() => {
+  // При смене раздела сбрасываем выбранную доску
+  useEffect(() => {
+    if (!selectedSectionId?.startsWith("yg-project-")) setSelectedBoardId(null);
+  }, [selectedSectionId]);
+
+  // Резервируем место под скроллбар (всегда вызываем хук до любого условного return)
+  useEffect(() => {
+    document.body.classList.add("scrollbar-gutter-stable");
+    return () => document.body.classList.remove("scrollbar-gutter-stable");
+  }, []);
+
+  // Текущий «раздел» для канбана: «Мои задачи» или выбранная доска YouGile (с yougileBoardId для колонок и задач)
+  const currentSection = useMemo(() => {
+    if (selectedSectionId === "my-tasks" || !selectedSectionId) {
+      return displaySections.find(s => s.id === "my-tasks") || displaySections[0];
+    }
+    if (selectedYougileProjectId && selectedBoardId) {
+      const board = yougileBoardsOfProject.find((b: any) => b.id === selectedBoardId);
+      return {
+        id: "board-" + selectedBoardId,
+        name: board?.title || "Доска",
+        columns: [] as Column[],
+        yougileBoardId: selectedBoardId,
+      };
+    }
+    return displaySections.find(s => s.id === selectedSectionId) || displaySections[0];
+  }, [selectedSectionId, selectedYougileProjectId, selectedBoardId, displaySections, yougileBoardsOfProject]);
+
+  const isYouGileBoard = !!currentSection?.yougileBoardId;
+  const { data: yougileColumnsRaw = [] } = useQuery<Array<{ id: string; title?: string; order?: number }>>({
+    queryKey: ["/api/yougile/columns", currentSection?.yougileBoardId],
+    queryFn: async () => {
+      if (!currentSection?.yougileBoardId) return [];
+      try {
+        const res = await apiRequest("GET", `/api/yougile/columns?boardId=${encodeURIComponent(currentSection.yougileBoardId)}`);
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!currentSection?.yougileBoardId,
+  });
+
+  // Стикеры доски YouGile с типом и опциями (list = выпадающий список, string = ввод, user = исполнитель)
+  const { data: boardStickersRaw = [] } = useQuery<BoardStickerItem[]>({
+    queryKey: ["/api/yougile/stickers", currentSection?.yougileBoardId],
+    queryFn: async () => {
+      if (!currentSection?.yougileBoardId) return [];
+      try {
+        const res = await fetch(apiUrl(`/api/yougile/stickers?boardId=${encodeURIComponent(currentSection.yougileBoardId)}`), { credentials: "include" });
+        const data = await safeJson(res, [] as any[]);
+        const list = Array.isArray(data) ? data : [];
+        return list.map((s: any) => ({
+          id: s.id,
+          title: s.title ?? s.id,
+          type: (s.type === "user" || s.type === "list" || s.type === "string" ? s.type : "string") as "list" | "string" | "user",
+          options: Array.isArray(s.options) ? s.options : undefined,
+        }));
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!currentSection?.yougileBoardId,
+  });
+
+  // Объединённый список плашек для отображения на карточках: доска YouGile + встроенные пресеты
+  const effectiveStickerPresets = useMemo((): StickerPresetItem[] => {
+    const fromBoard: StickerPresetItem[] = (boardStickersRaw || []).map((s) => ({
+      id: s.id,
+      name: s.title || s.id,
+      color: "slate",
+      icon: undefined,
+    }));
+    const seen = new Set<string>(fromBoard.map((p) => p.id.toLowerCase()));
+    const presets: StickerPresetItem[] = fromBoard.slice();
+    for (const p of STICKER_PRESETS) {
+      const key = (p.id || p.name).toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        presets.push({ id: p.id, name: p.name, color: p.color, icon: p.icon });
+      }
+    }
+    return presets;
+  }, [boardStickersRaw]);
+
+  const effectiveColumns = useMemo(() => {
     if (!currentSection) return [];
-    return currentSection.columns.map(col => col.id);
-  }, [currentSection]);
+    if (isYouGileBoard && Array.isArray(yougileColumnsRaw) && yougileColumnsRaw.length > 0) {
+      return yougileColumnsRaw
+        .slice()
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        .map((c, i) => ({ id: c.id, name: c.title || "Столбец", order: c.order ?? i }));
+    }
+    return Array.isArray(currentSection.columns) ? currentSection.columns : [];
+  }, [currentSection, isYouGileBoard, yougileColumnsRaw]);
+
+  const allColumnIds = useMemo(() => effectiveColumns.map((col) => col.id), [effectiveColumns]);
 
   // Фильтрация и сортировка задач
   const filteredTasks = useMemo(() => {
     let filtered = tasks.filter(task => {
       if (!task) return false;
-      
-      // Фильтр по столбцам
-      const matchesColumn = allColumnIds.includes(task.status || "");
-      if (!matchesColumn) return false;
-      
-      // Фильтр по пользователю (если раздел привязан к пользователю)
-      if (currentSection?.userId) {
-        // Для "Мои задачи" показываем задачи где assigneeId = userId ИЛИ creatorId = userId
-        if (currentSection.id === 'my-tasks') {
-          if (task.assigneeId !== currentSection.userId && task.creatorId !== currentSection.userId) {
-            return false;
-          }
-        } else {
-          // Для других разделов показываем только задачи назначенные на пользователя
-          if (task.assigneeId !== currentSection.userId) {
-            return false;
-          }
+      // Доска YouGile: задачи уже пришли по yougileBoardId с API
+      if (currentSection?.yougileBoardId) {
+        if ((task as any).yougileBoardId !== currentSection.yougileBoardId) return false;
+        if (!allColumnIds.includes(task.status || "")) return false;
+      } else {
+        // «Мои задачи»: по пользователю и по столбцу
+        if (currentSection?.id === "my-tasks" && currentSection?.userId) {
+          if (task.assigneeId !== currentSection.userId && task.creatorId !== currentSection.userId) return false;
         }
+        if (!allColumnIds.includes(task.status || "")) return false;
       }
-      
-      // Фильтр по поиску
-      const matchesSearch = !searchTerm || 
+      const matchesSearch = !searchTerm ||
         task.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         task.description?.toLowerCase().includes(searchTerm.toLowerCase());
       if (!matchesSearch) return false;
-      
-      // Фильтр по приоритету
-      if (filterPriority !== "all" && task.priority !== filterPriority) {
-        return false;
-      }
-      
-      // Фильтр по категории
-      if (filterCategory !== "all" && task.category !== filterCategory) {
-        return false;
-      }
-      
-      // Фильтр по проекту
-      if (filterProject !== "all" && task.projectId !== filterProject) {
-        return false;
-      }
-      
-      // Фильтр по исполнителю
+      if (filterPriority !== "all" && task.priority !== filterPriority) return false;
+      if (filterCategory !== "all" && task.category !== filterCategory) return false;
       if (filterAssignee !== "all") {
         if (filterAssignee === "unassigned" && task.assigneeId) return false;
         if (filterAssignee !== "unassigned" && task.assigneeId !== filterAssignee) return false;
       }
-      
       return true;
     });
     
@@ -410,17 +691,30 @@ export default function Tasks() {
     });
     
     return filtered;
-  }, [tasks, allColumnIds, searchTerm, currentSection, filterPriority, filterCategory, filterProject, filterAssignee, sortBy, sortOrder]);
+  }, [tasks, allColumnIds, searchTerm, currentSection, filterPriority, filterCategory, filterAssignee, sortBy, sortOrder]);
 
-  // Группировка задач по столбцам (мемоизировано для производительности)
+  // Для раздела «Мои задачи»: только задачи, назначенные мне или созданные мной (по API)
+  const myTasksActive = useMemo(() => {
+    if (!currentUser?.id) return [];
+    return tasks.filter(
+      (t) => (t.assigneeId === currentUser.id || t.creatorId === currentUser.id) && t.status !== "done"
+    );
+  }, [tasks, currentUser?.id]);
+  const myTasksCompleted = useMemo(() => {
+    if (!currentUser?.id) return [];
+    return tasks
+      .filter((t) => (t.assigneeId === currentUser.id || t.creatorId === currentUser.id) && t.status === "done")
+      .sort((a, b) => (b.completedAt ? new Date(b.completedAt).getTime() : 0) - (a.completedAt ? new Date(a.completedAt).getTime() : 0));
+  }, [tasks, currentUser?.id]);
+
+  // Группировка задач по столбцам (статус = id колонки; для YouGile доски — id колонки YouGile)
   const tasksByColumn = useMemo(() => {
-    if (!currentSection) return {};
     const result: Record<string, Task[]> = {};
-    currentSection.columns.forEach(col => {
+    effectiveColumns.forEach(col => {
       result[col.id] = filteredTasks.filter(t => t?.status === col.id);
     });
     return result;
-  }, [currentSection, filteredTasks]);
+  }, [effectiveColumns, filteredTasks]);
 
   // Мемоизированные функции для производительности
   const memoizedGetUserName = useCallback((userId: string | null) => {
@@ -446,47 +740,6 @@ export default function Tasks() {
     return user.name.substring(0, 2).toUpperCase();
   }, [users]);
 
-  // Обработка drag and drop
-  const handleDragEnd = (result: DropResult) => {
-    if (!result.destination) return;
-
-    const { source, destination, draggableId, type } = result;
-
-    // Обработка перетаскивания столбцов
-    if (type === "COLUMN") {
-      const sectionIndex = sections.findIndex(s => s.id === selectedSectionId);
-      if (sectionIndex === -1) return;
-
-      const columns = Array.from(currentSection.columns);
-      const [reorderedColumn] = columns.splice(source.index, 1);
-      columns.splice(destination.index, 0, reorderedColumn);
-
-      // Обновить порядок
-      const updatedColumns = columns.map((col, index) => ({
-        ...col,
-        order: index,
-      }));
-
-      const updatedSections = [...sections];
-      updatedSections[sectionIndex] = {
-        ...updatedSections[sectionIndex],
-        columns: updatedColumns,
-      };
-
-      setSections(updatedSections);
-      saveSections(updatedSections);
-      return;
-    }
-
-    // Обработка перетаскивания задач
-    if (source.droppableId === destination.droppableId && source.index === destination.index) {
-      return;
-    }
-
-    const newStatus = destination.droppableId;
-    handleStatusChange(draggableId, newStatus);
-  };
-
   // Создание раздела
   const handleCreateSection = () => {
     if (!newSectionName.trim()) {
@@ -501,7 +754,7 @@ export default function Tasks() {
     const newSection: Section = {
       id: `section-${Date.now()}`,
       name: newSectionName,
-      columns: [...defaultColumns],
+      columns: [...getDefaultColumns()],
     };
 
     const updatedSections = [...sections, newSection];
@@ -513,56 +766,19 @@ export default function Tasks() {
     toast({ title: "Успешно", description: "Раздел создан" });
   };
   
-  // Обновление разделов при изменении пользователей (для админа)
   useEffect(() => {
-    if (currentUser?.role === 'admin' && users.length > 0) {
-      const userSections = users
-        .filter(user => user.id !== currentUser.id)
-        .map(user => ({
-          id: `user-${user.id}`,
-          name: user.name || user.username || 'Без имени',
-          columns: defaultColumns,
-          userId: user.id,
-        }));
-      
-      // Проверяем, нужно ли обновить разделы
-      const existingUserIds = sections
-        .filter(s => s.id.startsWith('user-'))
-        .map(s => s.userId);
-      
-      const newUserIds = userSections.map(s => s.userId);
-      
-      if (existingUserIds.length !== newUserIds.length || 
-          !existingUserIds.every(id => newUserIds.includes(id))) {
-        // Обновляем разделы
-        const myTasksSection = sections.find(s => s.id === 'my-tasks') || {
-          id: 'my-tasks',
-          name: 'Мои задачи',
-          columns: defaultColumns,
-          userId: currentUser.id,
-        };
-        
-        const customSections = sections.filter(s => 
-          !s.id.startsWith('user-') && s.id !== 'my-tasks'
-        );
-        
-        const updatedSections = [myTasksSection, ...userSections, ...customSections];
-        setSections(updatedSections);
-        saveSections(updatedSections);
-      }
-    } else if (currentUser && !sections.find(s => s.id === 'my-tasks')) {
-      // Если нет раздела "Мои задачи", создаем его
+    if (currentUser && !sections.find(s => s.id === 'my-tasks')) {
       const myTasksSection = {
         id: 'my-tasks',
         name: 'Мои задачи',
-        columns: defaultColumns,
+        columns: getDefaultColumns(),
         userId: currentUser.id,
       };
-      setSections([myTasksSection, ...sections]);
-      saveSections([myTasksSection, ...sections]);
+      setSections([myTasksSection]);
+      saveSections([myTasksSection]);
       setSelectedSectionId('my-tasks');
     }
-  }, [users, currentUser]);
+  }, [currentUser]);
 
   // Создание столбца
   const handleCreateColumn = () => {
@@ -597,26 +813,6 @@ export default function Tasks() {
     toast({ title: "Успешно", description: "Столбец создан" });
   };
 
-  // Быстрое создание задачи из поля под столбцом
-  const handleQuickCreateTask = (columnId: string) => {
-    const title = quickTaskInputs[columnId]?.trim();
-    if (!title) return;
-    if (!currentUser?.id) {
-      toast({ title: "Ошибка", description: "Войдите в систему для создания задачи", variant: "destructive" });
-      return;
-    }
-    createMutation.mutate({
-      title,
-      description: "",
-      status: columnId,
-      priority: "medium",
-      assigneeId: null,
-      dueDate: null,
-    });
-
-    setQuickTaskInputs({ ...quickTaskInputs, [columnId]: "" });
-  };
-
   // Удаление раздела
   const handleDeleteSection = (sectionId: string) => {
     if (sectionId === 'my-tasks' || sectionId.startsWith('user-')) {
@@ -641,7 +837,7 @@ export default function Tasks() {
 
   // Удаление столбца
   const handleDeleteColumn = (columnId: string) => {
-    if (defaultColumns.some(col => col.id === columnId)) {
+    if (getDefaultColumns().some(col => col.id === columnId)) {
       toast({ 
         title: "Ошибка", 
         description: "Нельзя удалить стандартный столбец",
@@ -677,32 +873,25 @@ export default function Tasks() {
   // Создание задачи
   const createMutation = useMutation({
     mutationFn: async (taskData: any) => {
-      const response = await fetch("/api/tasks", {
+      const body = { ...taskData, creatorId: currentUser?.id };
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (currentUser?.id) headers["x-user"] = encodeUserHeader(currentUser);
+      const response = await fetch(apiUrl("/api/tasks"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...taskData,
-          creatorId: currentUser?.id,
-        }),
+        credentials: "include",
+        headers,
+        body: JSON.stringify(body),
       });
       if (!response.ok) throw new Error("Не удалось создать задачу");
-      return response.json();
+      const data = await safeJson(response, null);
+      if (data == null) throw new Error("Сервер вернул неверный ответ. Проверьте подключение к API.");
+      return data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+    onSuccess: (createdTask: Task) => {
       setIsFormOpen(false);
-      setNewTaskTitle("");
-      setNewTaskDescription("");
-      setNewTaskStatus("todo");
-      setNewTaskPriority("medium");
-      setNewTaskAssigneeId("");
-      setNewTaskDueDate("");
-      setNewTaskRepository("");
-      setNewTaskProject("");
-      setNewTaskCategory("");
-      setNewTaskEstimatedHours("");
-      setNewTaskLinks([]);
       toast({ title: "Успешно", description: "Задача создана" });
+      const queryKey = ["/api/tasks", currentUser?.id, yougileBoardIdForQuery ?? "all"] as const;
+      queryClient.setQueryData<Task[]>(queryKey, (prev) => (prev ? [...prev, createdTask] : [createdTask]));
     },
     onError: (error: any) => {
       toast({ 
@@ -713,40 +902,126 @@ export default function Tasks() {
     },
   });
 
-  // Обновление задачи
+  // Обновление задачи. Оптимистичное обновление и при перетаскивании: карточка сразу переезжает в новую колонку, запрос к серверу и YouGile уходит в фоне (при лимите API — в очередь).
   const updateMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: Partial<Task> }) => {
-      const response = await fetch(`/api/tasks/${id}`, {
+    mutationFn: async ({ id, data, fromDrag }: { id: string; data: Partial<Task>; fromDrag?: boolean }) => {
+      const body = { ...data, userId: currentUser?.id };
+      const response = await fetch(apiUrl(`/api/tasks/${id}`), {
         method: "PUT",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(body),
       });
       if (!response.ok) throw new Error("Не удалось обновить задачу");
-      return response.json();
+      const parsed = await safeJson(response, null);
+      if (parsed == null) throw new Error("Сервер вернул неверный ответ. Проверьте подключение к API.");
+      return parsed;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+    onMutate: async (variables) => {
+      const queryKey = ["/api/tasks", currentUser?.id, yougileBoardIdForQuery ?? "all"] as const;
+      await queryClient.cancelQueries({ queryKey });
+      const prev = queryClient.getQueryData<Task[]>(queryKey);
+      const hasOptimistic = variables.data && (
+        variables.data.status !== undefined ||
+        variables.data.projectColumnId !== undefined ||
+        variables.data.dueDate !== undefined ||
+        variables.data.priority !== undefined ||
+        variables.data.tags !== undefined ||
+        variables.data.subtasks !== undefined
+      );
+      if (prev && hasOptimistic) {
+        queryClient.setQueryData<Task[]>(queryKey, prev.map(t =>
+          t.id === variables.id
+            ? ({
+                ...t,
+                ...(variables.data!.status !== undefined && { status: variables.data!.status }),
+                ...(variables.data!.projectColumnId !== undefined && { projectColumnId: variables.data!.projectColumnId }),
+                ...(variables.data!.dueDate !== undefined && { dueDate: variables.data!.dueDate }),
+                ...(variables.data!.priority !== undefined && { priority: variables.data!.priority }),
+                ...(variables.data!.tags !== undefined && { tags: variables.data!.tags }),
+                ...(variables.data!.subtasks !== undefined && { subtasks: variables.data!.subtasks }),
+                updatedAt: new Date().toISOString(),
+              } as unknown as Task)
+            : t
+        ));
+      }
+      return { previousTasks: prev };
     },
-    onError: (error: any) => {
-      toast({ 
-        title: "Ошибка", 
+    onSuccess: (updatedTask: Task, variables) => {
+      const queryKey = ["/api/tasks", currentUser?.id, yougileBoardIdForQuery ?? "all"] as const;
+      const prev = queryClient.getQueryData<Task[]>(queryKey);
+      if (prev && updatedTask) {
+        queryClient.setQueryData<Task[]>(queryKey, prev.map(t => t.id === updatedTask.id ? { ...t, ...updatedTask } : t));
+      }
+      setSelectedTaskForView(prev => prev && prev.id === updatedTask.id ? { ...prev, ...updatedTask } : prev);
+    },
+    onError: (error: any, _variables, context: { previousTasks?: Task[] } | undefined) => {
+      const queryKey = ["/api/tasks", currentUser?.id, yougileBoardIdForQuery ?? "all"] as const;
+      if (context?.previousTasks != null) {
+        queryClient.setQueryData(queryKey, context.previousTasks);
+      }
+      toast({
+        title: "Ошибка",
         description: error.message || "Не удалось обновить задачу",
-        variant: "destructive" 
+        variant: "destructive",
       });
     },
   });
 
+  const handleStatusChange = useCallback((taskId: string, newStatus: string, options?: { fromDrag?: boolean; isDone?: boolean }) => {
+    const markAsDone = options?.isDone === true;
+    const unmarkDone = options?.isDone === false;
+    // При отметке «решено» (галочка) не меняем столбец — только completedAt; карточка остаётся на месте, перечёркнута и тусклая
+    const data: Partial<Task> =
+      markAsDone ? { completedAt: new Date() }
+      : unmarkDone ? { completedAt: null as any }
+      : { status: newStatus, completedAt: newStatus === "done" ? new Date() : undefined };
+    updateMutation.mutate({ id: taskId, data, fromDrag: options?.fromDrag });
+  }, [updateMutation]);
+
+  const handleDragStart = useCallback(() => setIsBoardDragging(true), []);
+  const handleDragEnd = useCallback((result: DropResult) => {
+    setIsBoardDragging(false);
+    if (!result.destination) return;
+
+    const { source, destination, draggableId, type } = result;
+
+    if (type === "COLUMN") {
+      if (currentSection?.yougileBoardId) return;
+      const sectionIndex = sections.findIndex(s => s.id === selectedSectionId);
+      if (sectionIndex === -1) return;
+      const sec = sections[sectionIndex];
+
+      const columns = Array.from(sec.columns);
+      const [reorderedColumn] = columns.splice(source.index, 1);
+      columns.splice(destination.index, 0, reorderedColumn);
+      const updatedColumns = columns.map((col, index) => ({ ...col, order: index }));
+      const updatedSections = [...sections];
+      updatedSections[sectionIndex] = { ...sec, columns: updatedColumns };
+      setSections(updatedSections);
+      saveSections(updatedSections);
+      return;
+    }
+
+    if (source.droppableId === destination.droppableId && source.index === destination.index) return;
+
+    handleStatusChange(draggableId, destination.droppableId, { fromDrag: true });
+  }, [sections, selectedSectionId, currentSection, handleStatusChange]);
+
   // Удаление задачи
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const response = await fetch(`/api/tasks/${id}`, {
+      const response = await fetch(apiUrl(`/api/tasks/${id}`), {
         method: "DELETE",
+        credentials: "include",
       });
       if (!response.ok) throw new Error("Не удалось удалить задачу");
-      return response.json();
+      const data = await safeJson(response, null);
+      return data ?? { id };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.refetchQueries({ queryKey: ["/api/tasks"] });
       toast({ title: "Успешно", description: "Задача удалена" });
     },
     onError: (error: any) => {
@@ -759,7 +1034,8 @@ export default function Tasks() {
   });
 
   const handleCreateTask = () => {
-    if (!newTaskTitle.trim()) {
+    const title = titleInputRef.current?.value?.trim() ?? newTaskTitle.trim();
+    if (!title) {
       toast({ 
         title: "Ошибка", 
         description: "Введите название задачи",
@@ -775,9 +1051,8 @@ export default function Tasks() {
     // Если назначен ответственный, задача должна попасть в столбец "todo" (к выполнению)
     const taskStatus = newTaskAssigneeId ? "todo" : newTaskStatus;
 
-    // Подготовка данных для создания задачи
     const taskData: any = {
-      title: newTaskTitle,
+      title,
       description: newTaskDescription,
       status: taskStatus,
       priority: newTaskPriority,
@@ -788,7 +1063,22 @@ export default function Tasks() {
       category: newTaskCategory || null,
       estimatedHours: newTaskEstimatedHours ? parseInt(newTaskEstimatedHours) : null,
       links: newTaskLinks.length > 0 ? newTaskLinks : null,
+      subtasks: subtasks.length > 0 ? subtasks : undefined,
+      tags: (() => {
+        const fromChips = newTaskTags;
+        const fromStickers = (boardStickersRaw || []).filter((s) => newTaskStickerValues[s.id]?.trim()).map((s) => ({
+          id: s.id,
+          name: s.title,
+          value: newTaskStickerValues[s.id]?.trim(),
+        }));
+        const combined = [...fromChips, ...fromStickers];
+        return combined.length > 0 ? combined : undefined;
+      })(),
     };
+    if (currentSection?.yougileBoardId) {
+      taskData.yougileBoardId = currentSection.yougileBoardId;
+      taskData.status = allColumnIds.includes(newTaskStatus) ? newTaskStatus : (allColumnIds[0] || "todo");
+    }
 
     // Добавляем attachments только если есть файлы
     if (attachedFiles.length > 0) {
@@ -797,18 +1087,40 @@ export default function Tasks() {
 
     createMutation.mutate(taskData);
 
-    // Сброс состояний
+    // Локальный сброс только подзадач/файлов/ссылок/стикеров; основные поля сбросятся при закрытии Sheet
     setSubtasks([]);
     setNewSubtaskTitle("");
+    setNewTaskTags([]);
+    setNewTaskStickerValues({});
     setAttachedFiles([]);
-    setNewTaskRepository("");
-    setNewTaskProject("");
-    setNewTaskCategory("");
-    setNewTaskEstimatedHours("");
     setNewTaskLinks([]);
     setNewLinkTitle("");
     setNewLinkUrl("");
   };
+
+  const resetCreateForm = useCallback(() => {
+    setNewTaskTitle("");
+    if (titleInputRef.current) titleInputRef.current.value = "";
+    setNewTaskDescription("");
+    setNewTaskStatus("todo");
+    setNewTaskPriority("medium");
+    setNewTaskAssigneeId("");
+    setNewTaskDueDate("");
+    setSelectedMonth(new Date().getMonth());
+    setSelectedDay(new Date().getDate());
+    setSelectedYear(new Date().getFullYear());
+    setSelectedHour("00");
+    setSelectedMinute("00");
+    setNewTaskRepository("");
+    setNewTaskProject("");
+    setNewTaskCategory("");
+    setNewTaskEstimatedHours("");
+  }, []);
+
+  const handleCreateSheetOpenChange = useCallback((open: boolean) => {
+    if (!open) resetCreateForm();
+    setIsFormOpen(open);
+  }, [resetCreateForm]);
 
   const handleAddSubtask = () => {
     if (!newSubtaskTitle.trim()) return;
@@ -828,16 +1140,6 @@ export default function Tasks() {
         name: file.name, 
         url: fileUrl 
       }]);
-    });
-  };
-
-  const handleStatusChange = (taskId: string, newStatus: string) => {
-    updateMutation.mutate({ 
-      id: taskId, 
-      data: { 
-        status: newStatus,
-        completedAt: newStatus === "done" ? new Date() : undefined,
-      } 
     });
   };
 
@@ -877,7 +1179,6 @@ export default function Tasks() {
   // Получение цвета проекта
   const getProjectColor = useCallback((projectId: string | null | undefined) => {
     if (!projectId) return null;
-    // Генерируем цвет на основе ID проекта
     const colors = [
       { bg: "bg-orange-500", text: "text-orange-700", darkBg: "dark:bg-orange-900", darkText: "dark:text-orange-300" },
       { bg: "bg-purple-500", text: "text-purple-700", darkBg: "dark:bg-purple-900", darkText: "dark:text-purple-300" },
@@ -887,6 +1188,20 @@ export default function Tasks() {
     ];
     const index = projectId.charCodeAt(0) % colors.length;
     return colors[index];
+  }, []);
+
+  // Разноцветные акценты карточек (левая граница) по статусу или id
+  const getCardAccentColor = useCallback((task: Task) => {
+    const statusColors: Record<string, string> = {
+      done: "border-l-emerald-500",
+      in_progress: "border-l-violet-500",
+      todo: "border-l-blue-500",
+      not_ready: "border-l-slate-400",
+    };
+    if (task.status && statusColors[task.status]) return statusColors[task.status];
+    const hash = (task.id || "").split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+    const accents = ["border-l-blue-500", "border-l-violet-500", "border-l-amber-500", "border-l-emerald-500", "border-l-rose-500", "border-l-cyan-500", "border-l-indigo-500"];
+    return accents[hash % accents.length];
   }, []);
 
 // Мемоизированный компонент карточки задачи — уменьшает перераендеры
@@ -900,76 +1215,207 @@ interface TaskCardProps {
   updateMutation: any;
   getUserAvatar: (id: string | null) => string | null;
   getUserInitials: (id: string | null) => string | null;
-  handleStatusChange: (taskId: string, newStatus: string) => void;
+  handleStatusChange: (taskId: string, newStatus: string, options?: { fromDrag?: boolean; isDone?: boolean }) => void;
   setSelectedTaskForView: (task: Task) => void;
   getTaskTag: (task: Task) => any;
   getProjectColor: (id: string | null | undefined) => any;
   getDeadlineColor: (date: string | null | undefined) => string;
+  getCardAccentColor: (task: Task) => string;
+  effectiveColumns: Column[];
+  effectiveStickerPresets: StickerPresetItem[];
 }
 
-const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskComments, updateMutation, getUserAvatar, getUserInitials, handleStatusChange, setSelectedTaskForView, getTaskTag, getProjectColor, getDeadlineColor }: TaskCardProps) {
+function TasksLayout({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={cn("min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-2 sm:p-3 md:p-4 lg:p-6", className)}>
+      <div className="max-w-[1920px] mx-auto space-y-0">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskComments, updateMutation, getUserAvatar, getUserInitials, handleStatusChange, setSelectedTaskForView, getTaskTag, getProjectColor, getDeadlineColor, getCardAccentColor, effectiveColumns, effectiveStickerPresets }: TaskCardProps) {
   const taskTag = getTaskTag(task);
+  const localRef = useRef<HTMLDivElement | null>(null);
+  const isDragging = !!snapshot?.isDragging;
+  const draggableProps = provided?.draggableProps || {};
+  const innerRef = provided?.innerRef || localRef;
+
+  const deadlineStripColor = getDeadlineColor(
+    task.dueDate != null ? (typeof task.dueDate === "string" ? task.dueDate : (task.dueDate as Date).toISOString()) : null
+  );
+  const cardAccent = getCardAccentColor(task);
+  const sortedCols = [...(effectiveColumns || [])].sort((a, b) => a.order - b.order);
+  const firstColId = sortedCols[0]?.id ?? "todo";
+  const lastColId = sortedCols[sortedCols.length - 1]?.id ?? "done";
+  const isDone = !!task.completedAt || task.status === lastColId || task.status === "done";
+
   return (
     <Card
-      ref={provided.innerRef}
-      {...provided.draggableProps}
+      ref={innerRef as any}
+      {...draggableProps}
+      style={isDragging ? { willChange: "transform" } : undefined}
       className={cn(
-        "p-2.5 sm:p-3 md:p-4 hover:shadow-lg transition-all duration-200 cursor-grab active:cursor-grabbing relative border-2 rounded-xl bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-900",
-        snapshot.isDragging
-          ? "shadow-2xl rotate-2 scale-105 border-primary z-50 ring-4 ring-primary/20"
-          : "border-slate-200 dark:border-slate-700 hover:border-primary/40 hover:shadow-xl hover:-translate-y-1"
+        "task-drag-card flex rounded-xl border border-border select-none overflow-hidden",
+        "bg-card/90 dark:bg-card/95 backdrop-blur-sm border-l-4",
+        !isDragging && "transition-shadow duration-150",
+        cardAccent || "border-l-slate-300 dark:border-l-slate-600",
+        isDone && "opacity-70",
+        isDragging
+          ? "shadow-xl z-50 ring-2 ring-primary/30"
+          : "hover:border-primary/30 hover:shadow-md"
       )}
     >
-      {taskTag && (
-        <div className="mb-3">
-          <Badge className={cn("text-xs font-medium px-2 py-0.5 rounded-full", taskTag.color, "shadow-sm")}>
-            {taskTag.label}
-          </Badge>
-        </div>
-      )}
-
-      <div className="space-y-2 sm:space-y-3">
-        <div className="flex items-start justify-between gap-1.5 sm:gap-2">
-          <h3
-            className="font-semibold text-xs sm:text-sm flex-1 leading-snug text-slate-900 dark:text-slate-100 cursor-pointer hover:text-primary transition-colors line-clamp-2 min-w-0"
-            onClick={(e) => { e.stopPropagation(); setSelectedTaskForView(task); }}
-            title={task.title}
-          >
-            {task.title}
-          </h3>
-          <div className="flex items-center gap-1 flex-shrink-0">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 sm:h-6 sm:w-6"
-              onClick={(e) => { e.stopPropagation(); setSelectedTaskForView(task); }}
-              title="Просмотр задачи"
+      <div className={cn("w-1.5 shrink-0 rounded-l-md", deadlineStripColor)} aria-hidden />
+      <div className="p-3 sm:p-3 flex-1 min-w-0 rounded-r-xl min-h-[88px] sm:min-h-0">
+        {/* Первая строка: зона перетаскивания (ручка + название + аватар), чекбокс, меню — перетаскивать за всю зону, без смещения карточки */}
+        <div className="flex items-start gap-2.5 sm:gap-2">
+          {(provided?.dragHandleProps) && (
+            <div
+              {...provided.dragHandleProps}
+              className="cursor-grab active:cursor-grabbing touch-manipulation flex items-start gap-2 min-w-0 flex-1 rounded py-2 -my-2 px-1 -mx-1 min-h-[44px] sm:min-h-0 sm:py-0.5 sm:-my-0.5"
+              title="Перетащить"
             >
-              <Eye className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-            </Button>
-            <Checkbox
-              checked={task.status === "done"}
-              onCheckedChange={(checked) => { handleStatusChange(task.id, checked ? "done" : "todo"); }}
-              className="h-3.5 w-3.5 sm:h-4 sm:w-4 rounded border-2 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-            />
+              <GripVertical className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-muted-foreground shrink-0 self-center" />
+              <h3
+                className={cn(
+                  "font-semibold text-sm flex-1 leading-snug text-foreground cursor-pointer hover:text-primary transition-colors line-clamp-2 min-w-0",
+                  isDone && "line-through opacity-75"
+                )}
+                onClick={(e) => { e.stopPropagation(); setSelectedTaskForView(task); }}
+                title={task.title}
+              >
+                {task.title}
+              </h3>
+              {task.assigneeId && (
+                <Avatar className="w-7 h-7 sm:w-6 sm:h-6 ring-2 ring-background shrink-0">
+                  <AvatarImage src={getUserAvatar(task.assigneeId) || undefined} />
+                  <AvatarFallback className="text-[10px] sm:text-[9px] font-semibold bg-primary/20 text-primary">
+                    {getUserInitials(task.assigneeId) || "?"}
+                  </AvatarFallback>
+                </Avatar>
+              )}
+            </div>
+          )}
+          {!(provided?.dragHandleProps) && (
+            <h3
+              className={cn(
+                "font-semibold text-sm flex-1 leading-snug text-foreground cursor-pointer hover:text-primary transition-colors line-clamp-2 min-w-0",
+                isDone && "line-through opacity-75"
+              )}
+              onClick={(e) => { e.stopPropagation(); setSelectedTaskForView(task); }}
+              title={task.title}
+            >
+              {task.title}
+            </h3>
+          )}
+          <Checkbox
+            checked={isDone}
+            onCheckedChange={(checked) => { handleStatusChange(task.id, task.status, { isDone: !!checked }); }}
+            className="h-5 w-5 sm:h-4 sm:w-4 mt-0.5 rounded border-2 data-[state=checked]:bg-primary data-[state=checked]:border-primary shrink-0 touch-manipulation"
+          />
+          <div className="flex items-center gap-1 shrink-0">
+            {!(provided?.dragHandleProps) && task.assigneeId && (
+              <Avatar className="w-7 h-7 sm:w-6 sm:h-6 ring-2 ring-background">
+                <AvatarImage src={getUserAvatar(task.assigneeId) || undefined} />
+                <AvatarFallback className="text-[10px] sm:text-[9px] font-semibold bg-primary/20 text-primary">
+                  {getUserInitials(task.assigneeId) || "?"}
+                </AvatarFallback>
+              </Avatar>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-7 sm:w-7 touch-manipulation" onClick={(e) => e.stopPropagation()}>
+                  <MoreVertical className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                <DropdownMenuItem onClick={() => setSelectedTaskForView(task)}>
+                  <Eye className="w-4 h-4 mr-2" /> Открыть
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
-        {task.description && (
-          <p className="text-xs text-muted-foreground line-clamp-2">{task.description}</p>
+        {/* Стикеры и приоритет: как на карточке YouGile — цветные плашки с заготовленным выбором */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-2 sm:mt-2 min-w-0">
+          {taskTag && (
+            <span className={cn("inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] sm:text-[10px] font-medium", taskTag.color)}>
+              {taskTag.label}
+            </span>
+          )}
+          {Array.isArray((task as any)?.tags) && (task as any).tags.length > 0 && (task as any).tags.map((tag: any) => {
+            const name = typeof tag === "object" && tag !== null && "name" in tag ? tag.name : String(tag?.id ?? tag);
+            const value = typeof tag === "object" && tag !== null && "value" in tag ? (tag as any).value : undefined;
+            const displayValue = value && users?.length ? (users.find((u) => u.id === value)?.name ?? value) : value;
+            const label = displayValue ? `${name}: ${displayValue}` : name;
+            const color = typeof tag === "object" && tag !== null && "color" in tag ? (tag as any).color : undefined;
+            const preset = (effectiveStickerPresets || STICKER_PRESETS).find(p => p.id === (tag?.id ?? tag) || p.name === name);
+            const icon = preset?.icon ?? (typeof tag === "object" && (tag as any).icon);
+            return (
+              <span
+                key={tag?.id ?? tag?.name ?? String(tag)}
+                className={cn("inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] sm:text-[11px] font-medium text-white truncate max-w-[140px]", getStickerClass(color ?? preset?.color))}
+                title={label}
+              >
+                {icon === "archive" && <Filter className="w-3 h-3 shrink-0 opacity-90" />}
+                {icon === "clock" && <Clock className="w-3 h-3 shrink-0 opacity-90" />}
+                <span className="truncate">{label}</span>
+              </span>
+            );
+          })}
+          {task.projectId && getProjectColor(task.projectId) && (
+            <span className={cn("inline-block w-2 h-2 rounded-full shrink-0", getProjectColor(task.projectId)?.bg)} title="Проект" />
+          )}
+        </div>
+
+        {/* Подзадачи (чеклист) на карточке */}
+        {Array.isArray((task as any).subtasks) && (task as any).subtasks.length > 0 && (
+          <div className="mt-2 space-y-1">
+            {(task as any).subtasks.slice(0, 4).map((st: { id: string; title: string; completed?: boolean }) => (
+              <div key={st.id} className="flex items-center gap-1.5 text-xs">
+                <Checkbox
+                  checked={!!st.completed}
+                  onCheckedChange={(checked) => {
+                    const list = [...((task as any).subtasks || [])];
+                    const idx = list.findIndex((s: any) => s.id === st.id);
+                    if (idx >= 0) {
+                      list[idx] = { ...list[idx], completed: !!checked };
+                      updateMutation.mutate({ id: task.id, data: { subtasks: list } });
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="h-3 w-3"
+                />
+                <span className={cn("truncate", st.completed && "line-through text-muted-foreground")}>{st.title}</span>
+              </div>
+            ))}
+            {(task as any).subtasks.length > 4 && (
+              <span className="text-[10px] text-muted-foreground">+{(task as any).subtasks.length - 4}</span>
+            )}
+          </div>
         )}
 
-        <div className="flex items-center justify-between gap-1.5 sm:gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap min-w-0 flex-1">
+        {/* Дата и мета — на телефоне крупнее зоны нажатия */}
+        <div className="flex items-center justify-between gap-2 mt-2 flex-wrap">
+          <div className="flex items-center gap-2 sm:gap-1.5 flex-wrap min-w-0 flex-1">
             {task.assigneeId ? (
-              <Select value={task.assigneeId} onValueChange={(value) => {
-                const newAssigneeId = value === "none" ? null : value;
-                const newStatus = newAssigneeId ? "todo" : task.status;
-                updateMutation.mutate({ id: task.id, data: { assigneeId: newAssigneeId, status: newStatus } });
-              }}>
-                <SelectTrigger asChild>
-                  <div className="flex items-center gap-1 group cursor-pointer">
-                    <Avatar className="w-6 h-6 sm:w-7 sm:h-7 ring-2 ring-slate-200 dark:ring-slate-700 group-hover:ring-primary/50 transition-all flex-shrink-0">
+              <Select
+                value={task.assigneeId}
+                onValueChange={(value) => {
+                  const newAssigneeId = value === "none" ? null : value;
+                  const newStatus = newAssigneeId ? "todo" : task.status;
+                  updateMutation.mutate({
+                    id: task.id,
+                    data: { assigneeId: newAssigneeId, status: newStatus },
+                  });
+                }}
+              >
+                <SelectTrigger className="h-8 sm:h-7 w-auto border-none bg-transparent px-0 py-0 hover:bg-transparent focus:ring-0 focus:ring-offset-0">
+                  <div className="flex items-center gap-1.5 group cursor-pointer touch-manipulation min-h-[28px] sm:min-h-0">
+                    <Avatar className="w-7 h-7 sm:w-7 sm:h-7 ring-2 ring-slate-200 dark:ring-slate-700 group-hover:ring-primary/50 transition-all flex-shrink-0">
                       <AvatarImage src={getUserAvatar(task.assigneeId) || undefined} />
                       <AvatarFallback className="text-[9px] sm:text-[10px] font-semibold bg-gradient-to-br from-primary/20 to-primary/10 text-primary border border-primary/20">
                         {getUserInitials(task.assigneeId) || "?"}
@@ -979,26 +1425,49 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                 </SelectTrigger>
                 <SelectContent onClick={(e) => e.stopPropagation()}>
                   <SelectItem value="none">Не назначен</SelectItem>
-                  {users.map(user => (<SelectItem key={user.id} value={user.id}>{user.name}</SelectItem>))}
+                  {users.map((user) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             ) : (
-              <Select value="" onValueChange={(value) => { if (value) updateMutation.mutate({ id: task.id, data: { assigneeId: value } }); }}>
-                <SelectTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-6 sm:h-7 px-1.5 sm:px-2 text-[10px] sm:text-xs text-muted-foreground hover:text-primary border border-dashed border-slate-300 dark:border-slate-600 hover:border-primary/50 rounded-full" onClick={(e) => e.stopPropagation()}>
-                    <Plus className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5 sm:mr-1" />
-                    <span className="hidden sm:inline">Назначить</span>
+              <Select
+                value=""
+                onValueChange={(value) => {
+                  if (value) {
+                    updateMutation.mutate({
+                      id: task.id,
+                      data: { assigneeId: value },
+                    });
+                  }
+                }}
+              >
+                <SelectTrigger className="h-8 sm:h-7 w-auto border-none bg-transparent px-0 py-0 hover:bg-transparent focus:ring-0 focus:ring-offset-0">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 sm:h-7 px-2.5 sm:px-2 text-xs sm:text-xs text-muted-foreground hover:text-primary border border-dashed border-slate-300 dark:border-slate-600 hover:border-primary/50 rounded-full touch-manipulation"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Plus className="w-3 h-3 sm:w-3 sm:h-3 mr-1 sm:mr-1" />
+                    <span>Назначить</span>
                   </Button>
                 </SelectTrigger>
                 <SelectContent onClick={(e) => e.stopPropagation()}>
                   <SelectItem value="none">Не назначен</SelectItem>
-                  {users.map(user => (<SelectItem key={user.id} value={user.id}>{user.name}</SelectItem>))}
+                  {users.map((user) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             )}
             {task.dueDate && (
-              <span className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs font-medium text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-md whitespace-nowrap">
-                <Calendar className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+              <span className="flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-2 py-1 rounded-md whitespace-nowrap">
+                <CalendarIcon className="w-3 h-3 sm:w-3 sm:h-3" />
                 {format(new Date(task.dueDate), "d MMM", { locale: ru })}
               </span>
             )}
@@ -1011,34 +1480,19 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                 <span>{taskComments[task.id].length}</span>
               </div>
             )}
-            {task.attachments && Array.isArray(task.attachments) && task.attachments.length > 0 && (
+            {Boolean(task.attachments && Array.isArray(task.attachments) && (task.attachments as any[]).length > 0) && (
               <div className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs text-muted-foreground">
                 <Paperclip className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                <span>{task.attachments.length}</span>
+                <span>{(task.attachments as any[]).length}</span>
               </div>
             )}
-            {task.links && Array.isArray(task.links) && task.links.length > 0 && (
+            {Boolean(task.links && Array.isArray(task.links) && (task.links as any[]).length > 0) && (
               <div className="flex items-center gap-0.5 sm:gap-1 text-[10px] sm:text-xs text-muted-foreground">
                 <Link2 className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                <span>{task.links.length}</span>
+                <span>{(task.links as any[]).length}</span>
               </div>
             )}
           </div>
-        </div>
-
-        <div className="absolute bottom-0 left-0 right-0 flex flex-col gap-0.5">
-          {task.projectId && (() => {
-            const projectColor = getProjectColor(task.projectId);
-            return projectColor ? (
-              <div className={cn("h-1.5 rounded-b-xl", projectColor.bg, projectColor.darkBg)} style={{ boxShadow: `0 0 10px ${projectColor.bg.includes('orange') ? '#f97316' : projectColor.bg.includes('purple') ? '#a855f7' : projectColor.bg.includes('blue') ? '#3b82f6' : projectColor.bg.includes('green') ? '#22c55e' : '#ec4899'}40` }} />
-            ) : null;
-          })()}
-
-          {task.dueDate && (
-            <div className="h-2 rounded-b-xl overflow-hidden">
-              <div className={cn("h-full w-full rounded-b-xl", getDeadlineColor(task.dueDate))} style={{ boxShadow: `0 0 20px ${getDeadlineColor(task.dueDate).includes('red') ? '#ef4444' : getDeadlineColor(task.dueDate).includes('orange') ? '#f97316' : getDeadlineColor(task.dueDate).includes('yellow') ? '#eab308' : getDeadlineColor(task.dueDate).includes('blue') ? '#3b82f6' : '#22c55e'}, 0 0 40px ${getDeadlineColor(task.dueDate).includes('red') ? '#ef4444' : getDeadlineColor(task.dueDate).includes('orange') ? '#f97316' : getDeadlineColor(task.dueDate).includes('yellow') ? '#eab308' : getDeadlineColor(task.dueDate).includes('blue') ? '#3b82f6' : '#22c55e'}80, inset 0 0 10px ${getDeadlineColor(task.dueDate).includes('red') ? '#ef4444' : getDeadlineColor(task.dueDate).includes('orange') ? '#f97316' : getDeadlineColor(task.dueDate).includes('yellow') ? '#eab308' : getDeadlineColor(task.dueDate).includes('blue') ? '#3b82f6' : '#22c55e'}40`, filter: 'brightness(1.4) saturate(1.3)' }} />
-            </div>
-          )}
         </div>
       </div>
     </Card>
@@ -1049,7 +1503,8 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
   const daysArray = Array.from({ length: daysInSelectedMonth }, (_, i) => i + 1);
   const hoursArray = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2, "0"));
 
-  if (tasksLoading) {
+  // Полноэкранный спиннер только при первой загрузке (нет данных). При смене доски показываем предыдущие задачи и тонкий индикатор
+  if (tasksLoading && tasks.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -1061,128 +1516,158 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/20 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 neon:from-black neon:via-slate-950 neon:to-black p-2 sm:p-3 md:p-4 lg:p-6">
-      <div className="max-w-[1920px] mx-auto space-y-2 sm:space-y-3 md:space-y-4">
-        {/* Заголовок и управление */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 w-full sm:w-auto">
-              <div>
-                <h1 className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-slate-900 via-slate-700 to-slate-900 dark:from-slate-100 dark:via-slate-300 dark:to-slate-100 neon:from-cyan-300 neon:via-purple-300 neon:to-cyan-300 bg-clip-text text-transparent">
-                  {currentSection?.name || "Задачи"}
-                </h1>
-              </div>
-            {/* Список разделов как теги */}
-            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-              {sections.map(section => (
-                <Button
-                  key={section.id}
-                  variant={selectedSectionId === section.id ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setSelectedSectionId(section.id)}
+    <TasksLayout>
+      <div className="relative space-y-0">
+        {/* Шапка в стиле MOII/CRM: тёмная полоса, заголовок по центру (мобильный) или слева, фильтр и меню справа */}
+        <div className="rounded-t-xl border border-b-0 border-border bg-card/90 dark:bg-card/95 backdrop-blur-sm px-3 py-2.5 sm:px-4 flex items-center justify-between gap-2">
+          <h1 className="text-base sm:text-lg font-bold text-foreground truncate min-w-0">
+            {currentSection?.name || "Задачи"}
+          </h1>
+          <div className="flex items-center gap-1 shrink-0">
+            <Popover open={isFiltersOpen} onOpenChange={setIsFiltersOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg">
+                  <Filter className="h-4 w-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[calc(100vw-2rem)] sm:w-80" align="end">
+                <div className="space-y-4">
+                  <Label>Приоритет</Label>
+                  <Select value={filterPriority} onValueChange={setFilterPriority}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Все</SelectItem>
+                      <SelectItem value="urgent">Срочный</SelectItem>
+                      <SelectItem value="high">Высокий</SelectItem>
+                      <SelectItem value="medium">Средний</SelectItem>
+                      <SelectItem value="low">Низкий</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Label>Категория</Label>
+                  <Select value={filterCategory} onValueChange={setFilterCategory}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Все</SelectItem>
+                      <SelectItem value="production">Производство</SelectItem>
+                      <SelectItem value="equipment">Оборудование</SelectItem>
+                      <SelectItem value="stream">Стрим</SelectItem>
+                      <SelectItem value="admin">Администрирование</SelectItem>
+                      <SelectItem value="other">Другое</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Label>Исполнитель</Label>
+                  <Select value={filterAssignee} onValueChange={setFilterAssignee}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Все</SelectItem>
+                      <SelectItem value="unassigned">Не назначены</SelectItem>
+                      {users.map(u => (<SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </PopoverContent>
+            </Popover>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setIsFormOpen(true)}>
+                  <Plus className="w-4 h-4 mr-2" /> Новая задача
+                </DropdownMenuItem>
+                {/* Столбцы синхронизируются с YouGile; создание только через настройки маппинга колонок */}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+        {/* Тонкая полоска загрузки при смене доски (без полноэкранного затемнения) */}
+        {tasksFetching && tasks.length > 0 && (
+          <div className="absolute left-0 right-0 top-0 z-10 h-0.5 bg-primary/20 overflow-hidden rounded-full">
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-primary/70" />
+          </div>
+        )}
+
+        {/* Первая строка: Мои задачи и проекты YouGile (названия из YouGile) */}
+        <div className="border-x border-t border-border bg-card/80 dark:bg-card/90 backdrop-blur-sm px-2 sm:px-3 pt-3 pb-2">
+          <p className="text-xs text-muted-foreground mb-2 px-0.5">Проекты</p>
+          <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
+            {displaySections.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                onClick={() => setSelectedSectionId(section.id)}
+                className={cn(
+                  "flex-shrink-0 rounded-xl border-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-all",
+                  selectedSectionId === section.id
+                    ? "border-primary bg-primary/10 text-primary shadow-sm"
+                    : "border-border bg-background/80 text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                )}
+              >
+                {section.id === "my-tasks" && <CheckCircle2 className="w-3.5 h-3.5 inline mr-1.5 align-middle opacity-70" />}
+                {(section as any).yougileProjectId && <FolderKanban className="w-3.5 h-3.5 inline mr-1.5 align-middle opacity-70" />}
+                {section.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Вторая строка: доски выбранного проекта YouGile (по клику — колонки этой доски) */}
+        {selectedYougileProjectId && yougileBoardsOfProject.length > 0 && (
+          <div className="border-x border-t border-border bg-card/70 dark:bg-card/80 backdrop-blur-sm px-2 sm:px-3 pt-2 pb-2 mt-0.5">
+            <p className="text-xs text-muted-foreground mb-2 px-0.5">Доски</p>
+            <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
+              {yougileBoardsOfProject.map((board: any) => (
+                <button
+                  key={board.id}
+                  type="button"
+                  onClick={() => setSelectedBoardId(board.id)}
                   className={cn(
-                    "relative group h-8 sm:h-9 px-2 sm:px-3 md:px-4 text-xs sm:text-sm font-medium transition-all",
-                    selectedSectionId === section.id 
-                      ? "rounded-full shadow-lg hover:shadow-xl" 
-                      : "rounded-full border-2 hover:border-primary/50"
+                    "flex-shrink-0 rounded-xl border-2 px-3 py-2 text-sm font-medium whitespace-nowrap transition-all",
+                    selectedBoardId === board.id
+                      ? "border-primary bg-primary/10 text-primary shadow-sm"
+                      : "border-border bg-background/80 text-muted-foreground hover:border-primary/50 hover:text-foreground"
                   )}
                 >
-                  <span className="truncate max-w-[100px] sm:max-w-none">{section.name}</span>
-                  {section.id !== 'default' && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteSection(section.id);
-                      }}
-                      className="ml-1 sm:ml-2 opacity-0 group-hover:opacity-100 transition-opacity rounded-full p-0.5 hover:bg-destructive/20"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  )}
-                </Button>
+                  <Columns className="w-3.5 h-3.5 inline mr-1.5 align-middle opacity-70" />
+                  {board.title || "Доска"}
+                </button>
               ))}
             </div>
           </div>
-          <div className="flex items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
-            {/* Создание раздела */}
-            <Dialog open={isSectionFormOpen} onOpenChange={setIsSectionFormOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className="rounded-full px-2 sm:px-3 md:px-5 py-2 sm:py-2.5 text-xs sm:text-sm font-medium">
-                  <Plus className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
-                  <span className="hidden sm:inline">Новый раздел</span>
-                  <span className="sm:hidden">Раздел</span>
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Создать раздел</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <div>
-                    <Label>Название раздела</Label>
-                    <Input
-                      value={newSectionName}
-                      onChange={(e) => setNewSectionName(e.target.value)}
-                      placeholder="Название раздела"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleCreateSection();
-                        }
-                      }}
-                    />
-                  </div>
-                  <Button onClick={handleCreateSection} className="w-full rounded-full px-6 py-2.5 font-medium">
-                    Создать
-                  </Button>
+        )}
+
+        <div className="space-y-2 sm:space-y-3 md:space-y-4 px-0 pt-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => setIsFormOpen(true)} className="rounded-xl h-9 sm:h-10 px-4 shrink-0 touch-manipulation">
+              <Plus className="w-4 h-4 mr-2" />
+              Создать задачу
+            </Button>
+            <YouGileTasksLink />
+          </div>
+
+          {/* Диалоги раздел/столбец (открываются из меню) */}
+          <Dialog open={isSectionFormOpen} onOpenChange={setIsSectionFormOpen}>
+            <DialogContent>
+              <DialogHeader><DialogTitle>Создать раздел</DialogTitle></DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label>Название раздела</Label>
+                  <Input value={newSectionName} onChange={(e) => setNewSectionName(e.target.value)} placeholder="Название раздела" onKeyDown={(e) => e.key === 'Enter' && handleCreateSection()} />
                 </div>
-              </DialogContent>
-            </Dialog>
+                <Button onClick={handleCreateSection} className="w-full">Создать</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
 
-            {/* Создание столбца */}
-            {currentSection && (
-              <Dialog open={isColumnFormOpen} onOpenChange={setIsColumnFormOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="rounded-full px-2 sm:px-3 md:px-5 py-2 sm:py-2.5 text-xs sm:text-sm font-medium">
-                    <Columns className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
-                    <span className="hidden sm:inline">Новый столбец</span>
-                    <span className="sm:hidden">Столбец</span>
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Создать столбец</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <div>
-                      <Label>Название столбца</Label>
-                      <Input
-                        value={newColumnName}
-                        onChange={(e) => setNewColumnName(e.target.value)}
-                        placeholder="Название столбца"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleCreateColumn();
-                          }
-                        }}
-                      />
-                    </div>
-                    <Button onClick={handleCreateColumn} className="w-full rounded-full px-6 py-2.5 font-medium">
-                      Создать
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            )}
-
-            {/* Создание задачи */}
-            <Sheet open={isFormOpen} onOpenChange={setIsFormOpen}>
-              <SheetTrigger asChild>
-                <Button size="sm" className="rounded-full px-3 sm:px-4 md:px-6 py-2 sm:py-2.5 text-xs sm:text-sm font-medium shadow-lg hover:shadow-xl transition-all">
-                  <Plus className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
-                  <span className="hidden sm:inline">Новая задача</span>
-                  <span className="sm:hidden">Задача</span>
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="right" className="w-full sm:max-w-lg md:max-w-2xl overflow-y-auto hide-scrollbar p-3 sm:p-6">
+            <Sheet open={isFormOpen} onOpenChange={handleCreateSheetOpenChange}>
+              <SheetContent
+                side="right"
+                className="w-full sm:max-w-lg md:max-w-2xl overflow-y-auto overflow-x-hidden hide-scrollbar touch-scroll-smooth p-3 sm:p-6 max-h-[100dvh] md:max-h-none pb-24 md:pb-6 safe-area-bottom"
+                onOpenAutoFocus={(e) => e.preventDefault()}
+              >
                 <SheetHeader className="mb-6">
                   <SheetTitle className="text-2xl font-bold">Создать задачу</SheetTitle>
                   <SheetDescription>
@@ -1191,12 +1676,16 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                 </SheetHeader>
                 <div className="space-y-4">
                   <div>
-                    <Label className="text-xs sm:text-sm">Название *</Label>
+                    <Label className="text-xs sm:text-sm" htmlFor="task-title-input">Название *</Label>
                     <Input
-                      value={newTaskTitle}
-                      onChange={(e) => setNewTaskTitle(e.target.value)}
+                      ref={titleInputRef}
+                      id="task-title-input"
+                      defaultValue=""
                       placeholder="Название задачи"
-                      className="h-9 sm:h-10 text-xs sm:text-sm"
+                      className="h-9 sm:h-10 text-xs sm:text-sm scroll-mt-24"
+                      autoComplete="off"
+                      aria-label="Название задачи"
+                      style={{ scrollMarginTop: "6rem" }}
                     />
                   </div>
                   <div>
@@ -1217,7 +1706,7 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {currentSection?.columns.map(column => (
+                          {effectiveColumns.map(column => (
                             <SelectItem key={column.id} value={column.id}>
                               {column.name}
                             </SelectItem>
@@ -1341,6 +1830,89 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                       </p>
                     )}
                   </div>
+
+                  {/* Стикеры доски YouGile: по типу — выпадающий список или поле ввода */}
+                  {boardStickersRaw.length > 0 && (
+                    <div className="space-y-3">
+                      <Label className="text-xs sm:text-sm">Стикеры доски</Label>
+                      {(boardStickersRaw as BoardStickerItem[]).map((sticker) => (
+                        <div key={sticker.id} className="space-y-1.5">
+                          <Label className="text-xs text-muted-foreground">{sticker.title}</Label>
+                          {sticker.type === "user" ? (
+                            <Select
+                              value={newTaskStickerValues[sticker.id] || ""}
+                              onValueChange={(v) => setNewTaskStickerValues((prev) => ({ ...prev, [sticker.id]: v }))}
+                            >
+                              <SelectTrigger className="h-9 text-xs sm:text-sm">
+                                <SelectValue placeholder="Выберите исполнителя" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="">Не выбрано</SelectItem>
+                                {users.map((u) => (
+                                  <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : sticker.type === "list" && sticker.options && sticker.options.length > 0 ? (
+                            <Select
+                              value={newTaskStickerValues[sticker.id] || ""}
+                              onValueChange={(v) => setNewTaskStickerValues((prev) => ({ ...prev, [sticker.id]: v }))}
+                            >
+                              <SelectTrigger className="h-9 text-xs sm:text-sm">
+                                <SelectValue placeholder="Выберите из списка" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="">Не выбрано</SelectItem>
+                                {sticker.options.map((opt) => (
+                                  <SelectItem key={opt.id} value={opt.id}>{opt.title ?? opt.id}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input
+                              placeholder="Введите значение"
+                              className="h-9 text-xs sm:text-sm"
+                              value={newTaskStickerValues[sticker.id] ?? ""}
+                              onChange={(e) => setNewTaskStickerValues((prev) => ({ ...prev, [sticker.id]: e.target.value }))}
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Плашки-пресеты (если нет стикеров доски или дополнительно) */}
+                  {effectiveStickerPresets.length > 0 && boardStickersRaw.length === 0 && (
+                    <div className="space-y-2">
+                      <Label className="text-xs sm:text-sm">Стикеры</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {effectiveStickerPresets.map((p) => {
+                          const isSelected = newTaskTags.some((t) => t.id === p.id || t.name === p.name);
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => {
+                                if (isSelected) {
+                                  setNewTaskTags(newTaskTags.filter((t) => t.id !== p.id && t.name !== p.name));
+                                } else {
+                                  setNewTaskTags([...newTaskTags, { id: p.id, name: p.name, color: p.color }]);
+                                }
+                              }}
+                              className={cn(
+                                "inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-opacity",
+                                getStickerClass(p.color),
+                                isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "opacity-80 hover:opacity-100"
+                              )}
+                            >
+                              {p.icon === "archive" && <Filter className="w-3 h-3 shrink-0" />}
+                              {p.icon === "clock" && <Clock className="w-3 h-3 shrink-0" />}
+                              {p.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Подзадачи */}
                   <div className="space-y-2 sm:space-y-3">
@@ -1595,305 +2167,252 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
               </SheetContent>
             </Sheet>
           </div>
-        </div>
 
-        {/* Поиск и фильтры */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-          <div className="flex-1 relative">
-            <Search className="absolute left-2 sm:left-3 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 sm:w-4 sm:h-4 text-muted-foreground" />
-            <Input
-              placeholder="Поиск задач..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-8 sm:pl-10 h-9 sm:h-10 text-sm"
-            />
-          </div>
-          
-          {/* Фильтры */}
-          <Popover open={isFiltersOpen} onOpenChange={setIsFiltersOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="outline" className="gap-1.5 sm:gap-2 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4">
-                <Filter className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                <span className="hidden sm:inline">Фильтры</span>
-                <span className="sm:hidden">Фильтр</span>
-                {(filterPriority !== "all" || filterCategory !== "all" || filterProject !== "all" || filterAssignee !== "all") && (
-                  <Badge variant="secondary" className="ml-1 h-4 w-4 sm:h-5 sm:w-5 rounded-full p-0 flex items-center justify-center text-[10px] sm:text-xs">
-                    {[filterPriority, filterCategory, filterProject, filterAssignee].filter(f => f !== "all").length}
-                  </Badge>
+        {/* «Мои задачи»: плитки только моих задач (назначенных/созданных мной) + история выполненных */}
+        {currentSection?.id === "my-tasks" ? (
+          <div className="space-y-6 px-0 pt-2">
+            <div>
+              <h2 className="text-sm font-semibold text-muted-foreground mb-3">Текущие задачи</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {myTasksActive.length === 0 ? (
+                  <div className="col-span-full rounded-xl border border-dashed border-border bg-muted/30 p-8 text-center text-sm text-muted-foreground">
+                    Нет активных задач. Задачи, которые вам назначили, появятся здесь.
+                  </div>
+                ) : (
+                  myTasksActive.map((task) => (
+                    <Card
+                      key={task.id}
+                      className="rounded-xl border border-border bg-card/95 hover:shadow-md transition-all cursor-pointer group relative overflow-hidden"
+                      onClick={() => setSelectedTaskForView(task)}
+                    >
+                      <div className={cn("absolute left-0 top-0 bottom-0 w-1.5 rounded-l-xl", getDeadlineColor(task.dueDate || null))} />
+                      <CardContent className="p-4 pl-5 flex flex-col gap-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className="font-semibold text-sm leading-snug line-clamp-2 flex-1">{task.title}</h3>
+                          <Checkbox
+                            checked={!!task.completedAt}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                handleStatusChange(task.id, task.status, { isDone: true });
+                              } else {
+                                handleStatusChange(task.id, task.status, { isDone: false });
+                              }
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="shrink-0"
+                          />
+                        </div>
+                        {task.dueDate && (
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <CalendarIcon className="w-3.5 h-3.5" />
+                            {format(new Date(task.dueDate), "d MMM", { locale: ru })}
+                          </div>
+                        )}
+                        <Badge className={cn("w-fit text-[10px]", getPriorityColor(task.priority || "medium"))}>
+                          {getPriorityLabel(task.priority || "medium")}
+                        </Badge>
+                      </CardContent>
+                    </Card>
+                  ))
                 )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-[calc(100vw-2rem)] sm:w-80" align="end">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Приоритет</Label>
-                  <Select value={filterPriority} onValueChange={setFilterPriority}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Все</SelectItem>
-                      <SelectItem value="urgent">Срочный</SelectItem>
-                      <SelectItem value="high">Высокий</SelectItem>
-                      <SelectItem value="medium">Средний</SelectItem>
-                      <SelectItem value="low">Низкий</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label>Категория</Label>
-                  <Select value={filterCategory} onValueChange={setFilterCategory}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Все</SelectItem>
-                      <SelectItem value="production">Производство</SelectItem>
-                      <SelectItem value="equipment">Оборудование</SelectItem>
-                      <SelectItem value="stream">Стрим</SelectItem>
-                      <SelectItem value="admin">Администрирование</SelectItem>
-                      <SelectItem value="other">Другое</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label>Проект</Label>
-                  <Select value={filterProject} onValueChange={setFilterProject}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Все</SelectItem>
-                      {projects.map(project => (
-                        <SelectItem key={project.id} value={project.id}>
-                          {project.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label>Исполнитель</Label>
-                  <Select value={filterAssignee} onValueChange={setFilterAssignee}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Все</SelectItem>
-                      <SelectItem value="unassigned">Не назначены</SelectItem>
-                      {users.map(user => (
-                        <SelectItem key={user.id} value={user.id}>
-                          {user.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="flex gap-2 pt-2 border-t">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => {
-                      setFilterPriority("all");
-                      setFilterCategory("all");
-                      setFilterProject("all");
-                      setFilterAssignee("all");
-                    }}
-                  >
-                    Сбросить
-                  </Button>
-                </div>
               </div>
-            </PopoverContent>
-          </Popover>
-          
-          {/* Сортировка */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="gap-1.5 sm:gap-2 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4">
-                <ArrowUpDown className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                <span className="hidden sm:inline">Сортировка</span>
-                <span className="sm:hidden">Сорт</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Сортировать по</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => { setSortBy("priority"); setSortOrder("desc"); }}>
-                {sortBy === "priority" && (sortOrder === "desc" ? <ArrowDown className="w-4 h-4 mr-2" /> : <ArrowUp className="w-4 h-4 mr-2" />)}
-                Приоритету
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => { setSortBy("dueDate"); setSortOrder("asc"); }}>
-                {sortBy === "dueDate" && (sortOrder === "asc" ? <ArrowUp className="w-4 h-4 mr-2" /> : <ArrowDown className="w-4 h-4 mr-2" />)}
-                Дедлайну
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => { setSortBy("createdAt"); setSortOrder("desc"); }}>
-                {sortBy === "createdAt" && (sortOrder === "desc" ? <ArrowDown className="w-4 h-4 mr-2" /> : <ArrowUp className="w-4 h-4 mr-2" />)}
-                Дате создания
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => { setSortBy("title"); setSortOrder("asc"); }}>
-                {sortBy === "title" && (sortOrder === "asc" ? <ArrowUp className="w-4 h-4 mr-2" /> : <ArrowDown className="w-4 h-4 mr-2" />)}
-                Названию
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        {/* Канбан доска с drag and drop */}
-        {currentSection && (
-          <DragDropContext onDragEnd={handleDragEnd}>
-            <Droppable droppableId="columns" direction="horizontal" type="COLUMN">
-              {(provided) => (
-                <div
-                  ref={provided.innerRef}
-                  {...provided.droppableProps}
-                  className="flex gap-2 sm:gap-3 md:gap-4 overflow-x-auto pb-4 px-1 sm:px-2 hide-scrollbar snap-x snap-mandatory"
-                  style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-                >
-                  {currentSection.columns
-                    .sort((a, b) => a.order - b.order)
-                    .map((column, columnIndex) => (
-                      <Draggable key={column.id} draggableId={`column-${column.id}`} index={columnIndex} type="COLUMN">
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-muted-foreground mb-3">История выполненных</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {myTasksCompleted.length === 0 ? (
+                  <p className="col-span-full text-sm text-muted-foreground">Пока нет выполненных задач</p>
+                ) : (
+                  myTasksCompleted.map((task) => (
+                    <Card
+                      key={task.id}
+                      className="rounded-xl border border-border bg-muted/40 hover:bg-muted/60 transition-all cursor-pointer opacity-90 hover:opacity-100"
+                      onClick={() => setSelectedTaskForView(task)}
+                    >
+                      <CardContent className="p-4">
+                        <h3 className="font-medium text-sm line-clamp-2 text-muted-foreground">{task.title}</h3>
+                        {task.completedAt && (
+                          <p className="text-xs text-muted-foreground mt-1.5">
+                            Выполнено {format(new Date(task.completedAt), "d MMM yyyy", { locale: ru })}
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        ) : selectedYougileProjectId && !selectedBoardId ? (
+          <div className="w-full py-8 text-center text-sm text-muted-foreground">
+            Выберите доску выше, чтобы увидеть колонки и задачи
+          </div>
+        ) : currentSection ? (() => {
+          const columns = effectiveColumns.slice().sort((a, b) => a.order - b.order);
+          if (columns.length === 0) {
+            return <div className="w-full py-4 text-center text-sm text-muted-foreground">Нет столбцов для отображения</div>;
+          }
+          const isAdmin = currentUser?.role === "admin";
+          const canReorderColumns = isAdmin && !currentSection?.yougileBoardId;
+          return (
+          <div className="w-full">
+            {currentSection?.yougileBoardId && (
+              <p className="text-xs text-muted-foreground mb-2 px-0.5">Колонки доски: {currentSection.name}</p>
+            )}
+            <DragDropContext
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              autoScrollerOptions={{ disabled: true }}
+            >
+              <Droppable droppableId="board-columns" type="COLUMN" direction="horizontal">
+                {(providedCols) => (
+              <div
+                ref={providedCols.innerRef}
+                {...providedCols.droppableProps}
+                className={cn(
+                  "dnd-board-root flex gap-2 sm:gap-3 md:gap-4 pb-4 px-3 sm:px-2 hide-scrollbar snap-x snap-mandatory",
+                  isBoardDragging ? "overflow-x-hidden" : "overflow-x-auto"
+                )}
+              >
+                {columns.map((column, colIndex) => {
+                  const columnTasks = tasksByColumn[column.id] ?? [];
+                  return (
+                    <Draggable
+                      key={column.id}
+                      draggableId={`col-${column.id}`}
+                      index={colIndex}
+                      isDragDisabled={!canReorderColumns}
+                    >
+                      {(providedCol, snapshotCol) => (
+                    <div
+                      ref={providedCol.innerRef}
+                      {...providedCol.draggableProps}
+                      {...(canReorderColumns ? providedCol.dragHandleProps : {})}
+                      className={cn(
+                        "flex flex-col flex-shrink-0 snap-start rounded-xl transition-all",
+                        "w-[calc(100vw-1.5rem)] min-w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] sm:w-auto sm:min-w-[260px] sm:max-w-[320px]",
+                        snapshotCol.isDragging && "opacity-90 ring-2 ring-primary/40 z-[50]"
+                      )}
+                    >
+                    <Card
+                      className={cn(
+                        "flex flex-col w-full min-w-0 flex-1 rounded-xl border border-border backdrop-blur-sm",
+                        KANBAN_CARD_BG
+                      )}
+                    >
+                      <CardHeader className={cn("pb-2 sm:pb-3 border-b p-3 sm:p-4", BORDER_BORDER_OPACITY, canReorderColumns && "cursor-grab active:cursor-grabbing")}>
+                        <CardTitle className="text-xs sm:text-sm font-semibold flex items-center justify-between gap-2">
+                          <span className="text-foreground truncate flex items-center gap-1.5">
+                            {canReorderColumns && <GripVertical className="w-4 h-4 text-muted-foreground shrink-0" />}
+                            {column.name}
+                          </span>
+                          <span className="text-muted-foreground text-xs tabular-nums">{columnTasks.length}</span>
+                        </CardTitle>
+                        <QuickAddTaskInput
+                          columnId={column.id}
+                          onAdd={(colId, title) => {
+                            if (!currentUser?.id) {
+                              toast({ title: "Ошибка", description: "Войдите в систему для создания задачи", variant: "destructive" });
+                              return;
+                            }
+                            const payload: any = { title, description: "", status: colId, priority: "medium", assigneeId: null, dueDate: null };
+                            if (currentSection?.yougileBoardId) payload.yougileBoardId = currentSection.yougileBoardId;
+                            createMutation.mutate(payload);
+                          }}
+                          className={cn("h-8 sm:h-9 text-xs rounded-lg border-border flex-1 min-w-0", BG_BACKGROUND_OPACITY)}
+                        />
+                      </CardHeader>
+                      <Droppable droppableId={column.id}>
                         {(provided, snapshot) => (
-                          <Card
+                          <CardContent
                             ref={provided.innerRef}
-                            {...provided.draggableProps}
+                            {...provided.droppableProps}
                             className={cn(
-                              "flex flex-col min-w-[260px] sm:min-w-[280px] md:min-w-[300px] max-w-[280px] sm:max-w-[300px] md:max-w-[320px] flex-shrink-0 shadow-xl rounded-xl border-2 transition-all snap-start",
-                              snapshot.isDragging
-                                ? "shadow-2xl scale-105 rotate-2 border-primary/50 z-50 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-900"
-                                : "border-slate-200 dark:border-slate-700 hover:border-primary/30 hover:shadow-2xl bg-white dark:bg-slate-800/95 backdrop-blur-sm"
+                              "flex-1 space-y-2 sm:space-y-3 p-3 min-h-[120px] max-h-[60vh] overflow-y-auto overflow-x-hidden hide-scrollbar task-column-content",
+                              snapshot.isDraggingOver && "bg-primary/5 dark:bg-primary/10 rounded-b-xl"
                             )}
                           >
-                            <CardHeader
-                              {...provided.dragHandleProps}
-                              className="pb-2 sm:pb-3 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-r from-slate-50 to-transparent dark:from-slate-800/50 dark:to-transparent rounded-t-xl space-y-2 sm:space-y-3 p-3 sm:p-4"
-                            >
-                              <CardTitle className="text-xs sm:text-sm font-semibold flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
-                                  <GripVertical className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-muted-foreground cursor-grab active:cursor-grabbing flex-shrink-0" />
-                                  <span className="text-slate-900 dark:text-slate-100 truncate">{column.name}</span>
+                            {columnTasks.length === 0 && !snapshot.isDraggingOver ? (
+                              <div className="text-center text-sm text-muted-foreground py-12 flex flex-col items-center gap-2">
+                                <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                                  <Circle className="w-6 h-6 text-slate-400" />
                                 </div>
-                                <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
-                                  <Badge variant="secondary" className="text-[10px] sm:text-xs font-medium bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-1.5 sm:px-2">
-                                    {tasksByColumn[column.id]?.length || 0}
-                                  </Badge>
-                                  {!defaultColumns.some(col => col.id === column.id) && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleDeleteColumn(column.id);
-                                      }}
-                                      className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
-                                      title="Удалить столбец"
-                                    >
-                                      <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                    </button>
-                                  )}
-                                </div>
-                              </CardTitle>
-
-                              {/* Быстрое добавление задачи под заголовком */}
-                              <div className="flex items-center gap-1.5 sm:gap-2 pt-1">
-                                <Input
-                                  placeholder="Добавить задачу"
-                                  value={quickTaskInputs[column.id] || ""}
-                                  onChange={(e) => setQuickTaskInputs({ ...quickTaskInputs, [column.id]: e.target.value })}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      handleQuickCreateTask(column.id);
-                                    }
-                                  }}
-                                  className="h-8 sm:h-9 text-xs sm:text-sm rounded-lg border-slate-300 dark:border-slate-600 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-white dark:bg-slate-800 flex-1 min-w-0"
-                                />
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-8 w-8 sm:h-9 sm:w-9 rounded-full hover:bg-primary/10 hover:text-primary transition-colors flex-shrink-0"
-                                  onClick={() => handleQuickCreateTask(column.id)}
-                                  disabled={!quickTaskInputs[column.id]?.trim()}
-                                >
-                                  <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                </Button>
+                                <span>Нет задач</span>
                               </div>
-                            </CardHeader>
-                    <Droppable droppableId={column.id}>
-                      {(provided, snapshot) => (
-                        <CardContent
-                          ref={provided.innerRef}
-                          {...provided.droppableProps}
-                          className={cn(
-                            "flex-1 overflow-y-auto space-y-2 sm:space-y-3 min-h-[200px] sm:min-h-[300px] md:min-h-[400px] max-h-[400px] sm:max-h-[500px] md:max-h-[700px] hide-scrollbar p-2 sm:p-3 md:p-4 bg-gradient-to-b from-transparent to-slate-50/50 dark:to-slate-900/50",
-                            snapshot.isDraggingOver && "bg-gradient-to-br from-primary/10 via-primary/5 to-transparent dark:from-primary/20 dark:via-primary/10 border-2 border-dashed border-primary/50 rounded-xl shadow-inner"
-                          )}
-                        >
-                            {tasksByColumn[column.id]?.length === 0 ? (
-                            <div className="text-center text-sm text-muted-foreground py-12 flex flex-col items-center gap-2">
-                              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                                <Circle className="w-6 h-6 text-slate-400" />
-                              </div>
-                              <span>Нет задач</span>
-                            </div>
-                          ) : (
-                            tasksByColumn[column.id]?.map((task, index) => {
-                              return (
+                            ) : (
+                              columnTasks.map((task, index) => (
                                 <Draggable key={task.id} draggableId={task.id} index={index}>
                                   {(provided, snapshot) => (
-                                    <TaskCard
-                                      task={task}
-                                      index={index}
-                                      provided={provided}
-                                      snapshot={snapshot}
-                                      users={users}
-                                      taskComments={taskComments}
-                                      updateMutation={updateMutation}
-                                      getUserAvatar={getUserAvatar}
-                                      getUserInitials={getUserInitials}
-                                      handleStatusChange={handleStatusChange}
-                                      setSelectedTaskForView={setSelectedTaskForView}
-                                      getTaskTag={getTaskTag}
-                                      getProjectColor={getProjectColor}
-                                      getDeadlineColor={getDeadlineColor}
-                                    />
+                                    <div
+                                      ref={provided.innerRef}
+                                      {...provided.draggableProps}
+                                      {...provided.dragHandleProps}
+                                      className={cn(
+                                        "rounded-xl min-h-[88px] flex-shrink-0 cursor-grab active:cursor-grabbing",
+                                        !snapshot.isDragging && "transition-shadow duration-200",
+                                        snapshot.isDragging && "opacity-95 shadow-2xl ring-2 ring-primary z-[9999] bg-card"
+                                      )}
+                                    >
+                                      <TaskCard
+                                        task={task}
+                                        index={index}
+                                        provided={{ ...provided, dragHandleProps: null }}
+                                        snapshot={snapshot}
+                                        users={users}
+                                        taskComments={taskComments}
+                                        updateMutation={updateMutation}
+                                        getUserAvatar={getUserAvatar}
+                                        getUserInitials={getUserInitials}
+                                        handleStatusChange={handleStatusChange}
+                                        setSelectedTaskForView={setSelectedTaskForView}
+                                        getTaskTag={getTaskTag}
+                                        getProjectColor={getProjectColor}
+                                        getDeadlineColor={getDeadlineColor}
+                                        getCardAccentColor={getCardAccentColor}
+                                        effectiveColumns={effectiveColumns}
+                                        effectiveStickerPresets={effectiveStickerPresets}
+                                      />
+                                    </div>
                                   )}
                                 </Draggable>
-                              );
-                            })
-                          )}
-                          {provided.placeholder}
-                          
-                        </CardContent>
-                      )}
-                    </Droppable>
-                          </Card>
+                              ))
+                            )}
+                            {provided.placeholder}
+                          </CardContent>
                         )}
-                      </Draggable>
-                    ))}
-                  {provided.placeholder}
-                </div>
-              )}
-            </Droppable>
-          </DragDropContext>
-        )}
+                      </Droppable>
+                    </Card>
+                    </div>
+                      )}
+                    </Draggable>
+                  );
+                })}
+                {providedCols.placeholder}
+              </div>
+                )}
+              </Droppable>
+            </DragDropContext>
+          </div>
+          );
+        })() : null}
 
         {/* Боковая панель для просмотра задачи */}
         <Sheet open={!!selectedTaskForView} onOpenChange={(open) => !open && setSelectedTaskForView(null)}>
-          <SheetContent side="right" className="w-full sm:max-w-lg md:max-w-2xl lg:max-w-3xl overflow-y-auto hide-scrollbar p-3 sm:p-6">
+          <SheetContent
+            side="right"
+            className="w-full sm:max-w-lg md:max-w-2xl lg:max-w-3xl overflow-y-auto overflow-x-hidden hide-scrollbar touch-scroll-smooth p-3 sm:p-6 max-h-[100dvh] md:max-h-none pb-24 md:pb-6 safe-area-bottom"
+            onOpenAutoFocus={(e) => e.preventDefault()}
+          >
             {selectedTaskForView && (
-              <Tabs defaultValue="info" className="w-full">
-                <SheetHeader className="mb-4 sm:mb-6">
+              <Tabs value={taskDetailTab} onValueChange={(v) => setTaskDetailTab(v as "info" | "comments" | "history")} className="w-full flex flex-col">
+                <SheetHeader className="mb-4 sm:mb-6 shrink-0">
                   <SheetTitle className="text-lg sm:text-xl md:text-2xl font-bold break-words">{selectedTaskForView.title}</SheetTitle>
                   <SheetDescription className="text-xs sm:text-sm break-words">
                     {selectedTaskForView.description || "Нет описания"}
                   </SheetDescription>
                 </SheetHeader>
                 
-                <TabsList className="grid w-full grid-cols-3 mb-4 sm:mb-6 h-9 sm:h-10">
+                <TabsList className="grid w-full grid-cols-3 mb-4 sm:mb-6 h-9 sm:h-10 shrink-0">
                   <TabsTrigger value="info" className="text-xs sm:text-sm px-2 sm:px-4">Информация</TabsTrigger>
                   <TabsTrigger value="comments" className="text-xs sm:text-sm px-2 sm:px-4">
                     <span className="hidden sm:inline">Комментарии</span>
@@ -1907,21 +2426,113 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                   <TabsTrigger value="history" className="text-xs sm:text-sm px-2 sm:px-4">История</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="info" className="space-y-4 sm:space-y-6">
+                <div className="min-h-[360px] flex-1 overflow-y-auto -mx-1 px-1">
+                <TabsContent value="info" className="space-y-4 sm:space-y-6 mt-0 min-h-[320px]">
+                  {/* Стикеры: дедлайн и приоритет — z-[110] чтобы попап был поверх Sheet (z-[100]) */}
+                  <div className="space-y-2">
+                    <Label className="text-xs sm:text-sm font-semibold">Стикеры</Label>
+                    <div className="flex flex-wrap gap-2">
+                      <Popover open={deadlinePopoverOpen} onOpenChange={setDeadlinePopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button type="button" variant="outline" size="sm" className="h-9 gap-1.5 rounded-lg text-xs sm:text-sm">
+                            <CalendarIcon className="w-3.5 h-3.5" />
+                            {selectedTaskForView.dueDate
+                              ? format(new Date(selectedTaskForView.dueDate), "d MMM yyyy", { locale: ru })
+                              : "Дедлайн"}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0 border-0 shadow-xl rounded-xl overflow-hidden z-[110]" align="start">
+                          <div className="p-3 bg-card">
+                            <CalendarPicker
+                              mode="single"
+                              locale={ru}
+                              formatters={{
+                                formatWeekdayName: (date) => format(date, "EEE", { locale: ru }),
+                              }}
+                              selected={selectedTaskForView.dueDate ? new Date(selectedTaskForView.dueDate) : undefined}
+                              onSelect={(date) => {
+                                if (!date) return;
+                                const d = new Date(date);
+                                d.setHours(18, 0, 0, 0);
+                                updateMutation.mutate({
+                                  id: selectedTaskForView.id,
+                                  data: { dueDate: d.toISOString() } as unknown as Partial<Task>,
+                                });
+                                setDeadlinePopoverOpen(false);
+                              }}
+                              className="rounded-lg"
+                              classNames={{
+                                months: "flex flex-col sm:flex-row gap-4",
+                                month: "space-y-3",
+                                caption: "flex justify-center pt-1 relative items-center",
+                                caption_label: "text-sm font-semibold",
+                                nav: "space-x-1 flex items-center",
+                                nav_button: "h-8 w-8 bg-transparent p-0 opacity-70 hover:opacity-100 rounded-lg border border-input",
+                                table: "w-full border-collapse space-y-1",
+                                head_row: "flex",
+                                head_cell: "text-muted-foreground rounded-md w-9 font-medium text-[0.65rem] uppercase tracking-wider",
+                                row: "flex w-full mt-1",
+                                cell: "h-9 w-9 text-center text-sm p-0 relative rounded-md",
+                                day: "h-9 w-9 p-0 font-normal aria-selected:opacity-100 rounded-md hover:bg-accent",
+                                day_selected: "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+                                day_today: "bg-accent text-accent-foreground font-semibold",
+                                day_outside: "text-muted-foreground opacity-50",
+                              }}
+                            />
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                      <Popover open={priorityPopoverOpen} onOpenChange={setPriorityPopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button type="button" variant="outline" size="sm" className="h-9 gap-1.5 rounded-lg text-xs sm:text-sm">
+                            <BarChart3 className="w-3.5 h-3.5" />
+                            {getPriorityLabel(selectedTaskForView.priority || "medium")}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-48 p-2 rounded-xl z-[110]" align="start">
+                          <div className="grid gap-0.5">
+                            {priorities.map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => {
+                                  updateMutation.mutate({
+                                    id: selectedTaskForView.id,
+                                    data: { priority: p.id },
+                                  });
+                                  setPriorityPopoverOpen(false);
+                                }}
+                                className={cn(
+                                  "flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
+                                  selectedTaskForView.priority === p.id
+                                    ? "bg-primary text-primary-foreground"
+                                    : "hover:bg-accent"
+                                )}
+                              >
+                                <span className={cn("w-2 h-2 rounded-full shrink-0", p.color)} />
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                  </div>
+
                   {/* Основная информация */}
                   <div className="space-y-3 sm:space-y-4">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                       <div>
                         <Label className="text-xs sm:text-sm font-semibold mb-1.5 sm:mb-2 block">Статус</Label>
                         <Badge variant="secondary" className="rounded-full text-xs sm:text-sm">
-                          {currentSection?.columns.find(c => c.id === selectedTaskForView.status)?.name || selectedTaskForView.status}
+                          {`${getStatusLabel(String(selectedTaskForView.status ?? ""), effectiveColumns)}`}
                         </Badge>
                       </div>
                       
                       <div>
                         <Label className="text-xs sm:text-sm font-semibold mb-1.5 sm:mb-2 block">Приоритет</Label>
                         <Badge className={cn("rounded-full text-xs sm:text-sm", getPriorityColor(selectedTaskForView.priority || "medium"))}>
-                          {getPriorityLabel(selectedTaskForView.priority || "medium")}
+                          {`${getPriorityLabel(selectedTaskForView.priority || "medium")}`}
                         </Badge>
                       </div>
                     </div>
@@ -1945,7 +2556,7 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                       <div>
                         <Label className="text-sm font-semibold mb-2 block">Дедлайн</Label>
                         <div className="flex items-center gap-2">
-                          <Calendar className="w-4 h-4 text-muted-foreground" />
+                          <CalendarIcon className="w-4 h-4 text-muted-foreground" />
                           <span>{format(new Date(selectedTaskForView.dueDate), "dd.MM.yyyy HH:mm", { locale: ru })}</span>
                         </div>
                       </div>
@@ -1977,10 +2588,203 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                         </div>
                       </div>
                     )}
+
+                    {/* Стикеры — заготовленный выбор, как в YouGile */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold flex items-center gap-2">
+                        <Tag className="w-4 h-4" />
+                        Стикеры
+                      </Label>
+                      <div className="flex flex-wrap gap-2">
+                        {(Array.isArray((selectedTaskForView as any).tags) ? (selectedTaskForView as any).tags : []).map((tag: any) => {
+                          const name = typeof tag === "object" && tag?.name != null ? tag.name : String(tag?.id ?? tag);
+                          const value = typeof tag === "object" && tag?.value != null ? tag.value : undefined;
+                          const displayValue = value && users?.length ? (users.find((u) => u.id === value)?.name ?? value) : value;
+                          const label = displayValue ? `${name}: ${displayValue}` : name;
+                          const preset = effectiveStickerPresets.find(p => p.id === tag?.id || p.name === name);
+                          const color = tag?.color ?? preset?.color;
+                          const icon = preset?.icon ?? tag?.icon;
+                          return (
+                            <span
+                              key={tag?.id ?? name}
+                              className={cn("inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium text-white", getStickerClass(color))}
+                            >
+                              {icon === "archive" && <Filter className="w-3 h-3 shrink-0" />}
+                              {icon === "clock" && <Clock className="w-3 h-3 shrink-0" />}
+                              {label}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const list = [...((selectedTaskForView as any).tags || [])].filter((t: any) => (t?.id ?? t?.name) !== (tag?.id ?? name));
+                                  updateMutation.mutate({ id: selectedTaskForView.id, data: { tags: list } });
+                                }}
+                                className="ml-0.5 rounded p-0.5 hover:bg-white/20"
+                                aria-label="Удалить стикер"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          );
+                        })}
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button variant="outline" size="sm" className="h-8 gap-1 rounded-lg text-xs border-dashed">
+                              <Plus className="w-3.5 h-3.5" />
+                              Добавить стикер
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-56 p-2 rounded-xl z-[110]" align="start">
+                            <div className="grid gap-0.5">
+                              {effectiveStickerPresets.filter(p => {
+                                const cur = (selectedTaskForView as any).tags || [];
+                                return !cur.some((t: any) => t?.id === p.id || t?.name === p.name);
+                              }).map((p) => (
+                                <button
+                                  key={p.id}
+                                  type="button"
+                                  onClick={() => {
+                                    const list = [...((selectedTaskForView as any).tags || [])];
+                                    list.push({ id: p.id, name: p.name, color: p.color, icon: p.icon });
+                                    updateMutation.mutate({ id: selectedTaskForView.id, data: { tags: list } });
+                                  }}
+                                  className={cn(
+                                    "flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-white transition-opacity hover:opacity-90",
+                                    getStickerClass(p.color)
+                                  )}
+                                >
+                                  {p.icon === "archive" && <Filter className="w-3.5 h-3.5 shrink-0" />}
+                                  {p.icon === "clock" && <Clock className="w-3.5 h-3.5 shrink-0" />}
+                                  {p.name}
+                                </button>
+                              ))}
+                              {effectiveStickerPresets.every(p => {
+                                const cur = (selectedTaskForView as any).tags || [];
+                                return cur.some((t: any) => t?.id === p.id || t?.name === p.name);
+                              }) && effectiveStickerPresets.length > 0 && (
+                                <p className="text-xs text-muted-foreground px-2 py-1">Все стикеры добавлены</p>
+                              )}
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+
+                      {/* Стикеры доски: выбор из списка или ввод (как в YouGile) */}
+                      {boardStickersRaw.length > 0 && (
+                        <div className="space-y-2 pt-2 border-t">
+                          <Label className="text-xs text-muted-foreground">Добавить стикер доски</Label>
+                          {(boardStickersRaw as BoardStickerItem[]).filter((sticker) => !(selectedTaskForView as any).tags?.some((t: any) => t?.id === sticker.id)).map((sticker) => (
+                            <div key={sticker.id} className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs font-medium w-28 shrink-0">{sticker.title}</span>
+                              {sticker.type === "user" ? (
+                                <Select
+                                  value={editingStickerValues[sticker.id] || ""}
+                                  onValueChange={(v) => setEditingStickerValues((prev) => ({ ...prev, [sticker.id]: v }))}
+                                >
+                                  <SelectTrigger className="h-8 flex-1 min-w-[120px] text-xs">
+                                    <SelectValue placeholder="Исполнитель" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="">Не выбрано</SelectItem>
+                                    {users.map((u) => (
+                                      <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : sticker.type === "list" && sticker.options?.length ? (
+                                <Select
+                                  value={editingStickerValues[sticker.id] || ""}
+                                  onValueChange={(v) => setEditingStickerValues((prev) => ({ ...prev, [sticker.id]: v }))}
+                                >
+                                  <SelectTrigger className="h-8 flex-1 min-w-[120px] text-xs">
+                                    <SelectValue placeholder="Выберите" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="">Не выбрано</SelectItem>
+                                    {sticker.options.map((opt) => (
+                                      <SelectItem key={opt.id} value={opt.id}>{opt.title ?? opt.id}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <Input
+                                  placeholder="Введите значение"
+                                  className="h-8 flex-1 min-w-[120px] text-xs"
+                                  value={editingStickerValues[sticker.id] ?? ""}
+                                  onChange={(e) => setEditingStickerValues((prev) => ({ ...prev, [sticker.id]: e.target.value }))}
+                                />
+                              )}
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                className="h-8 text-xs"
+                                onClick={() => {
+                                  const val = editingStickerValues[sticker.id]?.trim();
+                                  if (!val) return;
+                                  const cur = (selectedTaskForView as any).tags || [];
+                                  const next = [...cur, { id: sticker.id, name: sticker.title, value: val }];
+                                  updateMutation.mutate({ id: selectedTaskForView.id, data: { tags: next } });
+                                  setEditingStickerValues((prev) => ({ ...prev, [sticker.id]: "" }));
+                                }}
+                              >
+                                Добавить
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Подзадачи (чеклист) */}
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold flex items-center gap-2">
+                        <ListTodo className="w-4 h-4" />
+                        Подзадачи {Array.isArray((selectedTaskForView as any).subtasks) ? `(${(selectedTaskForView as any).subtasks.filter((s: any) => s.completed).length}/${(selectedTaskForView as any).subtasks.length})` : ""}
+                      </Label>
+                      {Array.isArray((selectedTaskForView as any).subtasks) && (selectedTaskForView as any).subtasks.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {(selectedTaskForView as any).subtasks.map((st: { id: string; title: string; completed?: boolean }) => (
+                            <div key={st.id} className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                              <Checkbox
+                                checked={!!st.completed}
+                                onCheckedChange={(checked) => {
+                                  const list = [...((selectedTaskForView as any).subtasks || [])];
+                                  const idx = list.findIndex((s: any) => s.id === st.id);
+                                  if (idx >= 0) {
+                                    list[idx] = { ...list[idx], completed: !!checked };
+                                    updateMutation.mutate({ id: selectedTaskForView.id, data: { subtasks: list } });
+                                  }
+                                }}
+                                className="h-4 w-4"
+                              />
+                              <span className={cn("flex-1 text-sm", st.completed && "line-through text-muted-foreground")}>{st.title}</span>
+                            </div>
+                          ))}
+                          <QuickAddSubtaskInput
+                            taskId={selectedTaskForView.id}
+                            onAdd={(title) => {
+                              const list = [...((selectedTaskForView as any).subtasks || [])];
+                              list.push({ id: `st-${Date.now()}`, title, completed: false });
+                              updateMutation.mutate({ id: selectedTaskForView.id, data: { subtasks: list } });
+                            }}
+                            className="h-8 text-sm rounded-lg border border-dashed border-slate-300 dark:border-slate-600"
+                          />
+                        </div>
+                      ) : (
+                        <QuickAddSubtaskInput
+                          taskId={selectedTaskForView.id}
+                          onAdd={(title) => {
+                            const list = [{ id: `st-${Date.now()}`, title, completed: false }];
+                            updateMutation.mutate({ id: selectedTaskForView.id, data: { subtasks: list } });
+                          }}
+                          className="h-8 text-sm rounded-lg border border-dashed border-slate-300 dark:border-slate-600"
+                        />
+                      )}
+                    </div>
                   </div>
 
                   {/* Ссылки */}
-                  {selectedTaskForView.links && Array.isArray(selectedTaskForView.links) && selectedTaskForView.links.length > 0 && (
+                  {Array.isArray(selectedTaskForView.links) && selectedTaskForView.links.length > 0 ? (
                     <div className="space-y-2">
                       <Label className="text-sm font-semibold flex items-center gap-2">
                         <Link2 className="w-4 h-4" />
@@ -2002,7 +2806,7 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                         ))}
                       </div>
                     </div>
-                  )}
+                  ) : null}
 
                   {/* Файлы */}
                   <div className="space-y-2">
@@ -2030,15 +2834,15 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                   </div>
                 </TabsContent>
 
-                <TabsContent value="comments" className="space-y-3 sm:space-y-4">
-                  <ScrollArea className="h-[calc(100vh-300px)] sm:h-[500px] md:h-[600px] pr-2 sm:pr-4">
+                <TabsContent value="comments" className="space-y-3 sm:space-y-4 mt-0 min-h-[320px]">
+                  <ScrollArea className="h-[320px] sm:h-[400px] pr-2 sm:pr-4">
                     <div className="space-y-3 sm:space-y-4">
-                      {isLoadingComments[selectedTaskForView.id] ? (
+                      {isLoadingComments[selectedTaskForView?.id] ? (
                         <div className="flex items-center justify-center py-8">
                           <div className="animate-spin rounded-full h-6 w-6 sm:h-8 sm:w-8 border-b-2 border-primary"></div>
                         </div>
-                      ) : taskComments[selectedTaskForView.id]?.length > 0 ? (
-                        taskComments[selectedTaskForView.id].map((comment: any) => (
+                      ) : taskComments[selectedTaskForView?.id]?.length > 0 ? (
+                        taskComments[selectedTaskForView?.id].map((comment: any) => (
                           <div key={comment.id} className="p-3 sm:p-4 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                             <div className="flex items-start gap-2 sm:gap-3">
                               <Avatar className="w-7 h-7 sm:w-8 sm:h-8 flex-shrink-0">
@@ -2071,14 +2875,14 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                     <div className="space-y-2">
                       <Textarea
                         placeholder="Добавить комментарий..."
-                        value={newComment[selectedTaskForView.id] || ""}
-                        onChange={(e) => setNewComment(prev => ({ ...prev, [selectedTaskForView.id]: e.target.value }))}
+                        value={newComment[selectedTaskForView?.id] || ""}
+                        onChange={(e) => setNewComment(prev => ({ ...prev, [selectedTaskForView?.id ?? ""]: e.target.value }))}
                         rows={3}
                         className="resize-none text-xs sm:text-sm"
                       />
                       <Button
-                        onClick={() => handleAddComment(selectedTaskForView.id)}
-                        disabled={!newComment[selectedTaskForView.id]?.trim()}
+                        onClick={() => selectedTaskForView?.id && handleAddComment(selectedTaskForView.id)}
+                        disabled={!newComment[selectedTaskForView?.id]?.trim()}
                         className="w-full h-9 sm:h-10 text-xs sm:text-sm"
                       >
                         <MessageSquare className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1.5 sm:mr-2" />
@@ -2088,11 +2892,15 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                   </div>
                 </TabsContent>
 
-                <TabsContent value="history" className="space-y-3 sm:space-y-4">
-                  <ScrollArea className="h-[calc(100vh-300px)] sm:h-[500px] md:h-[600px] pr-2 sm:pr-4">
-                    {taskHistory[selectedTaskForView.id]?.length > 0 ? (
+                <TabsContent value="history" className="space-y-3 sm:space-y-4 mt-0 min-h-[320px]">
+                  <ScrollArea className="h-[320px] sm:h-[400px] pr-2 sm:pr-4">
+                    {isLoadingHistory[selectedTaskForView?.id] ? (
+                      <div className="flex items-center justify-center py-8">
+                        <div className="animate-spin rounded-full h-6 w-6 sm:h-8 sm:w-8 border-b-2 border-primary"></div>
+                      </div>
+                    ) : taskHistory[selectedTaskForView?.id]?.length > 0 ? (
                       <div className="space-y-2 sm:space-y-3">
-                        {taskHistory[selectedTaskForView.id].map((item: any) => (
+                        {taskHistory[selectedTaskForView?.id].map((item: any) => (
                           <div key={item.id} className="p-3 sm:p-4 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                             <div className="flex items-start gap-2 sm:gap-3">
                               <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
@@ -2127,11 +2935,12 @@ const TaskCard = memo(function TaskCard({ task, provided, snapshot, users, taskC
                     )}
                   </ScrollArea>
                 </TabsContent>
+                </div>
               </Tabs>
             )}
           </SheetContent>
         </Sheet>
       </div>
-    </div>
+    </TasksLayout>
   );
 }

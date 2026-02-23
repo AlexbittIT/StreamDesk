@@ -1,0 +1,42 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Фон с градиентом -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#8b5cf6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ec4899;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="iconGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#60a5fa;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#a78bfa;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Скругленный фон -->
+  <rect width="512" height="512" rx="100" fill="url(#bgGradient)"/>
+  
+  <!-- Монитор/Экран -->
+  <rect x="100" y="120" width="312" height="200" rx="12" fill="rgba(255,255,255,0.15)" stroke="rgba(255,255,255,0.3)" stroke-width="4"/>
+  
+  <!-- Экран внутри -->
+  <rect x="120" y="140" width="272" height="160" rx="8" fill="rgba(0,0,0,0.3)"/>
+  
+  <!-- Сигнальные линии (как на экране) -->
+  <line x1="140" y1="180" x2="372" y2="180" stroke="url(#iconGradient)" stroke-width="3" stroke-linecap="round"/>
+  <line x1="140" y1="220" x2="320" y2="220" stroke="url(#iconGradient)" stroke-width="3" stroke-linecap="round"/>
+  <line x1="140" y1="260" x2="350" y2="260" stroke="url(#iconGradient)" stroke-width="3" stroke-linecap="round"/>
+  
+  <!-- Подставка монитора -->
+  <rect x="236" y="320" width="40" height="60" rx="4" fill="rgba(255,255,255,0.2)"/>
+  <rect x="216" y="380" width="80" height="20" rx="10" fill="rgba(255,255,255,0.25)"/>
+  
+  <!-- Кабели/Соединения (слева и справа) -->
+  <circle cx="140" cy="200" r="8" fill="#60a5fa"/>
+  <circle cx="372" cy="200" r="8" fill="#ec4899"/>
+  <line x1="100" y1="200" x2="132" y2="200" stroke="#60a5fa" stroke-width="4" stroke-linecap="round"/>
+  <line x1="380" y1="200" x2="412" y2="200" stroke="#ec4899" stroke-width="4" stroke-linecap="round"/>
+  
+  <!-- Текст StreamDesk (опционально, можно убрать если слишком мелко) -->
+  <text x="256" y="450" font-family="Arial, sans-serif" font-size="32" font-weight="bold" fill="white" text-anchor="middle" opacity="0.9">StreamDesk</text>
+</svg>
+

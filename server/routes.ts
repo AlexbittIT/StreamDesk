@@ -1,7 +1,9 @@
 import express, { type Express } from "express";
-import { createServer, type Server } from "http";
+import { createServer as createHttpServer, type Server } from "http";
+import { createServer as createHttpsServer } from "https";
+import fs from "fs";
 import { WebSocketServer, WebSocket } from "ws";
-import { storage } from "./database";
+import { storage, isStubStorage } from "./database";
 import { 
   insertUserSchema,
   insertEventSchema,
@@ -24,7 +26,26 @@ import path from "path";
 import fs from "fs/promises";
 import net from "net";
 import crypto from "crypto";
+import session from "express-session";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
 import { telegramBot } from "./services/telegram-bot";
+import { hashPassword, verifyPassword, isPasswordHashed } from "./auth";
+import { getTerminalLogs } from "./terminal-log";
+import { getTerminalAllowedRoles, setTerminalAllowedRoles, canViewTerminal } from "./terminal-access";
+
+/** Парсит заголовок x-user: поддерживает JSON и Base64 (для кириллицы в имени). */
+function parseUserHeader(header: string | undefined): Record<string, unknown> {
+  if (!header || typeof header !== "string") return {};
+  try {
+    const raw = header.trim();
+    if (raw.startsWith("{")) return JSON.parse(raw) as Record<string, unknown>;
+    const decoded = Buffer.from(raw, "base64").toString("utf-8");
+    return (decoded ? JSON.parse(decoded) : {}) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
 import { telegramGateway } from "./services/telegram-gateway";
 
 // Configure multer for equipment photo uploads (images only)
@@ -119,6 +140,61 @@ const chatUpload = multer({
   // Без ограничений по размеру и типу файлов
 });
 
+// Multer для фото участников продакшн (продакшн / шоу)
+const productionPhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: async (req, file, cb) => {
+      const uploadDir = path.join(process.cwd(), "uploads", "production");
+      try {
+        await fs.mkdir(uploadDir, { recursive: true });
+      } catch (error) {
+        console.error("Error creating production upload directory:", error);
+      }
+      cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      cb(null, "photo-" + uniqueSuffix + path.extname(file.originalname || ".jpg"));
+    },
+  }),
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(null, false);
+    }
+  },
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
+// Multer для аватара пользователя
+const avatarUpload = multer({
+  storage: multer.diskStorage({
+    destination: async (req, file, cb) => {
+      const uploadDir = path.join(process.cwd(), "uploads", "avatars");
+      try {
+        await fs.mkdir(uploadDir, { recursive: true });
+      } catch (error) {
+        console.error("Error creating avatars directory:", error);
+      }
+      cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+      const userId = (req as any).params?.id || "user";
+      const ext = (path.extname(file.originalname || "") || ".jpg").toLowerCase();
+      cb(null, userId + "-" + Date.now() + ext);
+    },
+  }),
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(null, false);
+    }
+  },
+  limits: { fileSize: 2 * 1024 * 1024 },
+});
+
 // Helper function to check IP connectivity
 async function checkIP(ip: string, port: number = 80): Promise<boolean> {
   return new Promise((resolve) => {
@@ -198,8 +274,102 @@ async function withDbTimeout<T>(
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // За прокси (nginx, cloud) — доверяем X-Forwarded-Proto для определения HTTPS
+  app.set("trust proxy", 1);
+
+  // Заголовки безопасности (XSS, clickjacking, MIME sniffing и т.д.)
+  app.use(helmet({ contentSecurityPolicy: false })); // CSP можно включить после настройки под фронт
+
+  // HSTS: в production при HTTPS браузер всегда ходит по HTTPS (защита от перехвата логина/пароля)
+  app.use((req, res, next) => {
+    const isSecure = req.secure || req.get("x-forwarded-proto") === "https";
+    if (isSecure && process.env.NODE_ENV === "production") {
+      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+    }
+    next();
+  });
+
+  // В production логин/пароль принимаем только по HTTPS (иначе их видно в Wireshark и т.п.)
+  app.use("/api/auth/login", (req, res, next) => {
+    if (process.env.NODE_ENV !== "production") return next();
+    const isSecure = req.secure || req.get("x-forwarded-proto") === "https";
+    if (!isSecure) {
+      return res.status(403).json({
+        message: "Вход по паролю разрешён только по HTTPS. Используйте https:// в адресе сайта.",
+      });
+    }
+    next();
+  });
+
+  // Лимит попыток входа (защита от перебора паролей)
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    message: { message: "Слишком много попыток входа. Попробуйте через 15 минут." },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  // Сессии: только сервер знает, кто вошёл; клиент не может подделать пользователя
+  const sessionSecret = process.env.SESSION_SECRET || (process.env.NODE_ENV === "production" ? "" : "dev-secret-change-me");
+  if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
+    console.warn("[Security] В production задайте SESSION_SECRET в .env");
+  }
+  app.use(
+    session({
+      secret: sessionSecret || "fallback-not-secure",
+      resave: false,
+      saveUninitialized: false,
+      name: "streamdesk.sid",
+      cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      },
+    })
+  );
+
+  // Для /api заполняем req.user из сессии (не доверяем заголовок x-user для авторизации)
+  app.use("/api", async (req, res, next) => {
+    const sid = req.session?.userId;
+    if (sid === "admin-fallback") {
+      req.user = {
+        id: "admin-fallback",
+        username: process.env.ADMIN_USERNAME || "admin",
+        name: "Администратор",
+        email: null,
+        phone: null,
+        position: null,
+        department: null,
+        role: "admin",
+        permissions: ["admin:panel", "users:manage", "roles:manage", "tasks:view", "tasks:create", "tasks:edit", "tasks:delete", "tasks:assign", "equipment:view", "equipment:create", "equipment:edit", "equipment:delete", "equipment:reserve", "events:view", "events:create", "events:edit", "events:delete", "streams:view", "streams:manage", "systems:view", "systems:manage", "settings:manage"],
+        telegramId: null,
+        avatar: null,
+        active: true,
+        lastLogin: null,
+        createdAt: new Date(),
+      } as any;
+    } else if (sid) {
+      try {
+        const user = await storage.getUser(sid);
+        req.user = user ?? null;
+      } catch {
+        req.user = null;
+      }
+    } else {
+      req.user = null;
+    }
+    next();
+  });
+
+  // Режим заглушки: фронт может показать баннер «данные не сохраняются»
+  app.get("/api/health", (_req, res) => {
+    res.json({ ok: true, stubMode: isStubStorage });
+  });
+
   // Authentication routes
-  app.post("/api/auth/login", async (req, res) => {
+  app.post("/api/auth/login", loginLimiter, async (req, res) => {
     try {
       const { username, password } = req.body;
       
@@ -207,7 +377,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Укажите логин и пароль" });
       }
       
-      console.log(`[Auth] Login attempt for user: ${username}`);
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`[Auth] Login attempt for user: ${username}`);
+      }
 
       // Fallback админ для теста (можно отключить ALLOW_FALLBACK_ADMIN=false)
       const allowFallbackAdmin = process.env.ALLOW_FALLBACK_ADMIN !== "false";
@@ -219,6 +391,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         password === fallbackPassword
       ) {
         console.log("[Auth] Using fallback admin (no DB check)");
+        req.session.userId = "admin-fallback";
         return res.json({
           user: {
             id: "admin-fallback",
@@ -291,7 +464,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.log("[Auth] Admin user not found, creating admin user");
               const newAdmin = await storage.createUser({
                 username: "admin",
-                password: "admin123",
+                password: hashPassword("admin123"),
                 name: "Администратор",
                 email: "admin@streamstudio.local",
                 role: "admin",
@@ -353,13 +526,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      // Проверяем пароль только если пользователь не был только что создан
-      if (!adminJustCreated && user && user.password !== password) {
-        console.log(`[Auth] Invalid password for user: ${username}`);
-        return res.status(401).json({ message: "Неверный логин или пароль" });
+      // Проверяем пароль (хеш или legacy plain)
+      if (!adminJustCreated && user) {
+        const check = verifyPassword(password, user.password);
+        if (!check.ok) {
+          console.log(`[Auth] Invalid password for user: ${username}`);
+          return res.status(401).json({ message: "Неверный логин или пароль" });
+        }
+        if (check.updateHash) {
+          try {
+            await withDbTimeout(() => storage.updateUser(user.id, { password: check.updateHash }), 5000, null);
+          } catch (_) {}
+        }
       }
-      
-      // Если user все еще null - ошибка
+
       if (!user) {
         console.log(`[Auth] User is null after all checks: ${username}`);
         return res.status(401).json({ message: "Неверный логин или пароль" });
@@ -370,7 +550,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Ваш аккаунт ещё не подтверждён администратором" });
       }
 
-      // Обновляем время последнего входа (не блокируем, если не получится)
       try {
         await withDbTimeout(
           () => storage.updateUser(user.id, { lastLogin: new Date() }),
@@ -379,27 +558,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       } catch (updateError) {
         console.warn("[Auth] Failed to update last login:", updateError);
-        // Не прерываем логин, если обновление не получилось
       }
-      
+
+      req.session.userId = user.id;
       console.log(`[Auth] Successful login for user: ${username} (${user.role})`);
-      
-      // In a real app, you'd use proper session management
-      res.json({ 
-        user: { 
-          id: user.id, 
-          username: user.username, 
-          name: user.name, 
-          role: user.role, 
-          permissions: user.permissions 
-        } 
+
+      res.json({
+        user: {
+          id: user.id,
+          username: user.username,
+          name: user.name,
+          role: user.role,
+          permissions: user.permissions,
+        },
       });
     } catch (error: any) {
       console.error("[Auth] Login error:", error);
-      res.status(500).json({ 
-        message: error.message || "Внутренняя ошибка сервера" 
+      res.status(500).json({
+        message: error.message || "Внутренняя ошибка сервера",
       });
     }
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) console.warn("[Auth] Logout session destroy error:", err);
+      res.clearCookie("streamdesk.sid");
+      res.json({ ok: true });
+    });
   });
 
   // Registration route - creates inactive user, requires admin approval
@@ -416,8 +602,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         existing = await storage.getUserByUsername(username);
       } catch (dbError: any) {
         console.error("Database error during registration:", dbError);
-        return res.status(500).json({ 
-          message: "Ошибка подключения к базе данных. Проверьте настройки DATABASE_URL в .env файле." 
+        const msg = (dbError.message || "").toLowerCase();
+        const isConn = /timeout|econnrefused|connection|password|auth/i.test(msg);
+        return res.status(500).json({
+          message: isConn
+            ? "Ошибка подключения к базе данных. Проверьте, что PostgreSQL запущен и в .env указан верный DATABASE_URL (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
+            : (dbError.message || "Ошибка подключения к базе данных."),
         });
       }
 
@@ -426,14 +616,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const newUser = await storage.createUser({
-        username,
-        password,
-        name,
-        email,
+        username: String(username).trim(),
+        password: hashPassword(String(password)),
+        name: String(name).trim(),
+        email: email != null && String(email).trim() !== "" ? String(email).trim() : undefined,
         role: "employee",
         permissions: [],
         active: false,
       } as any);
+
+      // Уведомление всем администраторам о новой заявке
+      try {
+        const users = await storage.getUsers();
+        const admins = users.filter((u: any) => u.role === "admin");
+        const message = `${newUser.name} (${newUser.username}) хочет присоединиться. Подтвердите в админ-панели.`;
+        for (const admin of admins) {
+          await storage.createNotification({
+            userId: admin.id,
+            title: "Новая заявка на регистрацию",
+            message,
+            type: "info",
+          });
+        }
+      } catch (notifErr: any) {
+        console.warn("[Auth] Failed to create admin notification:", notifErr?.message);
+      }
 
       res.json({
         message: "Заявка на регистрацию отправлена. Дождитесь подтверждения администратора.",
@@ -441,11 +648,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Auth register error:", error);
-      if (error.message && error.message.includes("DATABASE_URL")) {
-        res.status(500).json({ message: "Ошибка подключения к базе данных. Проверьте настройки в .env файле." });
-      } else {
-        res.status(500).json({ message: error.message || "Не удалось создать пользователя" });
+      const msg = (error.message || "").toLowerCase();
+      const code = error?.code;
+      if (code === "23505" || /unique|duplicate key|already exists/i.test(msg)) {
+        return res.status(400).json({ message: "Пользователь с таким логином уже существует" });
       }
+      if (/relation.*does not exist|table.*does not exist|column.*does not exist/i.test(msg)) {
+        return res.status(500).json({
+          message: "Схема базы данных устарела. На сервере выполните: npm run db:push (или npx drizzle-kit push), затем перезапустите приложение.",
+        });
+      }
+      const isConn = /timeout|econnrefused|connection|password|auth|database/i.test(msg);
+      res.status(500).json({
+        message: isConn
+          ? "Ошибка подключения к базе данных. Проверьте PostgreSQL и DATABASE_URL в .env (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
+          : (error.message || "Не удалось создать пользователя"),
+      });
     }
   });
 
@@ -483,15 +701,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Основные метрики
       const totalTasks = tasks.length;
-      const completedTasks = tasks.filter(t => t.status === 'completed').length;
+      const completedTasks = tasks.filter(t => t.status === 'done').length;
       const inProgressTasks = tasks.filter(t => t.status === 'in_progress').length;
       const overdueTasks = tasks.filter(t => {
         if (!t.dueDate) return false;
-        return new Date(t.dueDate) < new Date() && t.status !== 'completed';
+        return new Date(t.dueDate) < new Date() && t.status !== 'done';
       }).length;
 
       // Среднее время выполнения (в часах)
-      const completedTasksWithHistory = tasks.filter(t => t.status === 'completed');
+      const completedTasksWithHistory = tasks.filter(t => t.status === 'done');
       let totalHours = 0;
       let count = 0;
       for (const task of completedTasksWithHistory) {
@@ -504,13 +722,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const averageCompletionTime = count > 0 ? totalHours / count : 0;
 
-      // Задачи по статусам
+      const statusLabels: Record<string, string> = {
+        todo: "К выполнению",
+        in_progress: "В работе",
+        done: "Готово",
+        not_ready: "Бэклог",
+        review: "На проверке",
+      };
       const statusCounts: Record<string, number> = {};
       tasks.forEach(task => {
-        statusCounts[task.status] = (statusCounts[task.status] || 0) + 1;
+        const s = task.status || "todo";
+        statusCounts[s] = (statusCounts[s] || 0) + 1;
       });
       const tasksByStatus = Object.entries(statusCounts).map(([status, count]) => ({
         status,
+        label: statusLabels[status] || (status.length > 12 ? "Колонка" : status),
         count,
       }));
 
@@ -561,7 +787,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
         });
 
-      // Лучшие исполнители
+      // Лучшие исполнители (по выполненным задачам: status === 'done' или последняя колонка YouGile)
       const performerCounts: Record<string, { count: number; name: string; avatar?: string }> = {};
       completedTasksWithHistory.forEach(task => {
         if (task.assigneeId) {
@@ -569,7 +795,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!performerCounts[task.assigneeId]) {
             performerCounts[task.assigneeId] = {
               count: 0,
-              name: user?.name || 'Неизвестно',
+              name: user?.name || "Неизвестно",
               avatar: user?.avatar,
             };
           }
@@ -589,7 +815,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Задачи требующие внимания
       const needsAttention = tasks
         .filter(t => {
-          if (t.status === 'completed') return false;
+          if (t.status === 'done') return false;
           if (!t.dueDate) return t.priority === 'high';
           const dueDate = new Date(t.dueDate);
           const now = new Date();
@@ -632,6 +858,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  /** Кто может смотреть Терминал (роли). Для сайдбара и проверки доступа. */
+  app.get("/api/terminal/access", (_req, res) => {
+    res.json({ allowedRoles: getTerminalAllowedRoles() });
+  });
+
+  /** Настройка доступа к Терминалу (только администратор). */
+  app.post("/api/terminal/access", async (req, res) => {
+    const user = req.user as { role?: string } | undefined;
+    if (user?.role !== "admin") {
+      return res.status(403).json({ message: "Только администратор может менять доступ к Терминалу" });
+    }
+    const roles = Array.isArray(req.body?.allowedRoles) ? req.body.allowedRoles : [];
+    const normalized = roles.filter((r: unknown) => typeof r === "string" && (r as string).trim());
+    setTerminalAllowedRoles(normalized.length ? normalized : ["admin"]);
+    res.json({ allowedRoles: getTerminalAllowedRoles() });
+  });
+
+  /** Логи сервера — для ролей из «Доступ к Терминалу» (Настройки). */
+  app.get("/api/terminal/logs", async (req, res) => {
+    const user = req.user as { id?: string; role?: string } | undefined;
+    if (!user?.id) {
+      return res.status(403).json({ message: "Войдите в систему для просмотра логов" });
+    }
+    if (!canViewTerminal(user.role)) {
+      return res.status(403).json({
+        message: "Доступ к Терминалу для вашей роли отключён. Обратитесь к администратору или измените настройку в Настройках → Доступ к Терминалу.",
+      });
+    }
+    const limit = req.query.limit != null ? Math.min(100, Math.max(1, Number(req.query.limit))) : 15;
+    const result = getTerminalLogs(0, limit);
+    res.json({ lines: result.lines, nextIndex: result.nextIndex });
+  });
+
   // Events
   app.get("/api/events", async (req, res) => {
     const { userId, start, end } = req.query;
@@ -646,43 +905,123 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }, 3000, []); // 3 секунды для быстрого ответа
     
-    res.json(events);
+    // Обогащаем события участниками с именами
+    try {
+      const users = await storage.getUsers();
+      const eventsWithParticipants = await Promise.all(events.map(async (event: any) => {
+        const participants = await storage.getEventParticipants(event.id);
+        const withNames = participants.map((p: any) => ({
+          ...p,
+          userName: users.find((u: any) => u.id === p.userId)?.name ?? "?",
+        }));
+        return { ...event, participants: withNames };
+      }));
+      return res.json(eventsWithParticipants);
+    } catch (e) {
+      return res.json(events);
+    }
   });
 
   app.post("/api/events", async (req, res) => {
     try {
       console.log("[Events] Creating event...");
-      const eventData = insertEventSchema.parse(req.body);
+      const body = req.body || {};
+      const normalized = {
+        ...body,
+        startTime: body.startTime instanceof Date ? body.startTime : new Date(body.startTime),
+        endTime: body.endTime instanceof Date ? body.endTime : new Date(body.endTime),
+      };
+      const eventData = insertEventSchema.parse(normalized);
       
       console.log("[Events] Saving to database...");
-      const event = await withDbTimeout(
-        () => storage.createEvent(eventData),
-        30000, // 30 секунд для создания
-        null
-      );
+      // Без withDbTimeout: чтобы видеть реальную ошибку БД (таймаут, подключение, ограничения)
+      const event = await storage.createEvent(eventData);
       
       if (!event) {
-        throw new Error("Failed to create event - database timeout");
+        return res.status(500).json({
+          message: "Не удалось создать событие (БД вернула пустой результат)",
+          error: "createEvent returned null",
+        });
+      }
+      
+      // Участники: записать в event_participants и уведомить
+      const participantIds = req.body?.participants;
+      if (Array.isArray(participantIds) && participantIds.length > 0) {
+        const title = "Приглашение на событие";
+        const message = `Вас пригласили на событие: ${event.title}. Примите или отклоните в календаре.`;
+        for (const uid of participantIds) {
+          if (uid && typeof uid === "string") {
+            try {
+              await storage.createEventParticipant({
+                eventId: event.id,
+                userId: uid,
+                role: "participant",
+                status: "invited",
+              });
+              await storage.createNotification({ userId: uid, title, message, type: "info" });
+            } catch (e) {
+              console.warn("[Events] Participant/notification failed for", uid, e);
+            }
+          }
+        }
       }
       
       console.log("[Events] Event created successfully:", event.id);
       res.json(event);
     } catch (error: any) {
-      console.error("[Events] Error creating event:", error);
-      const errorMessage = error.message || "Invalid event data";
-      res.status(400).json({ 
-        message: errorMessage,
-        error: error.message 
-      });
+      const errMsg = error?.message ?? String(error);
+      console.error("[Events] Error creating event:", errMsg);
+      if (error?.stack) console.error(error.stack);
+      // Различаем ошибки валидации (400) и ошибки БД (500)
+      const isValidation = errMsg.includes("Invalid") || error?.name === "ZodError";
+      const isTimeout = /timeout|ETIMEDOUT|timed out/i.test(errMsg);
+      const isConnection = /connect|ECONNREFUSED|ECONNRESET/i.test(errMsg);
+      const status = isValidation ? 400 : (isTimeout || isConnection ? 503 : 500);
+      const message = isConnection
+        ? "База данных недоступна. Проверьте DATABASE_URL и что PostgreSQL запущен."
+        : isTimeout
+          ? "База данных не ответила вовремя. Проверьте нагрузку и сеть."
+          : errMsg || "Не удалось создать событие";
+      res.status(status).json({ message, error: errMsg });
     }
   });
 
   app.put("/api/events/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const event = await storage.updateEvent(id, req.body);
+      const body = req.body || {};
+      const normalized = { ...body };
+      if (body.startTime != null) normalized.startTime = body.startTime instanceof Date ? body.startTime : new Date(body.startTime);
+      if (body.endTime != null) normalized.endTime = body.endTime instanceof Date ? body.endTime : new Date(body.endTime);
+      delete normalized.participants;
+      const event = await storage.updateEvent(id, normalized);
       if (!event) {
         return res.status(404).json({ message: "Event not found" });
+      }
+      // Обновить список участников: удалить старых, добавить новых
+      const participantIds = req.body?.participants;
+      if (Array.isArray(participantIds)) {
+        const existing = await storage.getEventParticipants(id);
+        for (const p of existing) {
+          await storage.deleteEventParticipant(id, p.userId);
+        }
+        const title = "Приглашение на событие";
+        const message = `Вас пригласили на событие: ${event.title}. Примите или отклоните в календаре.`;
+        for (const uid of participantIds) {
+          if (uid && typeof uid === "string") {
+            try {
+              await storage.createEventParticipant({
+                eventId: id,
+                userId: uid,
+                role: "participant",
+                status: "invited",
+              });
+              await storage.createNotification({ userId: uid, title, message, type: "info" });
+            } catch (e) {
+              console.warn("[Events] Participant/notification failed for", uid, e);
+            }
+          }
+        }
       }
       res.json(event);
     } catch (error) {
@@ -700,6 +1039,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: "Failed to delete event" });
+    }
+  });
+
+  app.get("/api/events/:eventId/participants", async (req, res) => {
+    try {
+      const { eventId } = req.params;
+      const participants = await storage.getEventParticipants(eventId);
+      const users = await storage.getUsers();
+      const withNames = participants.map((p: any) => ({
+        ...p,
+        userName: users.find((u: any) => u.id === p.userId)?.name ?? "?",
+      }));
+      res.json(withNames);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to get participants" });
+    }
+  });
+
+  app.patch("/api/events/:eventId/participants/:participantId", async (req, res) => {
+    try {
+      const { participantId } = req.params;
+      const { status } = req.body || {};
+      if (status !== "accepted" && status !== "declined") {
+        return res.status(400).json({ message: "status must be 'accepted' or 'declined'" });
+      }
+      const updated = await storage.updateEventParticipant(participantId, { status });
+      if (!updated) {
+        return res.status(404).json({ message: "Participant not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update participant" });
     }
   });
 
@@ -721,36 +1092,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/equipment", async (req, res) => {
     try {
       console.log("[Equipment] Creating equipment...");
-      const equipmentData = insertEquipmentSchema.parse(req.body);
+      const body = req.body || {};
+      // Приводим пустые строки к null для опциональных полей, чтобы схема не падала
+      const name = body.name && String(body.name).trim();
+      if (!name) {
+        return res.status(400).json({ message: "Укажите название оборудования" });
+      }
+      const sanitized: Record<string, unknown> = {
+        name,
+        type: (body.type && String(body.type).trim()) || "other",
+        model: body.model && String(body.model).trim() ? String(body.model).trim() : undefined,
+        serialNumber: body.serialNumber && String(body.serialNumber).trim() ? String(body.serialNumber).trim() : undefined,
+        inventoryNumber: body.inventoryNumber && String(body.inventoryNumber).trim() ? String(body.inventoryNumber).trim() : undefined,
+        barcode: body.barcode && String(body.barcode).trim() ? String(body.barcode).trim() : undefined,
+        specifications: body.specifications && typeof body.specifications === "object" ? body.specifications : {},
+        notes: body.notes && String(body.notes).trim() ? String(body.notes).trim() : undefined,
+        status: body.status && String(body.status).trim() ? String(body.status).trim() : "available",
+        location: body.location && String(body.location).trim() ? String(body.location).trim() : undefined,
+        photos: Array.isArray(body.photos) ? body.photos : [],
+      };
+      const equipmentData = insertEquipmentSchema.parse(sanitized);
       
-      // Only admins can create/promote barcodes (Cr-codes)
-      // Check if user is admin if barcode is being set
       if (equipmentData.barcode) {
-        // In production, check user session/role here
-        // For now, allow but log for security
         console.log("[Equipment] Barcode creation attempted:", equipmentData.barcode);
       }
       
       console.log("[Equipment] Saving to database...");
-      const equipment = await withDbTimeout(
-        () => storage.createEquipment(equipmentData),
-        30000, // 30 секунд для создания
-        null
-      );
-      
-      if (!equipment) {
-        throw new Error("Failed to create equipment - database timeout");
-      }
-      
+      const equipment = await storage.createEquipment(equipmentData);
       console.log("[Equipment] Equipment created successfully:", equipment.id);
       res.json(equipment);
     } catch (error: any) {
-      console.error("[Equipment] Error creating equipment:", error);
-      const errorMessage = error.message || "Invalid equipment data";
-      res.status(400).json({ 
-        message: errorMessage,
-        error: error.message 
-      });
+      const msg = error?.message ?? String(error);
+      console.error("[Equipment] Error creating equipment:", msg);
+      if (error?.stack) console.error(error.stack);
+      const isDbError = /timeout|econnrefused|connection|ECONNREFUSED|password|auth/i.test(msg);
+      const userMessage = isDbError
+        ? "Ошибка подключения к базе данных. Проверьте, что PostgreSQL запущен и DATABASE_URL в .env указан верно (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
+        : (msg || "Не удалось добавить оборудование");
+      res.status(isDbError ? 500 : 400).json({ message: userMessage, error: msg });
     }
   });
 
@@ -777,35 +1156,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Systems
   app.get("/api/systems", async (req, res) => {
-    const systems = await withDbTimeout(() => storage.getSystems(), 3000, []);
-    
-    // Автоматическая проверка статуса систем с IP адресами (не блокируем ответ)
-    Promise.all(
-      systems.map(async (system: any) => {
-        if (system.ipAddress && system.status !== "maintenance") {
-          try {
-            const isOnline = await checkIP(system.ipAddress);
-            const newStatus = isOnline ? "online" : "offline";
-            
-            // Обновляем статус только если он изменился (в фоне, не блокируем ответ)
-            if (system.status !== newStatus) {
-              withDbTimeout(() => storage.pingSystem(system.id, newStatus), 3000, undefined).catch(() => {});
-            }
-          } catch (error) {
-            // Игнорируем ошибки проверки
+    try {
+      const systems = await withDbTimeout(() => storage.getSystems(), 5000, []);
+      const list = Array.isArray(systems) ? systems : [];
+      Promise.all(
+        list.map(async (system: any) => {
+          if (system?.ipAddress && system.status !== "maintenance") {
+            try {
+              const isOnline = await checkIP(system.ipAddress);
+              const newStatus = isOnline ? "online" : "offline";
+              if (system.status !== newStatus) {
+                withDbTimeout(() => storage.pingSystem(system.id, newStatus), 3000, undefined).catch(() => {});
+              }
+            } catch (_) {}
           }
-        }
-      })
-    ).catch(() => {}); // Игнорируем ошибки проверки
-    
-    res.json(systems);
+        })
+      ).catch(() => {});
+      res.json(list);
+    } catch (e: any) {
+      console.warn("[API] GET /api/systems:", e?.message || e);
+      res.json([]);
+    }
   });
 
   app.post("/api/systems", async (req, res) => {
     try {
-      const systemData = insertSystemSchema.parse(req.body);
+      const parsed = insertSystemSchema.safeParse(req.body);
+      const systemData = parsed.success ? parsed.data : {
+        name: req.body?.name ?? "",
+        type: req.body?.type ?? "server",
+        location: req.body?.location ?? "",
+        ipAddress: req.body?.ipAddress ?? undefined,
+        status: req.body?.status ?? "offline",
+        specifications: req.body?.specifications ?? undefined,
+      };
       const system = await storage.createSystem(systemData);
-      res.json(system);
+      res.status(201).json(system);
     } catch (error) {
       res.status(500).json({ message: "Failed to create system" });
     }
@@ -1047,9 +1433,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(sessions);
     } catch (error: any) {
       console.error("Failed to fetch chat sessions:", error);
-      res.status(500).json({ 
-        message: "Failed to fetch chat sessions",
-        error: error.message 
+      const msg = (error.message || "").toLowerCase();
+      const isDb = /timeout|econnrefused|connection|password|auth|database/i.test(msg);
+      res.status(500).json({
+        message: isDb
+          ? "Ошибка подключения к базе данных. Проверьте PostgreSQL и DATABASE_URL в .env (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
+          : "Не удалось загрузить список чатов",
+        error: error.message,
       });
     }
   });
@@ -1069,9 +1459,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Title is required" });
       }
 
-      // Проверяем, что пользователь существует
+      // Проверяем, что пользователь существует (в stub-режиме разрешаем любой userId для совместимости с localStorage после перезапуска)
       const user = await storage.getUser(userId);
-      if (!user) {
+      if (!user && !isStubStorage) {
         console.error(`[ChatGPT] User not found: ${userId}`);
         return res.status(404).json({ message: "User not found" });
       }
@@ -1425,6 +1815,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // vMix API — таймкод (режиссёр задаёт в vMix; читаем из XML состояния)
+  app.get("/api/vmix/timecode", async (req, res) => {
+    try {
+      const host = (req.query.host as string) || "localhost";
+      const port = (req.query.port as string) || "8088";
+      const vmixUrl = `http://${host}:${port}/api`;
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 3000);
+      const xmlResponse = await fetch(vmixUrl, { signal: controller.signal as any });
+      if (!xmlResponse.ok) {
+        return res.json({ timecode: null, source: "vmix", error: "vMix не отвечает" });
+      }
+      const xmlText = await xmlResponse.text();
+      // vMix XML может содержать время записи/таймкод в разных тегах
+      const tcMatch = xmlText.match(/<timecode[^>]*>([^<]+)<\/timecode>/i)
+        || xmlText.match(/recordingTimecode="([^"]+)"/)
+        || xmlText.match(/timecode="([^"]+)"/);
+      const timecode = tcMatch ? tcMatch[1].trim() : null;
+      res.json({ timecode, source: "vmix" });
+    } catch (e: any) {
+      res.json({ timecode: null, source: "vmix", error: e?.message || "vMix недоступен" });
+    }
+  });
+
   // vMix API - выполнение команды
   app.post("/api/vmix/command", async (req, res) => {
     try {
@@ -1587,6 +2001,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Rooms (аудитории/кабинеты для карт: редактируемые вместимость и уровень доступа)
+  type RoomRow = { id: string; name: string; type: string; capacity: number; accessLevel: string; floorId: string };
+  const defaultRoomsList: RoomRow[] = [
+    { id: "100", name: "100", type: "Кабинет", capacity: 4, accessLevel: "green", floorId: "floor-1" },
+    { id: "101", name: "101", type: "Кабинет", capacity: 6, accessLevel: "green", floorId: "floor-1" },
+    { id: "102", name: "102", type: "Переговорная", capacity: 8, accessLevel: "green", floorId: "floor-1" },
+    { id: "103", name: "103", type: "Переговорная", capacity: 10, accessLevel: "green", floorId: "floor-1" },
+    { id: "107", name: "107", type: "Большая лекционная «Север»", capacity: 150, accessLevel: "red", floorId: "floor-1" },
+    { id: "109", name: "109", type: "Лекционная", capacity: 80, accessLevel: "yellow", floorId: "floor-1" },
+    { id: "110", name: "110", type: "Аудитория", capacity: 40, accessLevel: "yellow", floorId: "floor-1" },
+    { id: "111", name: "111", type: "Кабинет", capacity: 2, accessLevel: "red", floorId: "floor-1" },
+    { id: "112", name: "112", type: "Студия", capacity: 15, accessLevel: "yellow", floorId: "floor-1" },
+    { id: "200", name: "200", type: "Лекционная", capacity: 100, accessLevel: "yellow", floorId: "floor-2" },
+    { id: "201", name: "201", type: "Кабинет", capacity: 4, accessLevel: "green", floorId: "floor-2" },
+    { id: "202", name: "202", type: "Переговорная", capacity: 12, accessLevel: "green", floorId: "floor-2" },
+    { id: "300", name: "300", type: "Конференц-зал", capacity: 200, accessLevel: "red", floorId: "floor-3" },
+    { id: "301", name: "301", type: "Кабинет", capacity: 4, accessLevel: "green", floorId: "floor-3" },
+  ];
+  let roomsStore: RoomRow[] = defaultRoomsList.map((r) => ({ ...r }));
+  app.get("/api/rooms", async (_req, res) => {
+    res.json(roomsStore);
+  });
+  app.get("/api/rooms/:id", async (req, res) => {
+    const room = roomsStore.find((r) => r.id === req.params.id);
+    if (!room) return res.status(404).json({ message: "Room not found" });
+    res.json(room);
+  });
+  app.put("/api/rooms/:id", async (req, res) => {
+    const { id } = req.params;
+    const { capacity, accessLevel, name, type } = req.body;
+    const index = roomsStore.findIndex((r) => r.id === id);
+    if (index === -1) return res.status(404).json({ message: "Room not found" });
+    if (capacity != null) roomsStore[index].capacity = Number(capacity);
+    if (accessLevel != null) roomsStore[index].accessLevel = String(accessLevel);
+    if (name != null) roomsStore[index].name = String(name);
+    if (type != null) roomsStore[index].type = String(type);
+    res.json(roomsStore[index]);
+  });
+
   // Notifications
   app.get("/api/notifications/:userId", async (req, res) => {
     const { userId } = req.params;
@@ -1619,6 +2072,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: "Failed to mark notification as read" });
+    }
+  });
+
+  app.put("/api/notifications/:id/read", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.markNotificationRead(id);
+      if (!success) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark notification as read" });
+    }
+  });
+
+  app.put("/api/notifications/mark-all-read", async (req, res) => {
+    try {
+      const userId = req.body?.userId;
+      if (!userId) {
+        return res.status(400).json({ message: "userId required" });
+      }
+      const count = await storage.markAllNotificationsRead(userId);
+      res.json({ success: true, count });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark all as read" });
+    }
+  });
+
+  app.delete("/api/notifications/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.deleteNotification(id);
+      if (!success) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete notification" });
     }
   });
 
@@ -1658,7 +2150,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .toString()
         .trim()
         .replace(/(\.\.[/\\])/g, "")
-        .replace(/[^a-zA-Z0-9-_/\\а-яА-ЯёЁ ]/g, "_")
+        .replace(/[^a-zA-Z0-9-_/\\а-яА-ЯёЁ .]/g, "_") // точка разрешена для расширений файлов (.mp3 и т.д.)
     );
     return path.join(TRANSCRIPTIONS_BASE_DIR, ...safeSegments);
   }
@@ -1699,8 +2191,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ name });
     } catch (error) {
-      console.error("Failed to create podcast folder:", error);
-      res.status(500).json({ message: "Failed to create podcast folder" });
+      console.error("Failed to create podcast:", error);
+      res.status(500).json({ message: "Не удалось создать подкаст" });
+    }
+  });
+
+  // Delete entire podcast (folder and all contents)
+  app.delete("/api/transcriptions/podcasts/:podcast", async (req, res) => {
+    try {
+      const { podcast } = req.params;
+      const dirPath = getSafeTranscriptionPath(podcast);
+      const realPath = path.resolve(dirPath);
+      const realBase = path.resolve(TRANSCRIPTIONS_BASE_DIR);
+      if (!realPath.startsWith(realBase) || realPath === realBase) {
+        return res.status(400).json({ message: "Недопустимое имя подкаста" });
+      }
+      const stat = await fs.stat(realPath).catch(() => null);
+      if (!stat || !stat.isDirectory()) {
+        return res.status(404).json({ message: "Подкаст не найден" });
+      }
+      await fs.rm(realPath, { recursive: true });
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Failed to delete podcast:", error);
+      res.status(500).json({ message: error?.message || "Не удалось удалить подкаст" });
     }
   });
 
@@ -1761,38 +2275,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Upload file into podcast/folder
+  // Delete file or folder inside podcast
+  app.delete("/api/transcriptions/podcasts/:podcast/contents", async (req, res) => {
+    try {
+      const { podcast } = req.params;
+      const { path: relativePath } = req.query;
+      if (relativePath === undefined || relativePath === "") {
+        return res.status(400).json({ message: "Укажите path (файл или папку)" });
+      }
+      const targetPath = getSafeTranscriptionPath(podcast, String(relativePath));
+      const basePath = getSafeTranscriptionPath(podcast);
+      const realTarget = path.resolve(targetPath);
+      const realBase = path.resolve(basePath);
+      if (!realTarget.startsWith(realBase)) {
+        return res.status(400).json({ message: "Недопустимый путь" });
+      }
+      const stat = await fs.stat(realTarget).catch(() => null);
+      if (!stat) {
+        return res.status(404).json({ message: "Файл или папка не найдены" });
+      }
+      if (stat.isDirectory()) {
+        await fs.rm(realTarget, { recursive: true });
+      } else {
+        await fs.unlink(realTarget);
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Failed to delete transcription item:", error);
+      res.status(500).json({ message: error?.message || "Не удалось удалить" });
+    }
+  });
+
+  // Upload file into podcast/folder (сохраняем во временную папку, затем переносим — req.body в multer destination может быть ещё пуст)
+  const transcriptionUploadTempDir = path.join(process.cwd(), "uploads", "transcriptions", "_upload");
+  const transcriptionUploadToTemp = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => {
+        fs.mkdir(transcriptionUploadTempDir, { recursive: true }).then(() => cb(null, transcriptionUploadTempDir)).catch((err) => cb(err as any, ""));
+      },
+      filename: (_, file, cb) => {
+        const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+        const originalName = file.originalname || "file";
+        const ext = path.extname(originalName);
+        const base = path.basename(originalName, ext).replace(/[^a-zA-Z0-9-_а-яА-ЯёЁ ]/g, "_");
+        cb(null, base + "-" + uniqueSuffix + ext);
+      },
+    }),
+    limits: { fileSize: 100 * 1024 * 1024 },
+  });
+
   app.post(
     "/api/transcriptions/upload",
-    transcriptionUpload.single("file"),
+    transcriptionUploadToTemp.single("file"),
     async (req, res) => {
       try {
-        const { podcast, path: relativePath = "" } = req.body;
+        const podcast = (req.body?.podcast || "").toString().trim();
+        const relativePath = (req.body?.path || "").toString().trim();
 
         if (!podcast) {
-          return res.status(400).json({ message: "Podcast is required" });
+          if (req.file) await fs.unlink(req.file.path).catch(() => {});
+          return res.status(400).json({ message: "Выберите подкаст (папку) для загрузки" });
         }
 
         if (!req.file) {
-          return res.status(400).json({ message: "File is required" });
+          return res.status(400).json({ message: "Файл не выбран" });
         }
 
-        const storagePath = path.relative(
-          process.cwd(),
-          req.file.path
-        );
+        const safePodcast = podcast.replace(/[^a-zA-Z0-9-_а-яА-ЯёЁ ]/g, "_");
+        const safeRelative = relativePath.replace(/(\.\.[/\\])/g, "").replace(/[^a-zA-Z0-9-_/\\а-яА-ЯёЁ ]/g, "_");
+        const targetDir = safeRelative
+          ? path.join(TRANSCRIPTIONS_BASE_DIR, safePodcast, safeRelative)
+          : path.join(TRANSCRIPTIONS_BASE_DIR, safePodcast);
+        await fs.mkdir(targetDir, { recursive: true });
+        const targetPath = path.join(targetDir, req.file.filename);
+        await fs.rename(req.file.path, targetPath);
 
+        const storagePath = path.relative(process.cwd(), targetPath);
         res.json({
           name: req.file.filename,
           originalName: req.file.originalname,
           size: req.file.size,
-          podcast,
+          podcast: safePodcast,
           path: relativePath,
           url: `/${storagePath.replace(/\\\\/g, "/")}`,
         });
-      } catch (error) {
+      } catch (error: any) {
+        if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
         console.error("Failed to upload transcription file:", error);
-        res.status(500).json({ message: "Failed to upload file" });
+        res.status(500).json({ message: error?.message || "Не удалось загрузить файл" });
       }
     }
   );
@@ -2328,47 +2898,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============= TASKS API =============
   app.get("/api/tasks", async (req, res) => {
     try {
-      // Получаем информацию о текущем пользователе из заголовков (если есть)
-      const userHeader = req.headers['x-user'] as string;
-      const currentUser = userHeader ? JSON.parse(userHeader) : null;
+      const currentUser = req.user || null;
       const userPermissions = (currentUser?.permissions || []) as string[];
       
-      const { assigneeId, creatorId, status } = req.query;
+      const { assigneeId, creatorId, status, yougileBoardId } = req.query;
       
       let tasks = await withDbTimeout(async () => {
-        if (assigneeId) {
-          return await storage.getTasksByAssignee(assigneeId as string);
-        } else if (creatorId) {
-          return await storage.getTasksByCreator(creatorId as string);
-        } else if (status) {
-          return await storage.getTasksByStatus(status as string);
-        } else {
-          return await storage.getTasks();
+        if (yougileBoardId) {
+          const boardId = yougileBoardId as string;
+          return await storage.getTasksByYougileBoardId(boardId);
         }
+        let list: any[];
+        if (assigneeId) {
+          list = await storage.getTasksByAssignee(assigneeId as string);
+        } else if (creatorId) {
+          list = await storage.getTasksByCreator(creatorId as string);
+        } else if (status) {
+          list = await storage.getTasksByStatus(status as string);
+        } else {
+          list = await storage.getTasks();
+        }
+        // «Мои задачи»: только локальные задачи (без привязки к YouGile), чтобы задачи из досок YouGile не дублировались
+        return list.filter((t: any) => !t.yougileBoardId);
       }, 3000, []); // 3 секунды для быстрого ответа
       
-      // Фильтруем задачи по правам доступа
-      if (currentUser && tasks) {
-        // Если у пользователя нет прав на просмотр задач - возвращаем пустой массив
+      // Фильтруем задачи по правам доступа (для доски YouGile не фильтруем по автору — показываем все задачи доски)
+      if (currentUser && tasks && !yougileBoardId) {
         if (!userPermissions.includes('tasks:view') && currentUser.role !== 'admin') {
           tasks = [];
-        } else {
-          // Фильтруем задачи: пользователь видит только свои задачи или задачи, назначенные на него
-          // Админы видят все задачи
-          if (currentUser.role !== 'admin') {
-            tasks = tasks.filter((task: any) => {
-              // Пользователь видит задачу, если:
-              // 1. Он создатель задачи
-              // 2. Он назначенный исполнитель
-              // 3. У него есть права tasks:view_all (если такое разрешение будет добавлено)
-              return task.creatorId === currentUser.id || 
-                     task.assigneeId === currentUser.id ||
-                     userPermissions.includes('tasks:view_all');
-            });
-          }
+        } else if (currentUser.role !== 'admin') {
+          tasks = tasks.filter((task: any) =>
+            task.creatorId === currentUser.id ||
+            task.assigneeId === currentUser.id ||
+            userPermissions.includes('tasks:view_all')
+          );
         }
       }
-      
+
       res.json(tasks || []);
     } catch (error: any) {
       console.error("[Tasks API] Error fetching tasks:", error);
@@ -2393,6 +2959,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/tasks", async (req, res) => {
     try {
       console.log("[Tasks] Creating task...");
+      const body = req.body || {};
+      if (!body.creatorId) {
+        return res.status(400).json({
+          message: "Для создания задачи необходимо войти в систему",
+          error: "creatorId is required",
+        });
+      }
       const taskData = insertTaskSchema.parse(req.body);
       
       console.log("[Tasks] Saving to database...");
@@ -2451,14 +3024,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
+      // Уведомление исполнителю, если задача назначена
+      if (task.assigneeId) {
+        try {
+          await storage.createNotification({
+            userId: task.assigneeId,
+            title: "Новая задача",
+            message: `Вам назначена задача: ${task.title}`,
+            type: "info",
+          });
+        } catch (notifErr) {
+          console.warn("[Tasks] Failed to create notification:", notifErr);
+        }
+      }
+
+      // Синхронизация с YouGile: создаём задачу в той колонке, которую выбрал пользователь (status = id колонки YouGile для досок)
+      if (task) {
+        try {
+          const { isYouGileConfigured, yougileEnqueueCreate, yougileGetColumns, getYouGileDefaultColumnId, getYouGileColumnMap } = await import("./yougile");
+          if (isYouGileConfigured()) {
+            const taskAny = task as any;
+            let yougileColumnId: string | null = null;
+            if (taskAny.yougileBoardId) {
+              let cols = await storage.getYougileColumns(taskAny.yougileBoardId);
+              if (!cols.length) {
+                const ygCols = await yougileGetColumns(taskAny.yougileBoardId);
+                await storage.upsertYougileColumns(ygCols.map((c: any) => ({ id: c.id, boardId: taskAny.yougileBoardId, title: c.title ?? null, order: c.order ?? 0, color: (c as any).color ?? null })));
+                cols = await storage.getYougileColumns(taskAny.yougileBoardId);
+              }
+              const statusFromClient = taskAny.status;
+              if (statusFromClient && typeof statusFromClient === "string" && statusFromClient.length > 0) {
+                const exists = cols.some((c: any) => c.id === statusFromClient);
+                yougileColumnId = exists ? statusFromClient : (cols[0]?.id ?? null);
+              }
+              if (!yougileColumnId) yougileColumnId = cols[0]?.id ?? null;
+            }
+            if (!yougileColumnId) {
+              const columnMap = getYouGileColumnMap();
+              const status = taskAny.status;
+              yougileColumnId = (status && columnMap[status]) ? columnMap[status] : null;
+            }
+            if (!yougileColumnId) yougileColumnId = await getYouGileDefaultColumnId();
+            if (yougileColumnId) {
+              const boardId = taskAny.yougileBoardId || "";
+              yougileEnqueueCreate(task.id, boardId, {
+                title: task.title,
+                description: task.description || undefined,
+                columnId: yougileColumnId,
+                deadline: task.dueDate ? new Date(task.dueDate).getTime() : undefined,
+              }, async (ygTask) => {
+                await storage.updateTask(task.id, { yougileTaskId: ygTask.id, yougileBoardId: boardId || ygTask.boardId });
+              });
+            }
+          }
+        } catch (ygErr: any) {
+          console.warn("[Tasks] YouGile sync on create failed:", ygErr?.message || ygErr);
+        }
+      }
+
       console.log("[Tasks] Task created successfully:", task.id);
       res.json(task);
     } catch (error: any) {
-      console.error("[Tasks] Error creating task:", error);
-      const errorMessage = error.message || "Invalid task data";
+      const errMsg = error?.message ?? String(error);
+      console.error("[Tasks] Error creating task:", errMsg);
+      if (error?.stack) console.error(error.stack);
+      const isZod = error?.name === "ZodError" || errMsg.includes("Invalid");
+      const message = isZod
+        ? "Проверьте поля: название обязательно; статус и приоритет — из списка"
+        : (errMsg || "Не удалось создать задачу");
       res.status(400).json({ 
-        message: errorMessage,
-        error: error.message 
+        message,
+        error: errMsg 
       });
     }
   });
@@ -2476,6 +3112,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const task = await storage.updateTask(id, updateData);
       
+      // Уведомление новому исполнителю при смене назначения
+      if (updateData.assigneeId != null && updateData.assigneeId !== oldTask.assigneeId && task.assigneeId) {
+        try {
+          await storage.createNotification({
+            userId: task.assigneeId,
+            title: "Задача назначена",
+            message: `Вам назначена задача: ${task.title}`,
+            type: "info",
+          });
+        } catch (notifErr) {
+          console.warn("[Tasks] Failed to create notification:", notifErr);
+        }
+      }
+
       // Create history entry
       if (userId) {
         try {
@@ -2546,6 +3196,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.warn("[Tasks] Failed to delete calendar event:", eventError);
         }
       }
+
+      // Синхронизация с YouGile: ставим в очередь (при лимите API запросы выполнятся позже)
+      if (oldTask && (oldTask as any).yougileTaskId) {
+        try {
+          const { isYouGileConfigured, yougileEnqueueUpdate, getYouGileColumnMap } = await import("./yougile");
+          if (isYouGileConfigured()) {
+            const payload: { title?: string; description?: string; deadline?: number; columnId?: string } = {
+              title: task.title,
+              description: task.description ?? undefined,
+              deadline: task.dueDate ? new Date(task.dueDate).getTime() : undefined,
+            };
+            if (updateData.status != null) {
+              const taskBoardId = (oldTask as any).yougileBoardId;
+              const yougileColumnId = taskBoardId
+                ? updateData.status
+                : getYouGileColumnMap()[updateData.status];
+              if (yougileColumnId) payload.columnId = yougileColumnId;
+            }
+            yougileEnqueueUpdate((oldTask as any).yougileTaskId, payload);
+          }
+        } catch (ygErr: any) {
+          console.warn("[Tasks] YouGile sync on update failed:", ygErr?.message || ygErr);
+        }
+      }
       
       res.json(task);
     } catch (error) {
@@ -2557,9 +3231,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/tasks/:id", async (req, res) => {
     try {
       const { id } = req.params;
+      const task = await storage.getTaskById(id);
+      if (!task) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+      const yougileTaskId = (task as any).yougileTaskId;
       const deleted = await storage.deleteTask(id);
       if (!deleted) {
         return res.status(404).json({ message: "Task not found" });
+      }
+      if (yougileTaskId) {
+        try {
+          const { isYouGileConfigured, yougileEnqueueDelete } = await import("./yougile");
+          if (isYouGileConfigured()) yougileEnqueueDelete(yougileTaskId);
+        } catch (ygErr: any) {
+          console.warn("[Tasks] YouGile sync on delete failed:", ygErr?.message || ygErr);
+        }
       }
       res.json({ success: true });
     } catch (error) {
@@ -2583,6 +3270,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { taskId } = req.params;
       const commentData = insertTaskCommentSchema.parse({ ...req.body, taskId });
       const comment = await storage.createTaskComment(commentData);
+      const task = await storage.getTaskById(taskId);
+      try {
+        await storage.createTaskHistory({
+          taskId,
+          userId: commentData.userId,
+          action: "commented",
+          newValue: { commentId: comment.id, content: comment.content?.slice(0, 200) },
+        });
+      } catch (e) {
+        console.warn("[Tasks] Task history (comment) failed:", e);
+      }
+      if (task?.assigneeId && task.assigneeId !== commentData.userId) {
+        try {
+          await storage.createNotification({
+            userId: task.assigneeId,
+            title: "Новый комментарий к задаче",
+            message: `Добавлен комментарий к задаче: ${task.title}`,
+            type: "info",
+          });
+        } catch (e) {
+          console.warn("[Tasks] Comment notification failed:", e);
+        }
+      }
       res.json(comment);
     } catch (error) {
       res.status(400).json({ message: "Invalid comment data" });
@@ -3071,7 +3781,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/users", async (req, res) => {
     try {
-      const userData = insertUserSchema.parse(req.body);
+      const body = { ...req.body };
+      if (body.password) body.password = hashPassword(String(body.password));
+      const userData = insertUserSchema.parse(body);
       const user = await storage.createUser(userData);
       res.json({ ...user, password: undefined });
     } catch (error) {
@@ -3083,13 +3795,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { password, ...userData } = req.body;
-      const user = await storage.updateUser(id, userData);
+      const updateData: any = { ...userData };
+      if (password != null && String(password).length > 0) {
+        updateData.password = hashPassword(String(password));
+      }
+      const user = await storage.updateUser(id, updateData);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
       res.json({ ...user, password: undefined });
     } catch (error) {
       res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
+  app.post("/api/users/:id/avatar", avatarUpload.single("avatar"), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const currentUser = req.user;
+      if (!currentUser) return res.status(401).json({ message: "Требуется авторизация" });
+      if (currentUser.id !== id) return res.status(403).json({ message: "Можно изменить только свой аватар" });
+      if (!req.file) {
+        return res.status(400).json({ message: "Файл не выбран" });
+      }
+      const avatarUrl = "/uploads/avatars/" + req.file.filename;
+      const user = await storage.updateUser(id, { avatar: avatarUrl });
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.json({ ...user, password: undefined, avatar: avatarUrl });
+    } catch (error: any) {
+      res.status(500).json({ message: error?.message || "Не удалось загрузить аватар" });
     }
   });
 
@@ -3120,16 +3856,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Computers
   app.get("/api/computers", async (req, res) => {
-    const computers = await withDbTimeout(() => storage.getComputers(), 3000, []);
-    res.json(computers);
+    try {
+      const computers = await withDbTimeout(() => storage.getComputers(), 5000, []);
+      res.json(Array.isArray(computers) ? computers : []);
+    } catch (e: any) {
+      console.warn("[API] GET /api/computers:", e?.message || e);
+      res.json([]);
+    }
   });
 
   app.post("/api/computers", async (req, res) => {
     try {
-      const computer = await storage.createComputer(req.body);
+      const body = req.body || {};
+      const data = {
+        name: body.name ?? "",
+        location: body.location ?? "",
+        purpose: body.purpose ?? undefined,
+        status: body.status ?? "active",
+        ipAddress: body.ipAddress ?? undefined,
+        components: body.components ?? undefined,
+        notes: body.notes ?? undefined,
+      };
+      const computer = await storage.createComputer(data as any);
       res.status(201).json(computer);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to create computer" });
+    } catch (error: any) {
+      console.error("[API] POST /api/computers:", error?.message || error);
+      res.status(500).json({ message: error?.message || "Failed to create computer" });
     }
   });
 
@@ -3154,6 +3906,107 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Привязка набора оборудования к проекту (корзина → проект). Обязательны: дата возврата, сотрудник.
+  const projectEquipmentBundles: Array<{
+    projectId: string;
+    equipmentIds: string[];
+    sentAt: string;
+    returnDate: string;
+    assignedByUserId?: string;
+    assignedByName: string;
+  }> = [];
+  app.post("/api/projects/:projectId/equipment-bundle", async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const { equipmentIds, returnDate, assignedByUserId, assignedByName } = req.body || {};
+      if (!Array.isArray(equipmentIds) || equipmentIds.length === 0) {
+        return res.status(400).json({ message: "Укажите список оборудования (equipmentIds)" });
+      }
+      if (!returnDate || typeof returnDate !== "string") {
+        return res.status(400).json({ message: "Укажите дату возврата оборудования (returnDate)" });
+      }
+      const project = await storage.getProjectById(projectId);
+      if (!project && !isStubStorage) return res.status(404).json({ message: "Project not found" });
+      const name = typeof assignedByName === "string" && assignedByName.trim() ? assignedByName.trim() : "Не указан";
+      projectEquipmentBundles.push({
+        projectId,
+        equipmentIds,
+        sentAt: new Date().toISOString(),
+        returnDate: String(returnDate).slice(0, 10),
+        assignedByUserId: assignedByUserId || undefined,
+        assignedByName: name,
+      });
+      res.json({ success: true, message: "Оборудование привязано к проекту", count: equipmentIds.length });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Failed to attach equipment to project" });
+    }
+  });
+  app.get("/api/projects/:projectId/equipment-bundles", async (req, res) => {
+    const list = projectEquipmentBundles.filter((b) => b.projectId === req.params.projectId);
+    res.json(list);
+  });
+
+  app.post("/api/equipment-return", async (req, res) => {
+    try {
+      const { equipmentId, userId: requestUserId } = req.body || {};
+      const currentUserId = (req as any).user?.id ?? requestUserId;
+      if (!equipmentId || typeof equipmentId !== "string") {
+        return res.status(400).json({ message: "Укажите equipmentId" });
+      }
+      let found = false;
+      let bundleAssignedBy: string | undefined;
+      for (let i = projectEquipmentBundles.length - 1; i >= 0; i--) {
+        const b = projectEquipmentBundles[i];
+        const idx = b.equipmentIds.indexOf(equipmentId);
+        if (idx !== -1) {
+          found = true;
+          bundleAssignedBy = b.assignedByUserId;
+          const isAdmin = (req as any).user?.role === "admin" || (req as any).user?.role === "tech_director";
+          const canReturn = isAdmin || (currentUserId && bundleAssignedBy === currentUserId);
+          if (!canReturn) {
+            return res.status(403).json({ message: "Вернуть оборудование может только тот, кто отправил его на проект, или администратор." });
+          }
+          b.equipmentIds.splice(idx, 1);
+          if (b.equipmentIds.length === 0) projectEquipmentBundles.splice(i, 1);
+          break;
+        }
+      }
+      if (!found) {
+        return res.status(404).json({ message: "Оборудование не найдено на проекте или уже возвращено. Обновите страницу." });
+      }
+      res.json({ success: true, message: "Оборудование возвращено на склад" });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Не удалось вернуть" });
+    }
+  });
+
+  // Сводка: какое оборудование на каких проектах (assignedByUserId — чтобы вернуть мог только тот, кто отправил)
+  app.get("/api/equipment-on-projects", async (_req, res) => {
+    const flat: Array<{ equipmentId: string; projectId: string; projectName?: string; sentAt: string; returnDate: string; assignedByName: string; assignedByUserId?: string }> = [];
+    const projectIds = [...new Set(projectEquipmentBundles.map((b) => b.projectId))];
+    const projectNames: Record<string, string> = {};
+    await Promise.all(projectIds.map(async (id) => {
+      try {
+        const p = await storage.getProjectById(id);
+        if (p?.name) projectNames[id] = p.name;
+      } catch (_) {}
+    }));
+    for (const b of projectEquipmentBundles) {
+      for (const equipmentId of b.equipmentIds) {
+        flat.push({
+          equipmentId,
+          projectId: b.projectId,
+          projectName: projectNames[b.projectId],
+          sentAt: b.sentAt,
+          returnDate: b.returnDate,
+          assignedByName: b.assignedByName,
+          assignedByUserId: b.assignedByUserId,
+        });
+      }
+    }
+    res.json(flat);
+  });
+
   // Projects
   app.get("/api/projects", async (req, res) => {
     const projects = await withDbTimeout(
@@ -3174,9 +4027,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
       const project = await storage.createProject(projectData);
       res.status(201).json(project);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating project:", error);
-      res.status(500).json({ message: "Failed to create project" });
+      const msg = (error.message || "").toLowerCase();
+      const isDb = /timeout|econnrefused|connection|password|auth|database/i.test(msg);
+      res.status(500).json({
+        message: isDb
+          ? "Ошибка подключения к базе данных. Проверьте PostgreSQL и DATABASE_URL в .env."
+          : (error.message || "Не удалось создать проект"),
+      });
     }
   });
 
@@ -3189,6 +4048,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(project);
     } catch (error) {
       res.status(500).json({ message: "Failed to update project" });
+    }
+  });
+
+  /** Статистика по задачам проекта (для доски YouGile или по projectId). statusNames — id колонки → название для отображения. */
+  app.get("/api/projects/:id/task-stats", async (req, res) => {
+    try {
+      const project = await storage.getProjectById(req.params.id);
+      if (!project) return res.status(404).json({ message: "Проект не найден" });
+      const proj = project as any;
+      let tasks: any[] = [];
+      if (proj.yougileBoardId) {
+        tasks = await storage.getTasksByYougileBoardId(proj.yougileBoardId);
+      } else {
+        const all = await storage.getTasks();
+        tasks = all.filter((t: any) => t.projectId === project.id);
+      }
+      const total = tasks.length;
+      let statusNames: Record<string, string> = {};
+      let doneColumnId: string | null = null;
+      if (proj.yougileBoardId) {
+        try {
+          const cols = await storage.getYougileColumns(proj.yougileBoardId);
+          cols.forEach((c: any) => { statusNames[c.id] = c.title || c.id; });
+          const sorted = [...cols].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+          const lastCol = sorted[sorted.length - 1];
+          if (lastCol) doneColumnId = lastCol.id;
+        } catch (_) {}
+      }
+      const done = doneColumnId
+        ? tasks.filter((t: any) => t.status === doneColumnId).length
+        : tasks.filter((t: any) => t.status === "done").length;
+      const byStatus: Record<string, number> = {};
+      const byUser: Record<string, number> = {};
+      const byRepository: Record<string, number> = {};
+      const byCategory: Record<string, number> = {};
+      tasks.forEach((t: any) => {
+        const s = t.status || "todo";
+        byStatus[s] = (byStatus[s] || 0) + 1;
+        if (t.assigneeId) byUser[t.assigneeId] = (byUser[t.assigneeId] || 0) + 1;
+        const repo = (t.repository || "").toString().trim();
+        if (repo) byRepository[repo] = (byRepository[repo] || 0) + 1;
+        const cat = (t.category || "").toString().trim();
+        if (cat) byCategory[cat] = (byCategory[cat] || 0) + 1;
+      });
+      const userIds = Object.keys(byUser);
+      const userNames: Record<string, string> = {};
+      if (userIds.length > 0) {
+        const users = await storage.getUsers();
+        users.forEach((u: any) => { if (u.id && userIds.includes(u.id)) userNames[u.id] = u.name || u.username || u.id; });
+      }
+      const categoryLabels: Record<string, string> = {
+        production: "Производство",
+        equipment: "Оборудование",
+        stream: "Стрим",
+        admin: "Администрирование",
+        other: "Другое",
+      };
+      res.json({ total, done, byStatus, statusNames, byUser, byRepository, byCategory, userNames, categoryLabels });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Ошибка" });
+    }
+  });
+
+  /** Привязать видеопроект к доске YouGile (доска появится в таск-менеджере, колонки создаются в YouGile) */
+  app.post("/api/projects/:id/link-yougile-board", async (req, res) => {
+    try {
+      const project = await storage.getProjectById(req.params.id);
+      if (!project) return res.status(404).json({ message: "Проект не найден" });
+      const existing = (project as any).yougileBoardId;
+      if (existing) {
+        return res.json({ yougileBoardId: existing, message: "Доска уже привязана" });
+      }
+      const {
+        isYouGileConfigured,
+        yougileGetProjects,
+        yougileCreateProject,
+        yougileCreateBoard,
+      } = await import("./yougile");
+      if (!isYouGileConfigured()) {
+        return res.status(400).json({ message: "YouGile не настроен. Настройте в Настройках." });
+      }
+      let ygProjects = await yougileGetProjects();
+      if (!ygProjects.length) {
+        const created = await yougileCreateProject("StreamDesk");
+        ygProjects = [created];
+      }
+      const ygProjectId = ygProjects[0].id;
+      const board = await yougileCreateBoard(ygProjectId, project.name || "Проект");
+      await storage.updateProject(project.id, { yougileBoardId: board.id } as any);
+      res.json({ yougileBoardId: board.id, message: "Доска создана в таск-менеджере" });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Не удалось создать доску YouGile" });
     }
   });
 
@@ -3228,9 +4179,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       res.status(201).json(column);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating project column:", error);
-      res.status(500).json({ message: "Failed to create column" });
+      const msg = (error.message || "").toLowerCase();
+      const isDb = /timeout|econnrefused|connection|password|auth|database/i.test(msg);
+      res.status(500).json({
+        message: isDb
+          ? "Ошибка подключения к базе данных. Проверьте PostgreSQL и DATABASE_URL в .env."
+          : (error.message || "Не удалось создать столбец"),
+      });
     }
   });
 
@@ -3312,7 +4269,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/repositories", async (req, res) => {
     try {
-      const currentUser = JSON.parse(req.headers['x-user'] as string || '{}');
+      const currentUser = req.user;
+      if (!currentUser) return res.status(401).json({ message: "Требуется авторизация" });
       if (currentUser.role !== 'admin') {
         return res.status(403).json({ message: "Только администратор может создавать репозитории" });
       }
@@ -3325,7 +4283,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/repositories/:id", async (req, res) => {
     try {
-      const currentUser = JSON.parse(req.headers['x-user'] as string || '{}');
+      const currentUser = req.user;
+      if (!currentUser) return res.status(401).json({ message: "Требуется авторизация" });
       if (currentUser.role !== 'admin') {
         return res.status(403).json({ message: "Только администратор может редактировать репозитории" });
       }
@@ -3341,7 +4300,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/repositories/:id", async (req, res) => {
     try {
-      const currentUser = JSON.parse(req.headers['x-user'] as string || '{}');
+      const currentUser = req.user;
+      if (!currentUser) return res.status(401).json({ message: "Требуется авторизация" });
       if (currentUser.role !== 'admin') {
         return res.status(403).json({ message: "Только администратор может удалять репозитории" });
       }
@@ -3352,10 +4312,464 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  const httpServer = createServer(app);
+  // ——— YouGile API (двусторонняя синхронизация задач, https://ru.yougile.com/api-v2#/) ———
+  const {
+    isYouGileConfigured,
+    yougileGetAuthKey,
+    setYouGileApiKey,
+    yougileGetProjects,
+    yougileGetBoards,
+    yougileGetColumns,
+    yougileGetTasks,
+    yougileGetUsers,
+    yougileCreateTask,
+    yougileUpdateTask,
+    yougileDeleteTask,
+    getYouGileColumnMap,
+    setYouGileColumnMap,
+  } = await import("./yougile");
+
+  /** Получить API-ключ по логину и паролю YouGile (companyId берётся из YOUGILE_COMPANY_ID в .env) и сохранить в файл .yougile-key */
+  app.post("/api/yougile/auth/key", async (req, res) => {
+    try {
+      const companyId = (process.env.YOUGILE_COMPANY_ID || "").trim();
+      if (!companyId) {
+        return res.status(400).json({ message: "Задайте YOUGILE_COMPANY_ID в .env" });
+      }
+      const { login, password } = req.body || {};
+      if (!login || !password) {
+        return res.status(400).json({ message: "Укажите login и password в теле запроса" });
+      }
+      const { key } = await yougileGetAuthKey(String(login), String(password), companyId);
+      if (!key) {
+        return res.status(500).json({ message: "YouGile не вернул ключ" });
+      }
+      setYouGileApiKey(key);
+      res.json({ success: true, message: "Ключ сохранён. YouGile готов к работе." });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Не удалось получить ключ YouGile" });
+    }
+  });
+
+  app.get("/api/yougile/config", (req, res) => {
+    res.json({
+      enabled: isYouGileConfigured(),
+      companyId: process.env.YOUGILE_COMPANY_ID || null,
+      defaultColumnId: process.env.YOUGILE_DEFAULT_COLUMN_ID || null,
+    });
+  });
+
+  app.get("/api/yougile/status", (req, res) => {
+    res.json({ configured: isYouGileConfigured() });
+  });
+
+  /** Проекты YouGile — из БД (без запросов к API). При ?sync=1 — сначала синхронизация кэша из YouGile, затем ответ из БД. */
+  app.get("/api/yougile/projects", async (req, res) => {
+    try {
+      if (!isYouGileConfigured()) return res.json([]);
+      const forceSync = req.query.sync === "1" || req.query.sync === "true";
+      if (forceSync) {
+        const { clearYougileCache } = await import("./yougile");
+        clearYougileCache();
+        const ygProjects = await yougileGetProjects();
+        await storage.upsertYougileProjects(ygProjects.map((p: any) => ({ id: p.id, title: p.title ?? null })));
+        for (const p of ygProjects) {
+          const boards = await yougileGetBoards(p.id);
+          await storage.upsertYougileBoards(boards.map((b: any) => ({ id: b.id, projectId: b.projectId || p.id, title: b.title ?? null })));
+          for (const b of boards) {
+            const cols = await yougileGetColumns(b.id);
+            await storage.upsertYougileColumns(cols.map((c: any) => ({ id: c.id, boardId: b.id, title: c.title ?? null, order: c.order ?? 0, color: (c as any).color ?? null })));
+          }
+        }
+        const ygUsers = await yougileGetUsers().catch(() => []);
+        await storage.upsertYougileUsers(ygUsers.map((u: any) => ({ id: u.id, email: u.email ?? null, username: u.username ?? null })));
+      }
+      const list = await storage.getYougileProjects();
+      res.json(list.map((p: any) => ({ id: p.id, title: p.title ?? undefined })));
+    } catch (e: any) {
+      if (!res.headersSent) res.status(500).json({ message: e?.message || "Ошибка YouGile" });
+    }
+  });
+
+  /** Доски YouGile — из БД. При ?sync=1 — обновление кэша (см. GET /api/yougile/projects?sync=1). */
+  app.get("/api/yougile/boards", async (req, res) => {
+    try {
+      if (!isYouGileConfigured()) return res.status(400).json({ message: "YouGile не настроен" });
+      const projectId = req.query.projectId as string | undefined;
+      const list = await storage.getYougileBoards(projectId);
+      res.json(list.map((b: any) => ({ id: b.id, title: b.title ?? undefined, projectId: b.projectId })));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Ошибка YouGile API" });
+    }
+  });
+
+  /** Все доски YouGile — из БД (для таск-менеджера). */
+  app.get("/api/yougile/boards-all", async (req, res) => {
+    try {
+      if (!isYouGileConfigured()) return res.json([]);
+      const list = await storage.getYougileBoards();
+      res.json(list.map((b: any) => ({ id: b.id, title: b.title || "Без названия", projectId: b.projectId })));
+    } catch (e: any) {
+      res.json([]);
+    }
+  });
+
+  /** Синхронизация: для каждой доски YouGile создаётся локальный видеопроект, если его ещё нет (чтобы проекты из YouGile сразу появлялись в видеопроектах). */
+  app.post("/api/yougile/sync-projects", async (req, res) => {
+    try {
+      if (!isYouGileConfigured()) {
+        return res.json({ synced: 0, message: "YouGile не настроен" });
+      }
+      const existing = await storage.getProjects();
+      const linkedBoardIds = new Set((existing as any[]).map((p: any) => p.yougileBoardId).filter(Boolean));
+      const projects = await yougileGetProjects();
+      let created = 0;
+      for (const p of projects) {
+        const boards = await yougileGetBoards(p.id);
+        for (const b of boards) {
+          if (linkedBoardIds.has(b.id)) continue;
+          await storage.createProject({
+            name: (b.title || p.title || "Проект YouGile").trim() || "Проект YouGile",
+            status: "planning",
+            yougileBoardId: b.id,
+          } as any);
+          linkedBoardIds.add(b.id);
+          created++;
+        }
+      }
+      res.json({ synced: created });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Ошибка синхронизации" });
+    }
+  });
+
+  /** Колонки доски YouGile — из БД. При ?sync=1 — подтянуть колонки этой доски из API в БД и вернуть. */
+  app.get("/api/yougile/columns", async (req, res) => {
+    try {
+      if (!isYouGileConfigured()) return res.status(400).json({ message: "YouGile не настроен" });
+      const boardId = req.query.boardId as string;
+      if (!boardId) return res.status(400).json({ message: "boardId обязателен" });
+      const forceSync = req.query.sync === "1" || req.query.sync === "true";
+      if (forceSync) {
+        const { clearYougileCache } = await import("./yougile");
+        clearYougileCache();
+        const cols = await yougileGetColumns(boardId);
+        await storage.upsertYougileColumns(cols.map((c: any) => ({ id: c.id, boardId, title: c.title ?? null, order: c.order ?? 0, color: (c as any).color ?? null })));
+      }
+      const list = await storage.getYougileColumns(boardId);
+      res.json(list.map((c: any) => ({ id: c.id, title: c.title ?? undefined, boardId: c.boardId, order: c.order ?? 0, color: c.color ?? undefined })));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Ошибка YouGile API" });
+    }
+  });
+
+  /** Стикеры/фильтры доски YouGile с типом и опциями: list (выпадающий список), string (ввод текста), user (исполнитель). */
+  app.get("/api/yougile/stickers", async (req, res) => {
+    try {
+      const { yougileGetStringStickerStates, yougileGetStringStickerValues, isYouGileConfigured } = await import("./yougile");
+      if (!isYouGileConfigured()) return res.status(400).json({ message: "YouGile не настроен" });
+      const boardId = req.query.boardId as string;
+      if (!boardId) return res.status(400).json({ message: "boardId обязателен" });
+      const list = await yougileGetStringStickerStates(boardId);
+      const withOptions = await Promise.all(list.map(async (s: any) => {
+        const title = ((s.title ?? s.id) || "").toString().trim();
+        let type = (s.type || "").toString().toLowerCase();
+        if (!type && /исполнитель|assignee|performer/i.test(title)) type = "user";
+        let options = Array.isArray(s.options) ? s.options : undefined;
+        if (!options && type !== "user" && s.id) {
+          try {
+            const values = await yougileGetStringStickerValues(s.id);
+            if (values.length > 0) options = values.map((v: any) => ({ id: v.id ?? v.title, title: v.title ?? v.id }));
+          } catch {
+            /* ignore */
+          }
+        }
+        if (options && options.length > 0 && !type) type = "list";
+        if (!type) type = "string";
+        return {
+          id: s.id,
+          title: title || s.id,
+          boardId: s.boardId,
+          order: s.order ?? 0,
+          type,
+          options: options && options.length > 0 ? options : undefined,
+        };
+      }));
+      res.json(withOptions);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Ошибка YouGile API" });
+    }
+  });
+
+  /** Создать колонку на доске YouGile (для видеопроекта: добавить колонку в таск-менеджер) */
+  app.post("/api/yougile/columns", async (req, res) => {
+    try {
+      const { isYouGileConfigured, yougileCreateColumn } = await import("./yougile");
+      if (!isYouGileConfigured()) {
+        return res.status(400).json({ message: "YouGile не настроен" });
+      }
+      const { boardId, title, color } = req.body || {};
+      if (!boardId || !title || typeof title !== "string" || !title.trim()) {
+        return res.status(400).json({ message: "Укажите boardId и title" });
+      }
+      const column = await yougileCreateColumn(boardId, title.trim(), color);
+      res.status(201).json(column);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Ошибка создания колонки YouGile" });
+    }
+  });
+
+  app.get("/api/yougile/column-map", (req, res) => {
+    try {
+      res.json(getYouGileColumnMap());
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Ошибка чтения маппинга колонок" });
+    }
+  });
+
+  app.post("/api/yougile/column-map", (req, res) => {
+    try {
+      const map = req.body && typeof req.body === "object" ? req.body : {};
+      const normalized: Record<string, string> = {};
+      for (const [k, v] of Object.entries(map)) {
+        if (typeof k === "string" && typeof v === "string" && v.trim()) normalized[k.trim()] = v.trim();
+      }
+      setYouGileColumnMap(normalized);
+      res.json(normalized);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Не удалось сохранить маппинг колонок" });
+    }
+  });
+
+  /** Преобразует задачу из БД в формат YouGile (для ответов API). */
+  function mapDbTaskToYouGileTask(t: any, boardIdToProjectId?: Map<string, string>): Record<string, unknown> {
+    const boardId = t.yougileBoardId ?? undefined;
+    const projectId = boardId && boardIdToProjectId ? boardIdToProjectId.get(boardId) : undefined;
+    return {
+      id: t.yougileTaskId || t.id,
+      title: t.title,
+      description: t.description ?? undefined,
+      columnId: t.status ?? undefined,
+      boardId,
+      projectId,
+      deadline: t.dueDate ? new Date(t.dueDate).getTime() : undefined,
+      status: t.status,
+      tags: t.tags ?? [],
+      subtasks: t.subtasks ?? [],
+      assigned: [],
+    };
+  }
+
+  app.get("/api/yougile/tasks/:yougileTaskId", async (req, res) => {
+    try {
+      const { yougileTaskId } = req.params;
+      if (!isYouGileConfigured()) {
+        return res.status(400).json({ message: "YouGile не настроен" });
+      }
+      const task = await storage.getTaskByYougileTaskId(yougileTaskId);
+      if (!task) return res.status(404).json({ message: "Задача YouGile не найдена" });
+      const boards = await storage.getYougileBoards();
+      const boardIdToProjectId = new Map(boards.map((b: any) => [b.id, b.projectId]));
+      res.json(mapDbTaskToYouGileTask(task, boardIdToProjectId));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Ошибка YouGile API" });
+    }
+  });
+
+  /** Список задач YouGile — из БД (без обращения к API). Синхронизация с YouGile выполняется отдельно через POST /api/yougile/sync. */
+  app.get("/api/yougile/tasks", async (req, res) => {
+    try {
+      if (!isYouGileConfigured()) {
+        return res.status(400).json({ message: "YouGile не настроен" });
+      }
+      const projectId = req.query.projectId as string | undefined;
+      const boardId = req.query.boardId as string | undefined;
+      const columnId = req.query.columnId as string | undefined;
+      const title = req.query.title as string | undefined;
+      const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
+      const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
+
+      let tasks: any[] = [];
+      if (boardId) {
+        tasks = await storage.getTasksByYougileBoardId(boardId);
+      } else if (projectId) {
+        const boards = await storage.getYougileBoards(projectId);
+        const seen = new Set<string>();
+        for (const b of boards) {
+          const byBoard = await storage.getTasksByYougileBoardId(b.id);
+          for (const t of byBoard) {
+            if (!seen.has(t.id)) {
+              seen.add(t.id);
+              tasks.push(t);
+            }
+          }
+        }
+      } else {
+        const all = await storage.getTasks();
+        tasks = all.filter((t: any) => t.yougileBoardId);
+      }
+
+      if (columnId) tasks = tasks.filter((t: any) => t.status === columnId);
+      if (title && title.trim()) {
+        const q = title.trim().toLowerCase();
+        tasks = tasks.filter((t: any) => (t.title || "").toLowerCase().includes(q));
+      }
+      const total = tasks.length;
+      if (offset != null || limit != null) {
+        const off = Math.max(0, offset ?? 0);
+        const lim = limit ?? total;
+        tasks = tasks.slice(off, off + lim);
+      }
+
+      const boards = await storage.getYougileBoards();
+      const boardIdToProjectId = new Map(boards.map((b: any) => [b.id, b.projectId]));
+      const list = tasks.map((t) => mapDbTaskToYouGileTask(t, boardIdToProjectId));
+      res.json(list);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Ошибка YouGile API" });
+    }
+  });
+
+  /** Синхронизация из YouGile в БД (кэш проектов/досок/колонок/пользователей + задачи). Без boardId — все доски; с boardId — только эта доска. */
+  app.post("/api/yougile/sync", async (req, res) => {
+    try {
+      if (!isYouGileConfigured()) {
+        return res.status(400).json({ message: "YouGile не настроен. Добавьте YOUGILE_API_KEY в .env" });
+      }
+      const { clearYougileCache } = await import("./yougile");
+      clearYougileCache();
+
+      const ygProjects = await yougileGetProjects();
+      await storage.upsertYougileProjects(ygProjects.map((p: any) => ({ id: p.id, title: p.title ?? null })));
+      for (const p of ygProjects) {
+        const boards = await yougileGetBoards(p.id);
+        await storage.upsertYougileBoards(boards.map((b: any) => ({ id: b.id, projectId: b.projectId || p.id, title: b.title ?? null })));
+        for (const b of boards) {
+          const cols = await yougileGetColumns(b.id);
+          await storage.upsertYougileColumns(cols.map((c: any) => ({ id: c.id, boardId: b.id, title: c.title ?? null, order: c.order ?? 0, color: (c as any).color ?? null })));
+        }
+      }
+      const ygUsers = await yougileGetUsers().catch(() => []);
+      await storage.upsertYougileUsers(ygUsers.map((u: any) => ({ id: u.id, email: u.email ?? null, username: u.username ?? null })));
+
+      const { projectId, boardId, columnId } = req.body || {};
+      const currentUser = req.user;
+      const creatorId = (currentUser?.id as string) || (await storage.getUsers()).find(u => u.role === "admin")?.id;
+      if (!creatorId) {
+        return res.status(400).json({ message: "Нужна авторизация для синхронизации" });
+      }
+      let allYgTasks: Array<{ id: string; title?: string; description?: string; columnId?: string; boardId?: string; deadline?: any }> = [];
+      if (boardId || projectId || columnId) {
+        allYgTasks = await yougileGetTasks({ projectId, boardId, columnId });
+      } else {
+        for (const p of ygProjects) {
+          const boards = await yougileGetBoards(p.id);
+          for (const b of boards) {
+            const tasks = await yougileGetTasks({ boardId: b.id });
+            allYgTasks.push(...tasks);
+          }
+        }
+      }
+      let created = 0;
+      let updated = 0;
+      const yougileIdToEmail = new Map<string, string>();
+      for (const u of ygUsers) {
+        const email = (u.email || u.username || "").toString().trim().toLowerCase();
+        if (email && u.id) yougileIdToEmail.set(u.id, email);
+      }
+      const crmUsers = await storage.getUsers();
+      const emailToCrmUserId = new Map<string, string>();
+      for (const u of crmUsers) {
+        const email = (u.email || "").toString().trim().toLowerCase();
+        if (email && u.id) emailToCrmUserId.set(email, u.id);
+      }
+      const { yougileGetTaskById } = await import("./yougile");
+      for (const yt of allYgTasks) {
+        const existing = await storage.getTaskByYougileTaskId(yt.id);
+        let ytRes = yt as any;
+        if (!Array.isArray(ytRes.tags) || ytRes.tags.length === 0) {
+          const full = await yougileGetTaskById(yt.id).catch(() => null);
+          if (full && Array.isArray((full as any).tags) && (full as any).tags.length > 0) {
+            ytRes = { ...ytRes, tags: (full as any).tags };
+          } else if (full && Array.isArray((full as any).tagIds) && (full as any).tagIds.length > 0) {
+            ytRes = { ...ytRes, tagIds: (full as any).tagIds };
+          }
+        }
+        const yougileColumnId = ytRes.columnId ?? yt.columnId;
+        const status = yougileColumnId || "todo";
+        const deadlineMs = typeof ytRes.deadline === "number" ? ytRes.deadline : (ytRes.deadline && typeof ytRes.deadline === "object" && "deadline" in (ytRes.deadline as object)) ? (ytRes.deadline as { deadline?: number }).deadline : undefined;
+        const dueDate = deadlineMs ? new Date(deadlineMs) : undefined;
+        const assigned = Array.isArray(ytRes.assigned) ? ytRes.assigned as string[] : [];
+        let assigneeId: string | undefined;
+        for (const ygId of assigned) {
+          const email = yougileIdToEmail.get(ygId);
+          if (email) {
+            const crmId = emailToCrmUserId.get(email);
+            if (crmId) {
+              assigneeId = crmId;
+              break;
+            }
+          }
+        }
+        const ytTags = ytRes.tags ?? ytRes.tagIds;
+        const tags = Array.isArray(ytTags)
+          ? ytTags.map((t: any) => (typeof t === "object" && t !== null && ("id" in t || "name" in t)) ? { id: t.id ?? t.name, name: t.name ?? t.id, color: t.color } : { id: String(t), name: String(t) })
+          : undefined;
+        const ytSubtasks = (ytRes as any).checklist ?? (ytRes as any).subtasks;
+        const subtasks = Array.isArray(ytSubtasks)
+          ? ytSubtasks.map((s: any) => ({ id: s.id ?? `st-${Math.random().toString(36).slice(2)}`, title: typeof s === "string" ? s : (s.title ?? s.name ?? ""), completed: !!s.completed }))
+          : undefined;
+        const payload: any = {
+          title: yt.title || "Без названия",
+          description: yt.description ?? undefined,
+          status,
+          priority: "medium",
+          creatorId,
+          assigneeId,
+          dueDate,
+          yougileTaskId: yt.id,
+          yougileBoardId: yt.boardId ?? undefined,
+        };
+        if (tags !== undefined) payload.tags = tags;
+        if (subtasks !== undefined) payload.subtasks = subtasks;
+        if (existing) {
+          await storage.updateTask(existing.id, payload);
+          updated++;
+        } else {
+          await storage.createTask(payload as any);
+          created++;
+        }
+      }
+      res.json({ success: true, created, updated, total: allYgTasks.length });
+    } catch (e: any) {
+      const msg = e?.message != null ? String(e.message) : "Ошибка синхронизации YouGile";
+      if (!res.headersSent) res.status(500).json({ message: msg });
+    }
+  });
+
+  // HTTPS: если заданы пути к сертификатам — трафик шифруется (логин/пароль не видны в Wireshark)
+  let server: Server;
+  const certPath = process.env.SSL_CERT_PATH;
+  const keyPath = process.env.SSL_KEY_PATH;
+  if (certPath && keyPath) {
+    try {
+      const key = fs.readFileSync(keyPath, "utf8");
+      const cert = fs.readFileSync(certPath, "utf8");
+      server = createHttpsServer({ key, cert }, app);
+      console.log("[Security] HTTPS включён — логин и пароль передаются в шифрованном виде");
+    } catch (e: any) {
+      console.error("[Security] Ошибка загрузки SSL:", e?.message);
+      server = createHttpServer(app);
+    }
+  } else {
+    server = createHttpServer(app);
+    if (process.env.NODE_ENV === "production") {
+      console.warn("[Security] Задайте SSL_CERT_PATH и SSL_KEY_PATH в .env для защиты от перехвата логина/пароля.");
+    }
+  }
 
   // WebSocket server for real-time updates
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+  const wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (ws: WebSocket) => {
     console.log('[WebSocket] Client connected');
@@ -3537,20 +4951,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(schema);
     } catch (error: any) {
-      console.error("Create connection schema error:", error);
-      const errorMessage = error.message || "Failed to create connection schema";
-      
-      // Проверяем, не является ли ошибка связанной с отсутствием таблицы
+      const msg = error?.message ?? String(error);
+      console.error("Create connection schema error:", msg);
+      if (error?.stack) console.error(error.stack);
+      const errorMessage = msg || "Failed to create connection schema";
+      const isDbDown = /ECONNREFUSED|connect|connection refused/i.test(errorMessage) || error?.code === "ECONNREFUSED";
+      if (isDbDown) {
+        return res.status(500).json({
+          message: "Не удалось подключиться к базе данных. Проверьте, что PostgreSQL запущен и DATABASE_URL в .env указан верно.",
+        });
+      }
       if (errorMessage.includes("does not exist") || errorMessage.includes("relation") || errorMessage.includes("table")) {
         return res.status(500).json({
           message: "Таблицы для схем подключения не созданы. Выполните SQL скрипт create_connection_schemas_tables.sql в вашей базе данных.",
           error: errorMessage,
         });
       }
-      
-      res.status(500).json({
-        message: errorMessage,
-      });
+      res.status(500).json({ message: errorMessage });
     }
   });
 
@@ -3679,6 +5096,187 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Эфир ОТИС — настройки потока
+  app.get("/api/otis", async (req, res) => {
+    try {
+      const settings = await storage.getOtisStreamSettings();
+      res.json(settings || { name: "Эфир ОТИС", showTimecode: true, withSound: true });
+    } catch (error: any) {
+      const msg = error?.message ?? String(error);
+      console.error("Get otis settings error:", msg);
+      if (error?.stack) console.error(error.stack);
+      res.status(500).json({ message: msg || "Failed to get otis settings" });
+    }
+  });
+
+  app.put("/api/otis", async (req, res) => {
+    try {
+      const { streamUrl, streamUrlBackup, showTimecode, withSound, name, timecodeSource, vmixHost, vmixPort } = req.body;
+      const settings = await storage.upsertOtisStreamSettings({
+        name: name ?? "Эфир ОТИС",
+        streamUrl: streamUrl ?? undefined,
+        streamUrlBackup: streamUrlBackup ?? undefined,
+        showTimecode: showTimecode !== false,
+        withSound: withSound !== false,
+        timecodeSource: timecodeSource ?? "local",
+        vmixHost: vmixHost ?? undefined,
+        vmixPort: vmixPort != null ? parseInt(String(vmixPort), 10) : undefined,
+      });
+      res.json(settings);
+    } catch (error: any) {
+      const msg = error?.message ?? String(error);
+      console.error("Update otis settings error:", msg);
+      if (error?.stack) console.error(error.stack);
+      res.status(500).json({ message: msg || "Failed to update otis settings" });
+    }
+  });
+
+  // Продакшн: личные дела участников шоу
+  app.post("/api/production/upload-photo", productionPhotoUpload.single("photo"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "Файл не выбран" });
+      }
+      const photoUrl = `/uploads/production/${req.file.filename}`;
+      res.json({ url: photoUrl });
+    } catch (error: any) {
+      res.status(500).json({ message: error?.message || "Ошибка загрузки" });
+    }
+  });
+
+  app.get("/api/events/:eventId/participant-profiles", async (req, res) => {
+    try {
+      const { eventId } = req.params;
+      const profiles = await storage.getShowParticipantProfiles(eventId);
+      res.json(profiles);
+    } catch (error: any) {
+      console.error("Get participant profiles error:", error);
+      res.status(500).json({ message: error.message || "Failed to get participant profiles" });
+    }
+  });
+
+  app.post("/api/events/:eventId/participant-profiles", async (req, res) => {
+    try {
+      const { eventId } = req.params;
+      const { name, role, photo, bio, contacts, extra, order } = req.body;
+      if (!name) {
+        return res.status(400).json({ message: "Name is required" });
+      }
+      const profile = await storage.createShowParticipantProfile({
+        eventId,
+        name,
+        role: role ?? undefined,
+        photo: photo ?? undefined,
+        bio: bio ?? undefined,
+        contacts: contacts ?? {},
+        extra: extra ?? {},
+        order: order ?? 0,
+      });
+      res.json(profile);
+    } catch (error: any) {
+      console.error("Create participant profile error:", error);
+      res.status(500).json({ message: error.message || "Failed to create participant profile" });
+    }
+  });
+
+  app.put("/api/participant-profiles/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { name, role, photo, bio, contacts, extra, order } = req.body;
+      const updateData: any = {};
+      if (name !== undefined) updateData.name = name;
+      if (role !== undefined) updateData.role = role;
+      if (photo !== undefined) updateData.photo = photo;
+      if (bio !== undefined) updateData.bio = bio;
+      if (contacts !== undefined) updateData.contacts = contacts;
+      if (extra !== undefined) updateData.extra = extra;
+      if (order !== undefined) updateData.order = order;
+      const updated = await storage.updateShowParticipantProfile(id, updateData);
+      if (!updated) return res.status(404).json({ message: "Profile not found" });
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Update participant profile error:", error);
+      res.status(500).json({ message: error.message || "Failed to update participant profile" });
+    }
+  });
+
+  app.delete("/api/participant-profiles/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const deleted = await storage.deleteShowParticipantProfile(id);
+      if (!deleted) return res.status(404).json({ message: "Profile not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Delete participant profile error:", error);
+      res.status(500).json({ message: error.message || "Failed to delete participant profile" });
+    }
+  });
+
+  // Продакшн: маркеры по таймкоду
+  app.get("/api/events/:eventId/markers", async (req, res) => {
+    try {
+      const { eventId } = req.params;
+      const markers = await storage.getShowMarkers(eventId);
+      res.json(markers);
+    } catch (error: any) {
+      console.error("Get show markers error:", error);
+      res.status(500).json({ message: error.message || "Failed to get markers" });
+    }
+  });
+
+  app.post("/api/events/:eventId/markers", async (req, res) => {
+    try {
+      const { eventId } = req.params;
+      const { timecode, type, value, note } = req.body;
+      const userId = (req as any).user?.id;
+      if (!timecode || !type) {
+        return res.status(400).json({ message: "Timecode and type are required" });
+      }
+      const marker = await storage.createShowMarker({
+        eventId,
+        timecode: String(timecode),
+        type: String(type),
+        value: value ? String(value) : undefined,
+        note: note ? String(note) : undefined,
+        editorId: userId,
+      });
+      res.json(marker);
+    } catch (error: any) {
+      console.error("Create show marker error:", error);
+      res.status(500).json({ message: error.message || "Failed to create marker" });
+    }
+  });
+
+  app.put("/api/markers/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { timecode, type, value, note } = req.body;
+      const updateData: any = {};
+      if (timecode !== undefined) updateData.timecode = timecode;
+      if (type !== undefined) updateData.type = type;
+      if (value !== undefined) updateData.value = value;
+      if (note !== undefined) updateData.note = note;
+      const updated = await storage.updateShowMarker(id, updateData);
+      if (!updated) return res.status(404).json({ message: "Marker not found" });
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Update show marker error:", error);
+      res.status(500).json({ message: error.message || "Failed to update marker" });
+    }
+  });
+
+  app.delete("/api/markers/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const deleted = await storage.deleteShowMarker(id);
+      if (!deleted) return res.status(404).json({ message: "Marker not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Delete show marker error:", error);
+      res.status(500).json({ message: error.message || "Failed to delete marker" });
+    }
+  });
+
   // Equipment search API (for connection schemas)
   app.post("/api/equipment/search", async (req, res) => {
     try {
@@ -3761,5 +5359,5 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  return httpServer;
+  return server;
 }
