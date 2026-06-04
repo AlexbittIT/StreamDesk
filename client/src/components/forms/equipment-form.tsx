@@ -9,23 +9,83 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { insertEquipmentSchema } from "@shared/schema";
+import { canCreateEquipment, canEditEquipment, canReserveEquipment } from "@/lib/equipment-permissions";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PhotoUpload } from "@/components/equipment/photo-upload";
 import { useState, useEffect, useRef } from "react";
 import { z } from "zod";
-import JsBarcode from "jsbarcode";
 import { QrCode, Download, Printer, RefreshCw, ScanBarcode, MapPin } from "lucide-react";
+import {
+  downloadBarcodeLabelPng,
+  openBarcodePrintWindow,
+  renderCompactBarcodeLabel,
+  sanitizeBarcodeFilePart,
+} from "@/lib/barcode-label";
 
 const equipmentFormSchema = insertEquipmentSchema.extend({
   specifications: z.record(z.string()).optional(),
 });
+
+const INTERNAL_SPECIFICATION_KEYS = new Set([
+  "agent",
+  "agentKey",
+  "checkout",
+  "checkoutHistory",
+  "companyId",
+  "createdBy",
+  "createdByUserId",
+  "noteAudit",
+  "notesHistory",
+  "equipmentComments",
+  "workspace",
+]);
+
+const ESTIMATE_SPECIFICATION_KEYS = new Set([
+  "estimatePrice",
+  "estimateCurrency",
+]);
+
+function isInternalSpecificationKey(key: string) {
+  return INTERNAL_SPECIFICATION_KEYS.has(key.trim());
+}
+
+function isHiddenSpecificationKey(key: string) {
+  return isInternalSpecificationKey(key) || ESTIMATE_SPECIFICATION_KEYS.has(key.trim());
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function getEstimatePriceValue(specifications: unknown) {
+  const record = asRecord(specifications);
+  const candidates = [
+    "estimatePrice",
+    "estimate_price",
+    "estimateUnitPrice",
+    "unitPrice",
+    "price",
+    "cost",
+    "Цена",
+    "Цена для сметы",
+    "Стоимость",
+    "Стоимость для сметы",
+    "Сметная стоимость",
+  ];
+  for (const key of candidates) {
+    const value = record[key];
+    if (value != null && String(value).trim()) return String(value).trim();
+  }
+  return "";
+}
 
 interface EquipmentFormProps {
   isOpen: boolean;
   onClose: () => void;
   equipment?: any;
   mode?: "full" | "take_return";
+  companyManager?: boolean;
 }
 
 function getCurrentUser() {
@@ -37,18 +97,77 @@ function getCurrentUser() {
   }
 }
 
-function canEditEquipment(userRole: string | undefined): boolean {
-  return userRole === 'admin' || userRole === 'tech_director';
+function serializeSpecifications(specifications: unknown) {
+  if (!specifications || typeof specifications !== "object" || Array.isArray(specifications)) {
+    return "";
+  }
+
+  return Object.entries(specifications as Record<string, unknown>)
+    .filter(([key]) => !isHiddenSpecificationKey(String(key ?? "")))
+    .map(([key, value]) => {
+      const normalizedKey = String(key ?? "").trim();
+      const normalizedValue =
+        value && typeof value === "object"
+          ? JSON.stringify(value)
+          : String(value ?? "").trim();
+      return normalizedKey && normalizedValue ? `${normalizedKey}: ${normalizedValue}` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
-function isAdmin(userRole: string | undefined): boolean {
-  return userRole === 'admin';
+function parseSpecifications(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .reduce<Record<string, string>>((result, line, index) => {
+      const separatorMatch = line.match(/\s[:=]\s|\s[-–—]\s|[:=]/);
+      const separatorIndex = separatorMatch?.index ?? -1;
+      if (separatorIndex === -1) {
+        result[`Характеристика ${index + 1}`] = line;
+        return result;
+      }
+
+      const key = line.slice(0, separatorIndex).trim();
+      const value = line.slice(separatorIndex + (separatorMatch?.[0]?.length ?? 1)).trim();
+      if (key && value) {
+        result[key] = value;
+      }
+      return result;
+    }, {});
 }
 
-export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: EquipmentFormProps) {
+function normalizeInventoryPart(value: unknown, fallback: string) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9А-ЯЁ]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 12);
+  return normalized || fallback;
+}
+
+function getInventoryPrefix(type: unknown) {
+  const normalized = String(type || "").trim().toLowerCase();
+  if (/camera|камера/.test(normalized)) return "cam";
+  if (/microphone|mic|микрофон/.test(normalized)) return "mic";
+  if (/lighting|light|свет/.test(normalized)) return "lgt";
+  if (/computer|комп/.test(normalized)) return "pc";
+  if (/server|сервер/.test(normalized)) return "srv";
+  if (/display|monitor|экран|монитор/.test(normalized)) return "dsp";
+  if (/audio|звук/.test(normalized)) return "aud";
+  if (/video|видео/.test(normalized)) return "vid";
+  if (/network|lan|сеть/.test(normalized)) return "net";
+  return "eqp";
+}
+
+export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", companyManager = false }: EquipmentFormProps) {
   const [photos, setPhotos] = useState<string[]>(equipment?.photos || []);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [barcodeValue, setBarcodeValue] = useState("");
+  const [specificationsText, setSpecificationsText] = useState("");
+  const [estimatePrice, setEstimatePrice] = useState("");
   const barcodeRef = useRef<SVGSVGElement>(null);
   const { toast } = useToast();
 
@@ -62,31 +181,33 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
         setPhotos(equipment.photos || []);
         const existingBarcode = equipment.barcode || equipment.inventoryNumber || equipment.serialNumber || "";
         setBarcodeValue(existingBarcode);
+        setSpecificationsText(serializeSpecifications(equipment.specifications));
+        setEstimatePrice(getEstimatePriceValue(equipment.specifications));
       } else {
         setPhotos([]);
         setBarcodeValue("");
+        setSpecificationsText("");
+        setEstimatePrice("");
       }
     }
   }, [isOpen, equipment]);
 
   useEffect(() => {
-    if (barcodeRef.current && barcodeValue && barcodeValue.length >= 3) {
+    if (!isOpen || !barcodeRef.current || !barcodeValue || barcodeValue.length < 3) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      if (!barcodeRef.current) return;
       try {
-        JsBarcode(barcodeRef.current, barcodeValue, {
-          format: "CODE128",
-          width: 2,
-          height: 60,
-          displayValue: true,
-          fontSize: 12,
-          margin: 5,
-          background: "#ffffff",
-          lineColor: "#000000",
-        });
+        renderCompactBarcodeLabel(barcodeRef.current, barcodeValue);
       } catch (error) {
         console.error("Error generating barcode:", error);
       }
-    }
-  }, [barcodeValue]);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [isOpen, barcodeValue]);
 
   const form = useForm<z.infer<typeof equipmentFormSchema>>({
     resolver: zodResolver(equipmentFormSchema),
@@ -141,14 +262,36 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
     }
   }, [inventoryNumber, serialNumber]);
 
+  const userCanCreate = canCreateEquipment(currentUser) || companyManager;
+  const userCanEdit = canEditEquipment(currentUser) || companyManager;
+  const userCanReserve = canReserveEquipment(currentUser) || companyManager;
+  const canManageBarcode = userCanEdit || (!equipment && userCanCreate);
+
+  const buildGeneratedInventoryNumber = (data: z.infer<typeof equipmentFormSchema>) => {
+    const prefix = getInventoryPrefix(data.type);
+    const suffix = String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");
+    return `${prefix}_${suffix}`;
+  };
+
+  const buildEquipmentPayload = (data: z.infer<typeof equipmentFormSchema>) => {
+    const inventoryNumber = String(data.inventoryNumber ?? "").trim() || buildGeneratedInventoryNumber(data);
+    const nextBarcode = canManageBarcode ? (barcodeValue.trim() || inventoryNumber) : equipment?.barcode;
+    return {
+      ...data,
+      inventoryNumber,
+      specifications: {
+        ...parseSpecifications(specificationsText),
+        ...(estimatePrice.trim() ? { estimatePrice: estimatePrice.trim(), estimateCurrency: "RUB" } : {}),
+      },
+      notes: String(data.notes ?? "").trim(),
+      photos,
+      barcode: nextBarcode,
+    };
+  };
+
   const createMutation = useMutation({
     mutationFn: async (data: z.infer<typeof equipmentFormSchema>) => {
-      // Only admins can create/promote barcodes
-      const payload = { 
-        ...data, 
-        photos,
-        barcode: (userIsAdmin && barcodeValue) ? barcodeValue : undefined
-      };
+      const payload = buildEquipmentPayload(data);
       const response = await apiRequest("POST", "/api/equipment", payload);
       return response.json();
     },
@@ -163,6 +306,8 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
       form.reset();
       setPhotos([]);
       setBarcodeValue("");
+      setSpecificationsText("");
+      setEstimatePrice("");
     },
     onError: (error: any) => {
       console.error("Error creating equipment:", error);
@@ -188,12 +333,7 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
 
   const updateMutation = useMutation({
     mutationFn: async (data: z.infer<typeof equipmentFormSchema>) => {
-      // Only admins can update/promote barcodes
-      const payload = { 
-        ...data, 
-        photos,
-        barcode: (userIsAdmin && barcodeValue) ? barcodeValue : equipment?.barcode
-      };
+      const payload = buildEquipmentPayload(data);
       const response = await apiRequest("PUT", `/api/equipment/${equipment.id}`, payload);
       return response.json();
     },
@@ -265,95 +405,25 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
   };
 
   const generateBarcode = () => {
-    const prefix = "EQ";
-    const randomNum = Math.floor(Math.random() * 1000000).toString().padStart(6, "0");
-    const newValue = `${prefix}${randomNum}`;
+    if (!canManageBarcode) return;
+    const newValue = buildGeneratedInventoryNumber(form.getValues());
     setBarcodeValue(newValue);
     form.setValue("inventoryNumber", newValue);
   };
 
   const handleDownloadBarcode = () => {
     if (!barcodeRef.current) return;
-    
-    const svgData = new XMLSerializer().serializeToString(barcodeRef.current);
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    const img = new Image();
-    
-    img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx?.drawImage(img, 0, 0);
-      
-      const link = document.createElement("a");
-      link.download = `barcode-${barcodeValue}.png`;
-      link.href = canvas.toDataURL("image/png");
-      link.click();
-    };
-    
-    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+    downloadBarcodeLabelPng(barcodeRef.current, `barcode-${sanitizeBarcodeFilePart(barcodeValue)}.png`);
   };
 
   const handlePrintBarcode = () => {
     if (!barcodeRef.current) return;
-    
-    const svgData = new XMLSerializer().serializeToString(barcodeRef.current);
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
-    
     const name = form.getValues("name") || "Оборудование";
     const model = form.getValues("model") || "";
-    
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Печать штрих-кода</title>
-          <style>
-            body {
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              margin: 0;
-              font-family: system-ui, -apple-system, sans-serif;
-            }
-            .barcode-container {
-              text-align: center;
-              padding: 20px;
-            }
-            .equipment-name {
-              font-size: 18px;
-              font-weight: bold;
-              margin-bottom: 8px;
-            }
-            .equipment-model {
-              font-size: 14px;
-              color: #666;
-              margin-bottom: 15px;
-            }
-            @media print {
-              body { margin: 0; padding: 20mm; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="barcode-container">
-            <div class="equipment-name">${name}</div>
-            <div class="equipment-model">${model}</div>
-            ${svgData}
-          </div>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-    setTimeout(() => printWindow.print(), 250);
+    openBarcodePrintWindow({ svg: barcodeRef.current, name, model });
   };
 
-  const userCanEdit = canEditEquipment(currentUser?.role);
-  const userIsAdmin = isAdmin(currentUser?.role);
-  const isTakeReturnMode = mode === "take_return" || (equipment && !userCanEdit);
+  const isTakeReturnMode = mode === "take_return" && userCanReserve;
 
   if (isTakeReturnMode && equipment) {
     return (
@@ -439,7 +509,7 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto hide-scrollbar bg-white dark:bg-slate-900">
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl max-h-[90vh] overflow-y-auto hide-scrollbar bg-white dark:bg-slate-900 sm:w-full">
         <DialogHeader>
           <DialogTitle className="text-slate-900 dark:text-white">
             {equipment ? "Редактировать оборудование" : "Добавить оборудование"}
@@ -513,6 +583,20 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
                 )}
               />
 
+              <FormItem>
+                <FormLabel className="text-slate-700 dark:text-slate-300">Стоимость для сметы</FormLabel>
+                <FormControl>
+                  <Input
+                    inputMode="decimal"
+                    placeholder="15000"
+                    className="bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600"
+                    value={estimatePrice}
+                    onChange={(event) => setEstimatePrice(event.target.value)}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+
               <FormField
                 control={form.control}
                 name="serialNumber"
@@ -550,13 +634,13 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
                           value={field.value || ""} 
                         />
                       </FormControl>
-                      {userIsAdmin ? (
+                      {canManageBarcode ? (
                         <Button
                           type="button"
                           variant="outline"
                           size="icon"
                           onClick={generateBarcode}
-                          title="Сгенерировать штрих-код (только администраторы)"
+                          title="Сгенерировать штрих-код"
                           className="shrink-0"
                         >
                           <RefreshCw className="w-4 h-4" />
@@ -567,7 +651,7 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
                           variant="outline"
                           size="icon"
                           disabled
-                          title="Только администраторы могут генерировать штрих-коды"
+                          title="Недостаточно прав для генерации штрих-кода"
                           className="shrink-0 opacity-50 cursor-not-allowed"
                         >
                           <RefreshCw className="w-4 h-4" />
@@ -658,11 +742,21 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full" }: Equ
                     </Button>
                   </div>
                 </div>
-                <div className="flex justify-center p-3 bg-white rounded border">
+                <div className="flex justify-center p-3 bg-white rounded-md border overflow-hidden">
                   <svg ref={barcodeRef} data-testid="barcode-preview" />
                 </div>
               </div>
             )}
+
+            <div className="space-y-2">
+              <FormLabel className="text-slate-700 dark:text-slate-300">Тех. характеристики</FormLabel>
+              <Textarea
+                value={specificationsText}
+                onChange={(event) => setSpecificationsText(event.target.value)}
+                placeholder={"Порт HDMI: 2\nПитание: USB-C\nКомплектация: кейс"}
+                className="min-h-[110px] bg-white font-mono text-sm dark:bg-slate-800 border-slate-300 dark:border-slate-600"
+              />
+            </div>
 
             <FormField
               control={form.control}

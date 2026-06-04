@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Video, Camera, Radio } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface CurrentActivityProps {
   streams?: any[];

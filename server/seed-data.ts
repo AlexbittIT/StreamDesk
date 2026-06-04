@@ -4,6 +4,10 @@ import { hashPassword } from "./auth";
 export async function seedDatabase() {
   try {
     console.log("Seeding database with sample data...");
+    const adminUsername = process.env.PLATFORM_ADMIN_USERNAME || process.env.ADMIN_USERNAME || "admin";
+    const adminPassword = process.env.PLATFORM_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || "admin123";
+    const adminEmail = process.env.PLATFORM_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "admin@streamdesk.local";
+    const adminName = process.env.PLATFORM_ADMIN_NAME || "Администратор платформы";
     
     // Проверка подключения к базе данных перед началом
     try {
@@ -204,6 +208,24 @@ export async function seedDatabase() {
 
     for (const event of events) {
       await storage.createEvent(event);
+    }
+
+    // Примеры задач для раздела «Мои задачи» (без yougileBoardId), чтобы в таск-менеджере сразу были карточки
+    if (adminUser?.id) {
+      const existingTasks = await storage.getTasks().catch(() => []);
+      const localTasks = (existingTasks as any[]).filter((t) => !t.yougileBoardId);
+      if (localTasks.length === 0) {
+        const sampleTasks = [
+          { title: "Настроить стрим на завтра", description: "Проверить OBS и ключ трансляции", status: "todo", priority: "high" as const, creatorId: adminUser.id, assigneeId: adminUser.id },
+          { title: "Подготовить оборудование к эфиру", description: "Камеры, микрофоны, свет", status: "in_progress", priority: "medium" as const, creatorId: adminUser.id, assigneeId: null },
+          { title: "Обновить графику в OBS", description: "Логотип и нижние титры", status: "todo", priority: "low" as const, creatorId: adminUser.id, assigneeId: null },
+          { title: "Провести тестовый эфир", description: "Проверка связи и звука", status: "done", priority: "medium" as const, creatorId: adminUser.id, assigneeId: adminUser.id, completedAt: new Date(Date.now() - 86400000) },
+        ];
+        for (const t of sampleTasks) {
+          await storage.createTask(t as any);
+        }
+        console.log("✅ Sample tasks created for «Мои задачи»");
+      }
     }
 
     // Create sample notifications

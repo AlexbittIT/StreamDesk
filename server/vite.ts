@@ -8,15 +8,49 @@ import { nanoid } from "nanoid";
 
 const viteLogger = createLogger();
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
+const colors = {
+  reset: "\x1b[0m",
+  dim: "\x1b[2m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  cyan: "\x1b[36m",
+  bold: "\x1b[1m",
+};
+
+function time() {
+  return new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
     second: "2-digit",
     hour12: true,
   });
+}
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+/** Обычный лог (серый/приглушённый) */
+export function log(message: string, source = "express") {
+  console.log(`${colors.dim}${time()} [${source}]${colors.reset} ${message}`);
+}
+
+/** Успех — зелёный */
+export function logSuccess(message: string, source = "express") {
+  console.log(`${colors.dim}${time()} ${colors.green}[${source}] ${message}${colors.reset}`);
+}
+
+/** Предупреждение — жёлтый */
+export function logWarn(message: string, source = "express") {
+  console.log(`${colors.dim}${time()} ${colors.yellow}[${source}] ${message}${colors.reset}`);
+}
+
+/** Ошибка — красный */
+export function logError(message: string, source = "express") {
+  console.log(`${colors.dim}${time()} ${colors.red}[${source}] ${message}${colors.reset}`);
+}
+
+/** Лог HTTP-запроса с цветом по статусу: 2xx зелёный, 4xx жёлтый, 5xx красный */
+export function logRequest(line: string, statusCode: number) {
+  const c = statusCode >= 500 ? colors.red : statusCode >= 400 ? colors.yellow : colors.green;
+  console.log(`${colors.dim}${time()} [express]${colors.reset} ${c}${line}${colors.reset}`);
 }
 
 export async function setupVite(app: Express, server: Server) {

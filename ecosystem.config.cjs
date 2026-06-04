@@ -1,10 +1,10 @@
-﻿// PM2 конфигурация для StreamDesk
+// PM2 конфигурация для StreamDesk (CommonJS — .cjs из-за "type": "module" в package.json)
 module.exports = {
   apps: [{
     name: 'streamdesk',
-    script: 'server/index.ts',
-    interpreter: 'npx',
-    interpreter_args: 'tsx',
+    cwd: __dirname,
+    script: 'dist/index.js',
+    interpreter: 'node',
     instances: 1,
     exec_mode: 'fork',
     env: {

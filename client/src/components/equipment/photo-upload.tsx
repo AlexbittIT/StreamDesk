@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { X, Upload, Image as ImageIcon } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { apiUrl } from '@/lib/queryClient';
 
 interface PhotoUploadProps {
   equipmentId?: string;
@@ -26,11 +27,20 @@ export function PhotoUpload({ equipmentId, existingPhotos, onPhotosChange }: Pho
       for (const file of Array.from(files)) {
         // Простая симуляция загрузки файла
         // В реальном приложении здесь должна быть загрузка на сервер или в облако
-        const url = URL.createObjectURL(file);
-        uploadedUrls.push(url);
+        const formData = new FormData();
+        formData.append('photo', file);
+        const response = await fetch(apiUrl('/api/equipment/photos/upload'), {
+          method: 'POST',
+          credentials: 'include',
+          body: formData,
+        });
+        if (!response.ok) throw new Error('Upload failed');
+        const data = await response.json();
+        if (typeof data?.url !== 'string' || !data.url) throw new Error('Invalid upload response');
+        uploadedUrls.push(data.url);
       }
 
-      const updatedPhotos = [...existingPhotos, ...uploadedUrls];
+      const updatedPhotos = [...existingPhotos.filter((photo) => !String(photo).startsWith('blob:')), ...uploadedUrls];
       onPhotosChange(updatedPhotos);
       
       toast({
@@ -50,6 +60,14 @@ export function PhotoUpload({ equipmentId, existingPhotos, onPhotosChange }: Pho
 
   const addPhotoByUrl = () => {
     if (!newPhotoUrl.trim()) return;
+    if (newPhotoUrl.trim().startsWith('blob:')) {
+      toast({
+        title: "РћС€РёР±РєР°",
+        description: "Blob-СЃСЃС‹Р»РєРё РЅРµ СЃРѕС…СЂР°РЅСЏСЋС‚СЃСЏ. Р—Р°РіСЂСѓР·РёС‚Рµ С„Р°Р№Р» РєРЅРѕРїРєРѕР№ РЅРёР¶Рµ.",
+        variant: "destructive",
+      });
+      return;
+    }
     
     // Простая проверка на URL изображения
     if (!newPhotoUrl.match(/\.(jpeg|jpg|gif|png|webp)$/i) && !newPhotoUrl.startsWith('http')) {
@@ -61,7 +79,7 @@ export function PhotoUpload({ equipmentId, existingPhotos, onPhotosChange }: Pho
       return;
     }
 
-    const updatedPhotos = [...existingPhotos, newPhotoUrl];
+    const updatedPhotos = [...existingPhotos.filter((photo) => !String(photo).startsWith('blob:')), newPhotoUrl];
     onPhotosChange(updatedPhotos);
     setNewPhotoUrl('');
     
@@ -76,6 +94,9 @@ export function PhotoUpload({ equipmentId, existingPhotos, onPhotosChange }: Pho
     onPhotosChange(updatedPhotos);
   };
 
+  const visiblePhotos = existingPhotos.filter((photo) => !String(photo).startsWith('blob:'));
+  const brokenLocalPhotos = existingPhotos.length - visiblePhotos.length;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -89,12 +110,18 @@ export function PhotoUpload({ equipmentId, existingPhotos, onPhotosChange }: Pho
       </div>
 
       {/* Существующие фотографии */}
-      {existingPhotos.length > 0 && (
+      {brokenLocalPhotos > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          Старые временные фото не открываются после перезагрузки. Загрузите файлы заново.
+        </div>
+      )}
+
+      {visiblePhotos.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {existingPhotos.map((photo, index) => (
+          {visiblePhotos.map((photo, index) => (
             <div key={index} className="relative group">
               <img
-                src={photo}
+                src={/^(https?:)?\/\//i.test(photo) || photo.startsWith("/") ? photo : photo.includes("uploads/") ? `/${photo.replace(/^\/+/, "")}` : `/uploads/${photo.replace(/^\/+/, "")}`}
                 alt={`Фото ${index + 1}`}
                 className="w-full h-24 object-cover rounded-lg border"
                 onError={(e) => {

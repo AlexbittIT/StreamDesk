@@ -22,7 +22,7 @@ import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { Badge } from "@/components/ui/badge";
 import { useI18n } from "@/hooks/use-i18n";
 import { cn } from "@/lib/utils";
-import { encodeUserHeader } from "@/lib/queryClient";
+import { apiUrl, encodeUserHeader } from "@/lib/queryClient";
 
 const API_BASE = (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_BASE) || "";
 
@@ -298,7 +298,17 @@ export default function Settings() {
   const { language, setLanguage, t } = useI18n();
   const { toast } = useToast();
   const avatarInputRef = useRef<HTMLInputElement>(null);
-  const [profileUser, setProfileUser] = useState<{ id: string; name: string; username?: string; email?: string; phone?: string; avatar?: string; role?: string } | null>(() => {
+  const [profileUser, setProfileUser] = useState<{
+    id: string;
+    name: string;
+    username?: string;
+    email?: string;
+    phone?: string;
+    avatar?: string;
+    role?: string;
+    permissions?: string[];
+    workspaceMode?: string;
+  } | null>(() => {
     try {
       const raw = localStorage.getItem("streamstudio_user");
       return raw ? JSON.parse(raw) : null;
@@ -314,8 +324,40 @@ export default function Settings() {
     return keys.length > 0 ? keys : DEFAULT_BOTTOM_NAV_KEYS.filter((k) => k !== "more");
   });
 
+  const refreshProfile = async (silent = true) => {
+    try {
+      const response = await fetch(apiUrl("/api/auth/me"), { credentials: "include" });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!data?.user) return;
+      setProfileUser(data.user);
+      localStorage.setItem("streamstudio_user", JSON.stringify(data.user));
+      if (!silent) toast({ title: "Данные профиля обновлены" });
+    } catch {
+      if (!silent) toast({ title: "Не удалось обновить профиль", variant: "destructive" });
+    }
+  };
+
+  const roleLabel = (role?: string) => {
+    if (isPlatformOwner) return "Владелец платформы";
+    switch (role) {
+      case "admin":
+        return "Администратор";
+      case "manager":
+        return "Менеджер";
+      case "employee":
+        return "Сотрудник";
+      default:
+        return role || "Не указана";
+    }
+  };
+
   useEffect(() => {
     setBottomNavSelected(getBottomNavTabKeys().filter((k) => k !== "more"));
+  }, []);
+
+  useEffect(() => {
+    void refreshProfile();
   }, []);
 
   useEffect(() => {
@@ -357,6 +399,18 @@ export default function Settings() {
 
   const candidates = getBottomNavCandidates();
   const maxSelect = BOTTOM_NAV_MAX_TABS - 1; // один слот под «Ещё»
+  const isPlatformOwner =
+    profileUser?.workspaceMode === "platform_admin" ||
+    (Array.isArray(profileUser?.permissions) && profileUser.permissions.includes("platform:admin"));
+  const settingsTabs = [
+    { value: "profile", label: "Профиль", icon: User, visible: true },
+    { value: "notifications", label: "Уведомления", icon: Bell, visible: true },
+    { value: "security", label: "Безопасность", icon: Shield, visible: true },
+    { value: "appearance", label: "Внешний вид", icon: Palette, visible: true },
+    { value: "language", label: "Язык", icon: Languages, visible: true },
+    { value: "integrations", label: "Интеграции", icon: Globe, visible: !isPlatformOwner },
+    { value: "mobile", label: "Телефон", icon: Smartphone, visible: !isPlatformOwner },
+  ].filter((tab) => tab.visible);
 
   const handleBottomNavToggle = (tabKey: string, checked: boolean) => {
     setBottomNavSelected((prev) => {
@@ -449,35 +503,16 @@ export default function Settings() {
       </div>
 
       <Tabs defaultValue="profile" className="space-y-4 sm:space-y-6 min-w-0">
-        <TabsList className="flex w-full overflow-x-auto gap-0.5 p-1 min-w-0 sm:grid sm:grid-cols-4 lg:grid-cols-7 sm:overflow-visible h-auto flex-nowrap">
-          <TabsTrigger value="profile" className="flex items-center gap-2 shrink-0 sm:shrink">
-            <User className="w-4 h-4" />
-            <span className="hidden sm:inline">Профиль</span>
-          </TabsTrigger>
-          <TabsTrigger value="notifications" className="flex items-center gap-2 shrink-0 sm:shrink">
-            <Bell className="w-4 h-4" />
-            <span className="hidden sm:inline">Уведомления</span>
-          </TabsTrigger>
-          <TabsTrigger value="security" className="flex items-center gap-2 shrink-0 sm:shrink">
-            <Shield className="w-4 h-4" />
-            <span className="hidden sm:inline">Безопасность</span>
-          </TabsTrigger>
-          <TabsTrigger value="appearance" className="flex items-center gap-2 shrink-0 sm:shrink">
-            <Palette className="w-4 h-4" />
-            <span className="hidden sm:inline">Внешний вид</span>
-          </TabsTrigger>
-          <TabsTrigger value="language" className="flex items-center gap-2 shrink-0 sm:shrink">
-            <Languages className="w-4 h-4" />
-            <span className="hidden sm:inline">Язык</span>
-          </TabsTrigger>
-          <TabsTrigger value="integrations" className="flex items-center gap-2 shrink-0 sm:shrink">
-            <Globe className="w-4 h-4" />
-            <span className="hidden sm:inline">Интеграции</span>
-          </TabsTrigger>
-          <TabsTrigger value="mobile" className="flex items-center gap-2 shrink-0 sm:shrink">
-            <Smartphone className="w-4 h-4" />
-            <span className="hidden sm:inline">Телефон</span>
-          </TabsTrigger>
+        <TabsList className="flex w-full overflow-x-auto gap-0.5 p-1 min-w-0 sm:overflow-visible h-auto flex-nowrap">
+          {settingsTabs.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <TabsTrigger key={tab.value} value={tab.value} className="flex items-center gap-2 shrink-0 sm:shrink">
+                <Icon className="w-4 h-4" />
+                <span className="hidden sm:inline">{tab.label}</span>
+              </TabsTrigger>
+            );
+          })}
         </TabsList>
 
         <TabsContent value="profile">
@@ -492,29 +527,29 @@ export default function Settings() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="name">Полное имя</Label>
-                  <Input id="name" defaultValue="Иван Петров" />
+                  <Input id="name" value={profileUser?.name || ""} readOnly />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="username">Имя пользователя</Label>
-                  <Input id="username" defaultValue="ivan" />
+                  <Input id="username" value={profileUser?.username || ""} readOnly />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
-                  <Input id="email" type="email" defaultValue="ivan@streamstudio.ru" />
+                  <Input id="email" type="email" value={profileUser?.email || ""} readOnly placeholder="Не указан" />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="phone">Телефон</Label>
-                  <Input id="phone" defaultValue="+7 (999) 123-45-67" />
+                  <Input id="phone" value={profileUser?.phone || ""} readOnly placeholder="Не указан" />
                 </div>
               </div>
               
               <div className="space-y-2">
                 <Label htmlFor="role">Роль</Label>
-                <Input id="role" defaultValue="Администратор" disabled />
+                <Input id="role" value={roleLabel(profileUser?.role)} disabled />
               </div>
 
               <div className="flex justify-end">
-                <Button>Сохранить изменения</Button>
+                <Button type="button" variant="outline" onClick={() => void refreshProfile(false)}>Обновить данные</Button>
               </div>
             </CardContent>
           </Card>
@@ -546,13 +581,15 @@ export default function Settings() {
                   <Switch id="system-alerts" defaultChecked />
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="stream-notifications">Уведомления о стримах</Label>
-                    <p className="text-sm text-gray-600">Уведомления о начале и окончании стримов</p>
+                {!isPlatformOwner && (
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="stream-notifications">Уведомления о стримах</Label>
+                      <p className="text-sm text-gray-600">Уведомления о начале и окончании стримов</p>
+                    </div>
+                    <Switch id="stream-notifications" defaultChecked />
                   </div>
-                  <Switch id="stream-notifications" defaultChecked />
-                </div>
+                )}
 
                 <div className="flex items-center justify-between">
                   <div>
@@ -693,7 +730,7 @@ export default function Settings() {
                 <Button>Обновить пароль</Button>
               </div>
 
-              {profileUser?.role === "admin" && (
+              {profileUser?.role === "admin" && !isPlatformOwner && (
                 <div className="border-t pt-6 mt-6 space-y-3">
                   <div className="flex items-center gap-2">
                     <Terminal className="w-5 h-5 text-muted-foreground" />

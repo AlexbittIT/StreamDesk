@@ -11,12 +11,12 @@ const PATH_TO_TAB: Record<string, string> = {
   "/maps": "maps",
   "/room-booking": "room-booking",
   "/equipment": "equipment",
-  "/transcription": "transcription",
-  "/computers": "computers",
+  "/estimates": "estimates",
+  "/computers": "monitoring",
   "/projects": "projects",
   "/monitoring": "monitoring",
   "/streams": "streams",
-  "/servers": "servers",
+  "/servers": "monitoring",
   "/connection-schemas": "connection-schemas",
   "/chatgpt": "chatgpt",
   "/notifications": "notifications",
@@ -27,11 +27,12 @@ const PATH_TO_TAB: Record<string, string> = {
 interface ProtectedRouteProps {
   children: React.ReactNode;
   requiredRole?: string | string[];
+  requiredPermission?: string | string[];
   user?: any;
 }
 
-export function ProtectedRoute({ children, requiredRole, user }: ProtectedRouteProps) {
-  const [, setLocation] = useLocation();
+export function ProtectedRoute({ children, requiredRole, requiredPermission, user }: ProtectedRouteProps) {
+  const [path, setLocation] = useLocation();
 
   // Если пользователь не передан, пытаемся получить из localStorage
   const currentUser = user || (() => {
@@ -83,9 +84,30 @@ export function ProtectedRoute({ children, requiredRole, user }: ProtectedRouteP
     }
   }
 
-  const [path] = useLocation();
+  if (requiredPermission) {
+    const requiredPermissions = Array.isArray(requiredPermission) ? requiredPermission : [requiredPermission];
+    const currentPermissions = Array.isArray(currentUser.permissions) ? currentUser.permissions : [];
+    const hasPermission = requiredPermissions.every((permission) => currentPermissions.includes(permission));
+    if (!hasPermission) {
+      return (
+        <div className="flex items-center justify-center min-h-[50vh] p-4">
+          <Card className="max-w-md w-full">
+            <CardContent className="py-8 text-center">
+              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-red-500" />
+              <h3 className="text-lg font-semibold mb-2">Доступ ограничен</h3>
+              <p className="text-muted-foreground mb-4">
+                Для этой страницы нужны специальные права платформы.
+              </p>
+              <Button onClick={() => setLocation("/")}>На главную</Button>
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+  }
+
   const tabKey = PATH_TO_TAB[path];
-  if (tabKey && currentUser.role !== "admin") {
+  if (tabKey) {
     const perms = (currentUser.permissions as string[]) || [];
     const hasAnyTab = perms.some((p: string) => p.startsWith("tab:"));
     if (hasAnyTab && !perms.includes(tabPermission(tabKey))) {

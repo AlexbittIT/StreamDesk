@@ -148,6 +148,27 @@ export function setYouGileApiKey(key: string): void {
   fs.writeFileSync(YOUGILE_KEY_FILE, key.trim(), "utf8");
 }
 
+/** Ошибка лимита запросов YouGile (429 или сообщение «слишком много запросов»). Повтор — через retryAfterMs. */
+export class YouGileRateLimitError extends Error {
+  retryAfterMs: number;
+  constructor(message: string, retryAfterMs = 60_000) {
+    super(message);
+    this.name = "YouGileRateLimitError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function isRateLimitMessage(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("too many requests") ||
+    lower.includes("лимит") ||
+    lower.includes("rate limit") ||
+    lower.includes("превышен") ||
+    lower.includes("429")
+  );
+}
+
 async function yougileFetch<T = unknown>(
   path: string,
   options: RequestInit = {}
@@ -171,11 +192,20 @@ async function yougileFetch<T = unknown>(
   const text = await res.text();
   if (!res.ok) {
     let errMsg = `YouGile API ${res.status}`;
+    let retryAfterMs = 60_000;
     try {
       const json = JSON.parse(text);
       if (json.error || json.message) errMsg = json.error || json.message;
     } catch {
       if (text) errMsg = text.slice(0, 200);
+    }
+    if (res.status === 429 || isRateLimitMessage(errMsg)) {
+      const retryAfter = res.headers.get("Retry-After");
+      if (retryAfter) {
+        const sec = parseInt(retryAfter, 10);
+        if (!Number.isNaN(sec)) retryAfterMs = Math.min(sec * 1000, 300_000);
+      }
+      throw new YouGileRateLimitError(errMsg, retryAfterMs);
     }
     throw new Error(errMsg);
   }
@@ -329,45 +359,161 @@ export interface YouGileStringStickerState {
   [key: string]: unknown;
 }
 
-/** Опции для стикера типа «список» (например значения «Архив»: BABA, SKYNET_2). Пробуем разные пути API. */
-export async function yougileGetStringStickerValues(stringStickerStateId: string): Promise<Array<{ id: string; title?: string }>> {
-  const cacheKey = `sticker-values:${stringStickerStateId}`;
+/** Опции стикера (значения списка). YouGile: GET /string-stickers/:id возвращает { id, name, states: [{ id, name, color }] }. */
+export async function yougileGetStringStickerValues(stringStickerId: string): Promise<Array<{ id: string; title?: string }>> {
+  const cacheKey = `sticker-values:${stringStickerId}`;
   return yougileGetCached<Array<{ id: string; title?: string }>>(cacheKey, CACHE_TTL.stickers, async () => {
+    const enc = encodeURIComponent(stringStickerId);
+    try {
+      const one = await yougileFetch<{ id?: string; name?: string; deleted?: boolean; states?: Array<{ id?: string; name?: string }> }>(`/string-stickers/${enc}`);
+      if (one && (one as any).deleted !== true && Array.isArray((one as any).states)) {
+        const states = (one as any).states as Array<{ id?: string; name?: string }>;
+        if (states.length > 0)
+          return states.map((s, i) => {
+            const id = (s.id ?? s.name ?? `opt-${i}`).toString() || `opt-${i}`;
+            return { id, title: (s.name ?? s.id ?? id).toString() };
+          });
+      }
+    } catch {
+      /* try list endpoints below */
+    }
+    const q = `stringStickerStateId=${enc}`;
     const paths = [
-      `/string-sticker-values?stringStickerStateId=${encodeURIComponent(stringStickerStateId)}`,
-      `/string-sticker-states/${encodeURIComponent(stringStickerStateId)}/values`,
-      `/string-sticker-state/${encodeURIComponent(stringStickerStateId)}/values`,
+      `/string-sticker-values?${q}`,
+      `/string-sticker/search?${q}`,
+      `/string-stickers/search?${q}`,
+      `/string-sticker-states/${enc}/values`,
+      `/string-sticker-state/${enc}/values`,
     ];
     for (const path of paths) {
       try {
-        const data = await yougileFetch<Array<{ id: string; title?: string }> | { content?: Array<{ id: string; title?: string }> }>(path);
-        const list = Array.isArray(data) ? data : (data as { content?: Array<{ id: string; title?: string }> })?.content ?? [];
-        if (list.length >= 0) return list;
+        const data = await yougileFetch<Array<{ id: string; title?: string }> | { content?: Array<{ id: string; title?: string }>; values?: Array<{ id: string; title?: string }> }>(path);
+        const list = Array.isArray(data)
+          ? data
+          : (data as any)?.content ?? (data as any)?.values ?? [];
+        if (list.length > 0) return list;
       } catch {
-        /* try next path */
+        /* try next */
       }
     }
     return [];
   });
 }
 
-/** Получить список стикеров (фильтров) для доски — «Исполнитель», «Приоритет», «Архив» и т.д. */
+/** Формат YouGile: один стикер — id, name, states: [{ id, name, color }]. Не отбрасываем стикеры без id — подставляем sticker-${i}. */
+function normalizeYouGileStickerList(
+  raw: Array<{ id?: string; name?: string; title?: string; deleted?: boolean; states?: Array<{ id?: string; name?: string; title?: string }> }>,
+  boardId: string
+): YouGileStringStickerState[] {
+  return raw
+    .filter((s) => s && (s as any).deleted !== true)
+    .map((s, i) => {
+      const id = (s.id ?? `sticker-${i}`).toString() || `sticker-${i}`;
+      const title = ((s.name ?? s.title ?? s.id ?? id) || "").toString().trim();
+      const states = Array.isArray((s as any).states) ? (s as any).states : [];
+      const options =
+        states.length > 0
+          ? states.map((st: any, j: number) => {
+              const optId = (st.id ?? st.name ?? `opt-${j}`).toString() || `opt-${j}`;
+              return { id: optId, title: (st.name ?? st.title ?? st.id ?? optId).toString() };
+            })
+          : undefined;
+      const type = options && options.length > 0 ? "list" : "string";
+      return {
+        id,
+        title: title || id,
+        boardId,
+        order: i,
+        type,
+        options,
+      } as YouGileStringStickerState;
+    });
+}
+
+/** Получить список стикеров доски. YouGile: GET /string-stickers?boardId= — массив { id, name, states: [{ id, name, color }] }. */
 export async function yougileGetStringStickerStates(boardId: string): Promise<YouGileStringStickerState[]> {
   const cacheKey = `stickers:${boardId}`;
   return yougileGetCached<YouGileStringStickerState[]>(cacheKey, CACHE_TTL.stickers, async () => {
-    const paths = [
-      `/string-sticker-states?boardId=${encodeURIComponent(boardId)}`,
-      `/string-sticker-state?boardId=${encodeURIComponent(boardId)}`,
+    const encBoard = encodeURIComponent(boardId);
+    const qBoard = `boardId=${encBoard}`;
+    const qBoardSnake = `board_id=${encBoard}`;
+    const paths: string[] = [
+      `/string-stickers?${qBoard}`,
+      `/string-stickers?${qBoardSnake}`,
+      `/string-sticker-states?${qBoard}`,
+      `/string-sticker-states?${qBoardSnake}`,
+      `/string-sticker-state?${qBoard}`,
+      `/string-sticker-states/search?${qBoard}`,
+      `/boards/${encBoard}/string-stickers`,
+      `/board/${encBoard}/string-stickers`,
+      `/boards/${encBoard}/string-sticker-states`,
     ];
     for (const path of paths) {
       try {
-        const data = await yougileFetch<YouGileStringStickerState[] | { content?: YouGileStringStickerState[] }>(path);
-        const list = Array.isArray(data) ? data : (data as { content?: YouGileStringStickerState[] })?.content ?? [];
-        const filtered = list.filter((s: YouGileStringStickerState) => !s.boardId || s.boardId === boardId);
-        if (filtered.length > 0 || list.length >= 0) return filtered;
+        const data = await yougileFetch<unknown>(path);
+        let list: Array<{ id?: string; name?: string; states?: Array<{ id?: string; name?: string }> }> = [];
+        if (Array.isArray(data)) list = data as any;
+        else if (data && typeof data === "object") {
+          const c = (data as any).content ?? (data as any).data ?? (data as any).items;
+          if (Array.isArray(c)) list = c;
+          else if (path.includes("/boards/") && !path.includes("string-sticker")) {
+            const obj = data as Record<string, unknown>;
+            for (const key of Object.keys(obj)) {
+              const val = obj[key];
+              if (Array.isArray(val) && val.length > 0 && typeof val[0] === "object" && val[0] !== null) {
+                const first = val[0] as Record<string, unknown>;
+                if ("id" in first && ("name" in first || "states" in first)) {
+                  list = val as any;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        if (list.length > 0) {
+          const normalized = normalizeYouGileStickerList(list, boardId);
+          if (normalized.length > 0) return normalized;
+        }
       } catch {
         /* try next path */
       }
+    }
+    // Fallback: доска может содержать id стикеров — запрашиваем каждый GET /string-stickers/:id
+    try {
+      const board = await yougileGetBoardById(boardId);
+      if (board && typeof board === "object") {
+        const raw = (board as any).stringStickers ?? (board as any).stringStickerIds ?? (board as any).stickerIds;
+        const ids = Array.isArray(raw) ? raw.map((x: any) => (typeof x === "object" && x?.id != null ? x.id : x)) : [];
+        if (ids.length > 0) {
+          const out: YouGileStringStickerState[] = [];
+          for (let i = 0; i < ids.length; i++) {
+            try {
+              const one = await yougileFetch<{ id?: string; name?: string; deleted?: boolean; states?: Array<{ id?: string; name?: string }> }>(`/string-stickers/${encodeURIComponent(ids[i])}`);
+              if (one && (one as any).deleted !== true) {
+                const name = ((one as any).name ?? (one as any).id ?? "").toString().trim();
+                const states = Array.isArray((one as any).states) ? (one as any).states : [];
+                const options = states.length > 0 ? states.map((s: any, i: number) => {
+                  const id = (s.id ?? s.name ?? `opt-${i}`).toString() || `opt-${i}`;
+                  return { id, title: (s.name ?? s.id ?? id).toString() };
+                }) : undefined;
+                out.push({
+                  id: (one as any).id ?? ids[i],
+                  title: name || String(ids[i]),
+                  boardId,
+                  order: i,
+                  type: options && options.length > 0 ? "list" : "string",
+                  options,
+                } as YouGileStringStickerState);
+              }
+            } catch {
+              /* skip this sticker */
+            }
+          }
+          if (out.length > 0) return out;
+        }
+      }
+    } catch {
+      /* ignore */
     }
     return [];
   });
@@ -378,6 +524,7 @@ export interface YouGileUser {
   id: string;
   username?: string;
   email?: string;
+  realName?: string;
   [key: string]: unknown;
 }
 
@@ -502,6 +649,7 @@ export interface YouGileCreateTaskDto {
   description?: string;
   columnId: string;
   assigneeId?: string;
+  assigned?: string[];
   deadline?: number; // unix ms
   [key: string]: unknown;
 }
@@ -523,7 +671,8 @@ export interface YouGileUpdateTaskDto {
   title?: string;
   description?: string;
   columnId?: string;
-  assigneeId?: string;
+  assigneeId?: string | null;
+  assigned?: string[];
   deadline?: number | null;
   status?: string;
   [key: string]: unknown;
@@ -555,14 +704,47 @@ export async function yougileGetTaskById(taskId: string): Promise<YouGileTask | 
   }
 }
 
+export interface YouGileChatMessage {
+  id?: string;
+  text?: string;
+  content?: string;
+  message?: string;
+  createdAt?: number | string;
+  updatedAt?: number | string;
+  userId?: string;
+  authorId?: string;
+  creatorId?: string;
+  senderId?: string;
+  author?: { id?: string; name?: string; username?: string; email?: string };
+  user?: { id?: string; name?: string; username?: string; email?: string };
+  [key: string]: unknown;
+}
+
+export async function yougileGetChatMessages(taskId: string): Promise<YouGileChatMessage[]> {
+  const data = await yougileFetch<YouGileChatMessage[] | { content?: YouGileChatMessage[]; messages?: YouGileChatMessage[] }>(
+    `/chats/${encodeURIComponent(taskId)}/messages`,
+  );
+  if (Array.isArray(data)) return data;
+  return data?.content ?? data?.messages ?? [];
+}
+
+export async function yougileSendChatMessage(taskId: string, text: string): Promise<YouGileChatMessage> {
+  return await yougileFetch<YouGileChatMessage>(`/chats/${encodeURIComponent(taskId)}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
 // ——— Очередь мутаций YouGile: при лимите 50 запросов/мин запросы ставятся в очередь и выполняются по мере возможности
 type YouGileJob =
   | { type: "update"; yougileTaskId: string; payload: YouGileUpdateTaskDto }
   | { type: "delete"; yougileTaskId: string }
+  | { type: "comment"; yougileTaskId: string; text: string }
   | { type: "create"; ourTaskId: string; boardId: string; dto: YouGileCreateTaskDto; onSuccess?: (ygTask: YouGileTask) => Promise<void> };
 
 const yougileMutationQueue: YouGileJob[] = [];
 let queueProcessing = false;
+let mutationQueueRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function processYougileQueue(): Promise<void> {
   if (queueProcessing || yougileMutationQueue.length === 0 || !isYouGileConfigured()) return;
@@ -575,11 +757,24 @@ async function processYougileQueue(): Promise<void> {
         await yougileUpdateTask(job.yougileTaskId, job.payload);
       } else if (job.type === "delete") {
         await yougileDeleteTask(job.yougileTaskId);
+      } else if (job.type === "comment") {
+        await yougileSendChatMessage(job.yougileTaskId, job.text);
       } else if (job.type === "create") {
         const ygTask = await yougileCreateTask(job.dto);
         if (job.onSuccess) await job.onSuccess(ygTask);
       }
     } catch (err: any) {
+      if (err instanceof YouGileRateLimitError) {
+        yougileMutationQueue.unshift(job);
+        const ms = Math.min(Math.max(err.retryAfterMs, 5000), 120_000);
+        if (mutationQueueRetryTimer) clearTimeout(mutationQueueRetryTimer);
+        mutationQueueRetryTimer = setTimeout(() => {
+          mutationQueueRetryTimer = null;
+          queueProcessing = false;
+          processYougileQueue();
+        }, ms);
+        return;
+      }
       console.warn("[YouGile] Queue job failed, will not retry:", job.type, err?.message || err);
     }
   }
@@ -595,6 +790,14 @@ export function yougileEnqueueUpdate(yougileTaskId: string, payload: YouGileUpda
 /** Поставить в очередь удаление задачи в YouGile. */
 export function yougileEnqueueDelete(yougileTaskId: string): void {
   yougileMutationQueue.push({ type: "delete", yougileTaskId });
+  processYougileQueue();
+}
+
+/** Поставить в очередь отправку сообщения в чат задачи YouGile. */
+export function yougileEnqueueComment(yougileTaskId: string, text: string): void {
+  const normalizedText = text.trim();
+  if (!normalizedText) return;
+  yougileMutationQueue.push({ type: "comment", yougileTaskId, text: normalizedText });
   processYougileQueue();
 }
 

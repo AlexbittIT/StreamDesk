@@ -23,6 +23,36 @@ interface VmixSchedulerData {
   nextEvent?: VmixEvent;
 }
 
+function cp1251Byte(char: string): number {
+  const code = char.charCodeAt(0);
+  if (code >= 0x410 && code <= 0x44f) return code - 0x350;
+  const extra: Record<number, number> = {
+    0x401: 0xa8, 0x451: 0xb8, 0x402: 0x80, 0x403: 0x81, 0x201a: 0x82, 0x453: 0x83,
+    0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x20ac: 0x88, 0x2030: 0x89,
+    0x409: 0x8a, 0x2039: 0x8b, 0x40a: 0x8c, 0x40c: 0x8d, 0x40b: 0x8e, 0x40f: 0x8f,
+    0x452: 0x90, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95,
+    0x2013: 0x96, 0x2014: 0x97, 0x2122: 0x99, 0x459: 0x9a, 0x203a: 0x9b, 0x45a: 0x9c,
+    0x45c: 0x9d, 0x45b: 0x9e, 0x45f: 0x9f, 0xa0: 0xa0, 0x40e: 0xa1, 0x45e: 0xa2,
+    0x408: 0xa3, 0xa4: 0xa4, 0x490: 0xa5, 0xa6: 0xa6, 0xa7: 0xa7, 0xa9: 0xa9,
+    0x404: 0xaa, 0xab: 0xab, 0xac: 0xac, 0xad: 0xad, 0xae: 0xae, 0x407: 0xaf,
+    0xb0: 0xb0, 0xb1: 0xb1, 0x406: 0xb2, 0x456: 0xb3, 0x491: 0xb4, 0xb5: 0xb5,
+    0xb6: 0xb6, 0xb7: 0xb7, 0x454: 0xba, 0xbb: 0xbb, 0x458: 0xbc, 0x405: 0xbd,
+    0x455: 0xbe, 0x457: 0xbf,
+  };
+  return extra[code] ?? code;
+}
+
+function fixMojibake(value: string) {
+  if (!/[РС][\u0400-\u04ff]|вЂ|В·/.test(value)) return value;
+  try {
+    const bytes = Uint8Array.from(Array.from(value).map(cp1251Byte));
+    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    return decoded.includes("�") ? value : decoded;
+  } catch {
+    return value;
+  }
+}
+
 export default function VmixScheduler() {
   const { data, isLoading, refetch, isRefetching } = useQuery<VmixSchedulerData>({
     queryKey: ["/api/integrations/vmix/scheduler"],
@@ -109,7 +139,7 @@ export default function VmixScheduler() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="text-[10px] text-primary font-medium mb-0.5">Следующий эфир</div>
-                    <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">{data.nextEvent.title}</div>
+                    <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">{fixMojibake(data.nextEvent.title)}</div>
                     <div className="flex items-center gap-1 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                       <Clock className="w-3 h-3 shrink-0" />
                       {formatEventDate(data.nextEvent.startTime)}
@@ -137,7 +167,7 @@ export default function VmixScheduler() {
                         <Calendar className="w-3 h-3 text-slate-500 dark:text-slate-400" />
                       </div>
                       <div className="min-w-0">
-                        <div className="text-xs font-medium text-slate-900 dark:text-white truncate">{event.title}</div>
+                        <div className="text-xs font-medium text-slate-900 dark:text-white truncate">{fixMojibake(event.title)}</div>
                         <div className="text-[10px] text-slate-500 dark:text-slate-400">{formatEventDate(event.startTime)}</div>
                       </div>
                     </div>

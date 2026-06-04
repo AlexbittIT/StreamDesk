@@ -1,0 +1,21 @@
+export const SIGNAL_COLOR_PRESET: Record<string, string> = {
+  HDMI: "#f59e0b",
+  SDI: "#8b5cf6",
+  USB: "#06b6d4",
+  "USB-C": "#0ea5e9",
+  ETH: "#eab308",
+  LAN: "#eab308",
+  RJ45: "#eab308",
+  XLR: "#22c55e",
+  TRS: "#10b981",
+  RCA: "#ef4444",
+  BNC: "#a855f7",
+  WIRELESS: "#ec4899",
+  NDI: "#3b82f6",
+  AES: "#14b8a6",
+  MADI: "#f97316",
+  DC: "#94a3b8",
+  AC: "#64748b",
+  DEFAULT: "#60a5fa",
+};
+

@@ -11,8 +11,28 @@ import DashboardProfileCard from "@/components/dashboard/dashboard-profile-card"
 import DashboardCountdownWidget from "@/components/dashboard/dashboard-countdown-widget";
 import DashboardServicesSection from "@/components/dashboard/dashboard-services-section";
 import { useWebSocket } from "@/hooks/use-websocket";
+import { tabPermission } from "@shared/schema";
+import { apiRequest } from "@/lib/queryClient";
+
+function getCurrentUser() {
+  try {
+    const raw = localStorage.getItem("streamstudio_user");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function canAccessTab(user: any, tabKey: string): boolean {
+  if (!user) return true;
+  const permissions = Array.isArray(user.permissions) ? user.permissions : [];
+  const hasTabPermissions = permissions.some((permission: string) => permission.startsWith("tab:"));
+  if (hasTabPermissions) return permissions.includes(tabPermission(tabKey));
+  return true;
+}
 
 export default function Dashboard() {
+  const currentUser = getCurrentUser();
   const { data: stats, isLoading: statsLoading, isError: statsError } = useQuery<any>({
     queryKey: ["/api/dashboard/stats"],
     retry: 1,
@@ -39,6 +59,10 @@ export default function Dashboard() {
 
   const { data: streams = [], isLoading: streamsLoading, isError: streamsError } = useQuery<any[]>({
     queryKey: ["/api/streams", "active=true"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/streams?active=true");
+      return response.json();
+    },
     retry: 1,
     retryDelay: 1000,
   });
@@ -75,22 +99,27 @@ export default function Dashboard() {
         <DashboardCountdownWidget nextEvent={nextEvent} />
       </div>
 
-      <StatusCards stats={stats} />
+      <StatusCards stats={stats} user={currentUser} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-1.5 w-full min-w-0">
         <div className="lg:col-span-2 space-y-1 sm:space-y-1.5 min-w-0">
-          <CurrentActivity streams={streams} events={events} />
-          <VmixScheduler />
-          <QuickCalendar events={events} />
+          {(canAccessTab(currentUser, "streams") || canAccessTab(currentUser, "calendar")) && (
+            <CurrentActivity
+              streams={canAccessTab(currentUser, "streams") ? streams : []}
+              events={canAccessTab(currentUser, "calendar") ? events : []}
+            />
+          )}
+          {canAccessTab(currentUser, "vmix-scheduler") && <VmixScheduler />}
+          {canAccessTab(currentUser, "calendar") && <QuickCalendar events={events} />}
         </div>
         <div className="space-y-1 sm:space-y-1.5 min-w-0">
-          <StreamingStats />
-          <SystemStatus systems={systems} />
-          <EquipmentStatus equipment={equipment} />
+          {canAccessTab(currentUser, "streams") && <StreamingStats />}
+          {canAccessTab(currentUser, "monitoring") && <SystemStatus systems={systems} />}
+          {canAccessTab(currentUser, "equipment") && <EquipmentStatus equipment={equipment} />}
         </div>
       </div>
 
-      <DashboardServicesSection />
+      <DashboardServicesSection user={currentUser} />
     </div>
   );
 }

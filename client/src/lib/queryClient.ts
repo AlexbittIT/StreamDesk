@@ -15,6 +15,17 @@ export function encodeUserHeader(user: object | null | undefined): string {
   }
 }
 
+function getStoredUserHeader(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = localStorage.getItem("streamstudio_user");
+    if (!raw) return "";
+    return encodeUserHeader(JSON.parse(raw));
+  } catch {
+    return "";
+  }
+}
+
 /** Базовый URL для API (учитывает VITE_API_BASE). Используйте для fetch, чтобы не получать HTML вместо JSON. */
 export function apiUrl(path: string): string {
   if (path.startsWith("http")) return path;
@@ -40,13 +51,17 @@ async function throwIfResNotOk(res: Response) {
     if (res.status === 401) {
       localStorage.removeItem('streamstudio_user');
       const path = typeof window !== "undefined" ? window.location.pathname : "";
-      // Не делаем полную перезагрузку на / или /login — иначе форма входа сбрасывается
       if (path !== "/" && path !== "/login") {
         window.location.href = "/login";
       }
     }
     const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    let message = text;
+    try {
+      const j = JSON.parse(text);
+      if (j && typeof j.message === "string") message = j.message;
+    } catch (_) {}
+    throw new Error(message);
   }
 }
 
@@ -72,6 +87,8 @@ export async function apiRequest(
     if (data && !isFormData) {
       headers["Content-Type"] = "application/json";
     }
+    const userHeader = getStoredUserHeader();
+    if (userHeader) headers["x-user"] = userHeader;
 
     const res = await fetch(apiUrl(url), {
       method,
@@ -95,11 +112,11 @@ export async function apiRequest(
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
-export const getQueryFn: <T>(options: {
+export function getQueryFn<T>(options: {
   on401: UnauthorizedBehavior;
-}) => QueryFunction<T> =
-  ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
+}): QueryFunction<T> {
+  const { on401: unauthorizedBehavior } = options;
+  return async ({ queryKey }) => {
       // Создаем AbortController для таймаута
       // Уменьшаем таймаут для GET запросов до 15 секунд для лучшего UX
       const controller = new AbortController();
@@ -109,6 +126,10 @@ export const getQueryFn: <T>(options: {
       const url = apiUrl(queryKey.join("/") as string);
       const res = await fetch(url, {
         credentials: "include",
+        headers: (() => {
+          const userHeader = getStoredUserHeader();
+          return userHeader ? { "x-user": userHeader } : undefined;
+        })(),
         signal: controller.signal,
       });
 
@@ -145,6 +166,7 @@ export const getQueryFn: <T>(options: {
       throw error;
     }
   };
+}
 
 export const queryClient = new QueryClient({
   defaultOptions: {

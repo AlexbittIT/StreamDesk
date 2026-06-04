@@ -6,7 +6,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Camera, Package, MapPin, AlertCircle, CheckCircle, ArrowRight, ArrowLeft, RefreshCw, Edit } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { canEditEquipment, canReserveEquipment } from "@/lib/equipment-permissions";
+import { apiRequest, apiUrl, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Equipment } from "@shared/schema";
 
@@ -15,6 +16,8 @@ interface BarcodeScannerProps {
   onClose: () => void;
   onEquipmentFound?: (equipment: Equipment) => void;
   onBarcodeScanned?: (barcode: string) => void;
+  companyManager?: boolean;
+  canRequestCheckout?: boolean;
 }
 
 type PermissionState = "prompt" | "granted" | "denied" | "checking";
@@ -28,7 +31,14 @@ function getCurrentUser() {
   }
 }
 
-export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeScanned }: BarcodeScannerProps) {
+export function BarcodeScanner({
+  isOpen,
+  onClose,
+  onEquipmentFound,
+  onBarcodeScanned,
+  companyManager = false,
+  canRequestCheckout = false,
+}: BarcodeScannerProps) {
   const [permissionState, setPermissionState] = useState<PermissionState>("prompt");
   const [scanning, setScanning] = useState(false);
   const [scannedCode, setScannedCode] = useState<string | null>(null);
@@ -44,12 +54,39 @@ export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeSca
     setCurrentUser(getCurrentUser());
   }, []);
 
-  const canEdit = currentUser.role === 'admin' || currentUser.role === 'tech_director';
+  const canEdit = canEditEquipment(currentUser) || companyManager;
+  const canReserve = canReserveEquipment(currentUser) || companyManager;
 
   const { data: equipment, isLoading, isError } = useQuery<Equipment>({
     queryKey: ["/api/equipment/barcode", scannedCode],
+    queryFn: async () => {
+      if (!scannedCode) throw new Error("barcode is empty");
+      const response = await fetch(apiUrl(`/api/equipment/barcode/${encodeURIComponent(scannedCode)}`), {
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("Equipment not found with this barcode");
+      return response.json();
+    },
     enabled: !!scannedCode,
   });
+
+  const { data: users = [] } = useQuery<Array<{ id: string; name?: string | null; username?: string | null }>>({
+    queryKey: ["/api/users"],
+  });
+
+  const getAssignedUserName = (assignedTo: string | null | undefined) => {
+    const normalized = String(assignedTo ?? "").trim();
+    if (!normalized) return "";
+
+    const matchedUser = users.find((user) => {
+      const candidates = [user.id, user.name, user.username]
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean);
+      return candidates.includes(normalized);
+    });
+
+    return matchedUser?.name?.trim() || matchedUser?.username?.trim() || normalized;
+  };
 
   const updateEquipmentMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Partial<Equipment> }) => {
@@ -245,7 +282,7 @@ export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeSca
         id: equipment.id,
         data: { 
           status: "in-use",
-          assignedTo: currentUser.name,
+          assignedTo: currentUser.id || currentUser.name,
         }
       });
     }
@@ -457,52 +494,53 @@ export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeSca
                       )}
                       {equipment.assignedTo && (
                         <div className="flex justify-between text-slate-600 dark:text-slate-300">
-                          <span className="text-slate-500 dark:text-slate-400">Ответственный:</span>
-                          <span className="font-medium">{equipment.assignedTo}</span>
+                          <span className="text-slate-500 dark:text-slate-400">Забрал:</span>
+                          <span className="font-medium">{getAssignedUserName(equipment.assignedTo)}</span>
                         </div>
                       )}
                     </div>
 
                     {/* Action Buttons */}
-                    <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
-                      {equipment.status === "available" ? (
-                        <Button 
-                          className="col-span-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-                          onClick={handleTakeEquipment}
-                          disabled={updateEquipmentMutation.isPending}
-                          data-testid="button-take-equipment"
-                        >
-                          <ArrowRight className="w-4 h-4 mr-2" />
-                          Взять
-                        </Button>
-                      ) : equipment.status === "in-use" ? (
-                        <>
+                    {(canReserve || canEdit) && (
+                      <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                        {canReserve && equipment.status === "available" ? (
                           <Button 
-                            variant="outline"
-                            onClick={handleReturnEquipment}
+                            className="col-span-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+                            onClick={handleTakeEquipment}
                             disabled={updateEquipmentMutation.isPending}
-                            data-testid="button-return-equipment"
-                          >
-                            <ArrowLeft className="w-4 h-4 mr-2" />
-                            Вернуть
-                          </Button>
-                          <Button 
-                            variant="outline"
-                            onClick={() => {
-                              if (onEquipmentFound) {
-                                onEquipmentFound(equipment);
-                                handleClose();
-                              }
-                            }}
-                            data-testid="button-transfer-equipment"
+                            data-testid="button-take-equipment"
                           >
                             <ArrowRight className="w-4 h-4 mr-2" />
-                            Передать
+                            Взять
                           </Button>
-                        </>
-                      ) : null}
-                      
-                      {canEdit && (
+                        ) : canReserve && equipment.status === "in-use" ? (
+                          <>
+                            <Button 
+                              variant="outline"
+                              onClick={handleReturnEquipment}
+                              disabled={updateEquipmentMutation.isPending}
+                              data-testid="button-return-equipment"
+                            >
+                              <ArrowLeft className="w-4 h-4 mr-2" />
+                              Вернуть
+                            </Button>
+                            <Button 
+                              variant="outline"
+                              onClick={() => {
+                                if (onEquipmentFound) {
+                                  onEquipmentFound(equipment);
+                                  handleClose();
+                                }
+                              }}
+                              data-testid="button-transfer-equipment"
+                            >
+                              <ArrowRight className="w-4 h-4 mr-2" />
+                              Передать
+                            </Button>
+                          </>
+                        ) : null}
+                        
+                        {canEdit && (
                         <Button 
                           variant="ghost"
                           className="col-span-2 text-slate-600 dark:text-slate-400"
@@ -517,8 +555,24 @@ export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeSca
                           <Edit className="w-4 h-4 mr-2" />
                           Редактировать
                         </Button>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    )}
+
+                    {!canReserve && !canEdit && onEquipmentFound && (
+                      <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                        <Button
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => {
+                            onEquipmentFound(equipment);
+                            handleClose();
+                          }}
+                        >
+                          {canRequestCheckout && equipment.status === "available" ? "Запросить выдачу" : "Открыть карточку"}
+                        </Button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
@@ -539,3 +593,4 @@ export function BarcodeScanner({ isOpen, onClose, onEquipmentFound, onBarcodeSca
     </Dialog>
   );
 }
+

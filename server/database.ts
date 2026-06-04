@@ -1,21 +1,27 @@
 // Поддержка как локального PostgreSQL, так и Neon
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { 
-  users, events, equipment, systems, streams, notifications,
-  equipmentReservations, telegramUsers, obsConnections, analyticsEvents,
+import {
+  users, companies, companyMembers, companyInvites, events, equipment, systems, streams, notifications, platformSettings, platformIncidents,
+  equipmentReservations, equipmentCheckoutRequests, telegramUsers, obsConnections, analyticsEvents,
   eventParticipants, tasks, taskComments, taskHistory, roles,
   computers, projects, projectColumns, customLocations, chatSessions, chatMessages, repositories,
   vmixSchedulerEvents, connectionSchemas, connectionSchemaComponents,
   otisStreamSettings, showParticipantProfiles, showMarkers,
-  yougileProjects, yougileBoards, yougileColumns, yougileUsers,
+  yougileProjects, yougileBoards, yougileColumns, yougileUsers, yougileStringStickerStates,
   type User, type InsertUser,
+  type Company, type InsertCompany,
+  type CompanyMember, type InsertCompanyMember,
+  type CompanyInvite, type InsertCompanyInvite,
   type Event, type InsertEvent,
   type Equipment, type InsertEquipment,
   type System, type InsertSystem,
   type Stream, type InsertStream,
   type Notification, type InsertNotification,
+  type PlatformSetting, type InsertPlatformSetting,
+  type PlatformIncident, type InsertPlatformIncident,
   type EquipmentReservation, type InsertEquipmentReservation,
+  type EquipmentCheckoutRequest, type InsertEquipmentCheckoutRequest,
   type TelegramUser, type InsertTelegramUser,
   type ObsConnection, type InsertObsConnection,
   type AnalyticsEvent, type InsertAnalyticsEvent,
@@ -37,12 +43,21 @@ import {
   type OtisStreamSettings, type InsertOtisStreamSettings,
   type ShowParticipantProfile, type InsertShowParticipantProfile,
   type ShowMarker, type InsertShowMarker,
-  type YougileProject, type YougileBoard, type YougileColumn, type YougileUser
+  type YougileProject, type YougileBoard, type YougileColumn, type YougileUser, type YougileStringStickerStateRow
 } from "@shared/schema";
 import { eq, and, gte, lte, sql, or, isNull, inArray } from "drizzle-orm";
 import crypto from "crypto";
 
-const connectionString = process.env.DATABASE_URL;
+/** Нормализация URL БД: обрезка пробелов и кавычек из .env */
+function normalizeDatabaseUrl(url: string | undefined): string {
+  if (url == null || typeof url !== "string") return "";
+  const s = url.trim();
+  if (s.length === 0) return "";
+  const t = s.replace(/^["']|["']$/g, "").trim();
+  return t || s;
+}
+
+const connectionString = normalizeDatabaseUrl(process.env.DATABASE_URL);
 
 // Клиент и db создаются в initDatabase() при успешном подключении
 let client: ReturnType<typeof postgres> | null = null;
@@ -55,12 +70,28 @@ export let isStubStorage = true;
 export interface IStorage {
   // Users
   getUsers(): Promise<User[]>;
+  getAllUsers(): Promise<User[]>;
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   getUserByTelegramId(telegramId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, user: Partial<User>): Promise<User | undefined>;
   deleteUser(id: string): Promise<boolean>;
+
+  // Companies
+  getCompanies(): Promise<Company[]>;
+  getCompanyById(id: string): Promise<Company | undefined>;
+  createCompany(company: InsertCompany): Promise<Company>;
+  updateCompany(id: string, company: Partial<Company>): Promise<Company | undefined>;
+  getCompanyMembers(companyId: string): Promise<CompanyMember[]>;
+  getUserCompanyMemberships(userId: string): Promise<CompanyMember[]>;
+  getCompanyMembershipByUser(companyId: string, userId: string): Promise<CompanyMember | undefined>;
+  createCompanyMember(member: InsertCompanyMember): Promise<CompanyMember>;
+  updateCompanyMember(id: string, member: Partial<CompanyMember>): Promise<CompanyMember | undefined>;
+  getCompanyInviteByToken(token: string): Promise<CompanyInvite | undefined>;
+  getCompanyInvites(companyId: string): Promise<CompanyInvite[]>;
+  createCompanyInvite(invite: InsertCompanyInvite): Promise<CompanyInvite>;
+  updateCompanyInvite(id: string, invite: Partial<CompanyInvite>): Promise<CompanyInvite | undefined>;
   
   // Event Participants
   getEventParticipants(eventId: string): Promise<EventParticipant[]>;
@@ -109,12 +140,26 @@ export interface IStorage {
   markNotificationRead(id: string): Promise<boolean>;
   markAllNotificationsRead(userId: string): Promise<number>;
   deleteNotification(id: string): Promise<boolean>;
+
+  // Platform settings
+  getPlatformSettings(): Promise<PlatformSetting[]>;
+  getPlatformSettingByKey(key: string): Promise<PlatformSetting | undefined>;
+  upsertPlatformSetting(setting: InsertPlatformSetting): Promise<PlatformSetting>;
+
+  // Platform incidents
+  getPlatformIncidents(limit?: number): Promise<PlatformIncident[]>;
+  createPlatformIncident(incident: InsertPlatformIncident): Promise<PlatformIncident>;
+  updatePlatformIncident(id: string, incident: Partial<PlatformIncident>): Promise<PlatformIncident | undefined>;
   
   // Equipment Reservations
   getEquipmentReservations(): Promise<EquipmentReservation[]>;
   getEquipmentReservationsByEquipment(equipmentId: string): Promise<EquipmentReservation[]>;
   createEquipmentReservation(reservation: InsertEquipmentReservation): Promise<EquipmentReservation>;
   checkEquipmentConflicts(equipmentId: string, startTime: Date, endTime: Date): Promise<EquipmentReservation[]>;
+  getEquipmentCheckoutRequests(): Promise<EquipmentCheckoutRequest[]>;
+  getEquipmentCheckoutRequestById(id: string): Promise<EquipmentCheckoutRequest | undefined>;
+  createEquipmentCheckoutRequest(request: InsertEquipmentCheckoutRequest): Promise<EquipmentCheckoutRequest>;
+  updateEquipmentCheckoutRequest(id: string, request: Partial<EquipmentCheckoutRequest>): Promise<EquipmentCheckoutRequest | undefined>;
   
   // Telegram Users
   getTelegramUserByTelegramId(telegramId: string): Promise<TelegramUser | undefined>;
@@ -220,6 +265,8 @@ export interface IStorage {
   upsertYougileColumns(items: { id: string; boardId: string; title?: string | null; order?: number; color?: number | null }[]): Promise<void>;
   getYougileUsers(): Promise<YougileUser[]>;
   upsertYougileUsers(items: { id: string; email?: string | null; username?: string | null }[]): Promise<void>;
+  getYougileStringStickerStates(boardId: string): Promise<YougileStringStickerStateRow[]>;
+  upsertYougileStringStickerStates(boardId: string, items: { id: string; title?: string | null; type?: string | null; order?: number; options?: unknown }[]): Promise<void>;
 }
 
 export class PostgreSQLStorage implements IStorage {
@@ -254,9 +301,80 @@ export class PostgreSQLStorage implements IStorage {
     return await db!.select().from(users).where(eq(users.active, true)).orderBy(users.name);
   }
 
+  async getAllUsers(): Promise<User[]> {
+    return await db!.select().from(users).orderBy(users.createdAt);
+  }
+
   async deleteUser(id: string): Promise<boolean> {
     await db!.update(users).set({ active: false }).where(eq(users.id, id));
     return true;
+  }
+
+  // Companies
+  async getCompanies(): Promise<Company[]> {
+    return await db!.select().from(companies).orderBy(companies.name);
+  }
+
+  async getCompanyById(id: string): Promise<Company | undefined> {
+    const result = await db!.select().from(companies).where(eq(companies.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createCompany(insertCompany: InsertCompany): Promise<Company> {
+    const id = crypto.randomUUID();
+    const result = await db!.insert(companies).values({ ...insertCompany, id }).returning();
+    return result[0];
+  }
+
+  async updateCompany(id: string, companyData: Partial<Company>): Promise<Company | undefined> {
+    const result = await db!.update(companies).set({ ...companyData, updatedAt: new Date() }).where(eq(companies.id, id)).returning();
+    return result[0];
+  }
+
+  async getCompanyMembers(companyId: string): Promise<CompanyMember[]> {
+    return await db!.select().from(companyMembers).where(eq(companyMembers.companyId, companyId)).orderBy(companyMembers.createdAt);
+  }
+
+  async getUserCompanyMemberships(userId: string): Promise<CompanyMember[]> {
+    return await db!.select().from(companyMembers).where(eq(companyMembers.userId, userId)).orderBy(companyMembers.createdAt);
+  }
+
+  async getCompanyMembershipByUser(companyId: string, userId: string): Promise<CompanyMember | undefined> {
+    const result = await db!.select().from(companyMembers)
+      .where(and(eq(companyMembers.companyId, companyId), eq(companyMembers.userId, userId)))
+      .limit(1);
+    return result[0];
+  }
+
+  async createCompanyMember(insertMember: InsertCompanyMember): Promise<CompanyMember> {
+    const id = crypto.randomUUID();
+    const result = await db!.insert(companyMembers).values({ ...insertMember, id }).returning();
+    return result[0];
+  }
+
+  async updateCompanyMember(id: string, memberData: Partial<CompanyMember>): Promise<CompanyMember | undefined> {
+    const result = await db!.update(companyMembers).set({ ...memberData, updatedAt: new Date() }).where(eq(companyMembers.id, id)).returning();
+    return result[0];
+  }
+
+  async getCompanyInviteByToken(token: string): Promise<CompanyInvite | undefined> {
+    const result = await db!.select().from(companyInvites).where(eq(companyInvites.token, token)).limit(1);
+    return result[0];
+  }
+
+  async getCompanyInvites(companyId: string): Promise<CompanyInvite[]> {
+    return await db!.select().from(companyInvites).where(eq(companyInvites.companyId, companyId)).orderBy(sql`${companyInvites.createdAt} DESC`);
+  }
+
+  async createCompanyInvite(insertInvite: InsertCompanyInvite): Promise<CompanyInvite> {
+    const id = crypto.randomUUID();
+    const result = await db!.insert(companyInvites).values({ ...insertInvite, id }).returning();
+    return result[0];
+  }
+
+  async updateCompanyInvite(id: string, inviteData: Partial<CompanyInvite>): Promise<CompanyInvite | undefined> {
+    const result = await db!.update(companyInvites).set(inviteData).where(eq(companyInvites.id, id)).returning();
+    return result[0];
   }
 
   // Event Participants
@@ -327,7 +445,12 @@ export class PostgreSQLStorage implements IStorage {
   }
 
   async getEquipmentByBarcode(barcode: string): Promise<Equipment | undefined> {
-    const result = await db!.select().from(equipment).where(eq(equipment.barcode, barcode)).limit(1);
+    const normalized = String(barcode || "").trim();
+    const result = await db!.select().from(equipment).where(or(
+      eq(equipment.barcode, normalized),
+      eq(equipment.inventoryNumber, normalized),
+      eq(equipment.serialNumber, normalized),
+    )).limit(1);
     return result[0];
   }
 
@@ -445,6 +568,60 @@ export class PostgreSQLStorage implements IStorage {
     return (result.rowCount ?? 0) > 0;
   }
 
+  async getPlatformSettings(): Promise<PlatformSetting[]> {
+    return await db!.select().from(platformSettings).orderBy(platformSettings.category, platformSettings.key);
+  }
+
+  async getPlatformSettingByKey(key: string): Promise<PlatformSetting | undefined> {
+    const result = await db!.select().from(platformSettings).where(eq(platformSettings.key, key)).limit(1);
+    return result[0];
+  }
+
+  async upsertPlatformSetting(setting: InsertPlatformSetting): Promise<PlatformSetting> {
+    const existing = await this.getPlatformSettingByKey(setting.key);
+    if (existing) {
+      const result = await db!
+        .update(platformSettings)
+        .set({
+          category: setting.category,
+          value: setting.value,
+          description: setting.description,
+          updatedBy: setting.updatedBy,
+          updatedAt: new Date(),
+        })
+        .where(eq(platformSettings.id, existing.id))
+        .returning();
+      return result[0];
+    }
+
+    const id = crypto.randomUUID();
+    const result = await db!.insert(platformSettings).values({ ...setting, id }).returning();
+    return result[0];
+  }
+
+  async getPlatformIncidents(limit = 100): Promise<PlatformIncident[]> {
+    return await db!
+      .select()
+      .from(platformIncidents)
+      .orderBy(sql`${platformIncidents.createdAt} DESC`)
+      .limit(limit);
+  }
+
+  async createPlatformIncident(incident: InsertPlatformIncident): Promise<PlatformIncident> {
+    const id = crypto.randomUUID();
+    const result = await db!.insert(platformIncidents).values({ ...incident, id }).returning();
+    return result[0];
+  }
+
+  async updatePlatformIncident(id: string, incident: Partial<PlatformIncident>): Promise<PlatformIncident | undefined> {
+    const result = await db!
+      .update(platformIncidents)
+      .set({ ...incident, updatedAt: new Date() })
+      .where(eq(platformIncidents.id, id))
+      .returning();
+    return result[0];
+  }
+
   // Equipment Reservations
   async getEquipmentReservations(): Promise<EquipmentReservation[]> {
     return await db!.select().from(equipmentReservations).orderBy(equipmentReservations.startTime);
@@ -471,6 +648,43 @@ export class PostgreSQLStorage implements IStorage {
           sql`${equipmentReservations.endTime} > ${startTime}`
         )
       );
+  }
+
+  async getEquipmentCheckoutRequests(): Promise<EquipmentCheckoutRequest[]> {
+    return await db!
+      .select()
+      .from(equipmentCheckoutRequests)
+      .orderBy(sql`${equipmentCheckoutRequests.createdAt} DESC`);
+  }
+
+  async getEquipmentCheckoutRequestById(id: string): Promise<EquipmentCheckoutRequest | undefined> {
+    const result = await db!
+      .select()
+      .from(equipmentCheckoutRequests)
+      .where(eq(equipmentCheckoutRequests.id, id))
+      .limit(1);
+    return result[0];
+  }
+
+  async createEquipmentCheckoutRequest(request: InsertEquipmentCheckoutRequest): Promise<EquipmentCheckoutRequest> {
+    const id = crypto.randomUUID();
+    const result = await db!
+      .insert(equipmentCheckoutRequests)
+      .values({ ...request, id })
+      .returning();
+    return result[0];
+  }
+
+  async updateEquipmentCheckoutRequest(
+    id: string,
+    request: Partial<EquipmentCheckoutRequest>,
+  ): Promise<EquipmentCheckoutRequest | undefined> {
+    const result = await db!
+      .update(equipmentCheckoutRequests)
+      .set({ ...request, updatedAt: new Date() })
+      .where(eq(equipmentCheckoutRequests.id, id))
+      .returning();
+    return result[0];
   }
 
   // Telegram Users
@@ -709,9 +923,10 @@ export class PostgreSQLStorage implements IStorage {
   }
 
   async deleteProject(id: string): Promise<boolean> {
-    // Сначала удаляем все столбцы проекта
+    await db!.update(tasks)
+      .set({ projectId: null, projectColumnId: null } as any)
+      .where(eq(tasks.projectId, id));
     await db!.delete(projectColumns).where(eq(projectColumns.projectId, id));
-    // Затем удаляем сам проект
     const result = await db!.delete(projects).where(eq(projects.id, id));
     return (result.rowCount ?? 0) > 0;
   }
@@ -738,6 +953,9 @@ export class PostgreSQLStorage implements IStorage {
   }
 
   async deleteProjectColumn(id: string): Promise<boolean> {
+    await db!.update(tasks)
+      .set({ projectColumnId: null } as any)
+      .where(eq(tasks.projectColumnId, id));
     const result = await db!.delete(projectColumns).where(eq(projectColumns.id, id));
     return (result.rowCount ?? 0) > 0;
   }
@@ -880,8 +1098,10 @@ export class PostgreSQLStorage implements IStorage {
   }
 
   async deleteVmixSchedulerEvent(id: string): Promise<boolean> {
-    const result = await db!.delete(vmixSchedulerEvents).where(eq(vmixSchedulerEvents.id, id));
-    return (result.rowCount ?? 0) > 0;
+    const result = await db!.delete(vmixSchedulerEvents)
+      .where(eq(vmixSchedulerEvents.id, id))
+      .returning({ id: vmixSchedulerEvents.id });
+    return result.length > 0;
   }
 
   // Connection Schemas
@@ -914,8 +1134,10 @@ export class PostgreSQLStorage implements IStorage {
     // Сначала удаляем все компоненты
     await db!.delete(connectionSchemaComponents).where(eq(connectionSchemaComponents.schemaId, id));
     // Затем удаляем схему
-    const result = await db!.delete(connectionSchemas).where(eq(connectionSchemas.id, id));
-    return (result.rowCount ?? 0) > 0;
+    const result = await db!.delete(connectionSchemas)
+      .where(eq(connectionSchemas.id, id))
+      .returning({ id: connectionSchemas.id });
+    return result.length > 0;
   }
 
   // Connection Schema Components
@@ -946,8 +1168,10 @@ export class PostgreSQLStorage implements IStorage {
   }
 
   async deleteConnectionSchemaComponent(id: string): Promise<boolean> {
-    const result = await db!.delete(connectionSchemaComponents).where(eq(connectionSchemaComponents.id, id));
-    return (result.rowCount ?? 0) > 0;
+    const result = await db!.delete(connectionSchemaComponents)
+      .where(eq(connectionSchemaComponents.id, id))
+      .returning({ id: connectionSchemaComponents.id });
+    return result.length > 0;
   }
 
   // Otis stream settings
@@ -1085,11 +1309,39 @@ export class PostgreSQLStorage implements IStorage {
       });
     }
   }
+
+  async getYougileStringStickerStates(boardId: string): Promise<YougileStringStickerStateRow[]> {
+    if (!db) return [];
+    return await db.select().from(yougileStringStickerStates).where(eq(yougileStringStickerStates.boardId, boardId)).orderBy(yougileStringStickerStates.order, yougileStringStickerStates.id);
+  }
+
+  async upsertYougileStringStickerStates(boardId: string, items: { id: string; title?: string | null; type?: string | null; order?: number; options?: unknown }[]): Promise<void> {
+    if (!db || !items.length) return;
+    for (const row of items) {
+      await db.insert(yougileStringStickerStates).values({
+        id: row.id,
+        boardId,
+        title: row.title ?? null,
+        type: row.type ?? null,
+        order: row.order ?? 0,
+        options: row.options ?? null,
+      }).onConflictDoUpdate({
+        target: yougileStringStickerStates.id,
+        set: { boardId, title: row.title ?? null, type: row.type ?? null, order: row.order ?? 0, options: row.options ?? null, syncedAt: new Date() },
+      });
+    }
+  }
 }
 
 // Заглушка хранилища: работает без БД, данные в памяти (теряются при перезапуске)
 class StubStorage implements IStorage {
   private users = new Map<string, User>();
+  private companiesMap = new Map<string, Company>();
+  private companyMembersMap = new Map<string, CompanyMember>();
+  private companyInvitesMap = new Map<string, CompanyInvite>();
+  private platformSettingsMap = new Map<string, PlatformSetting>();
+  private platformIncidentsMap = new Map<string, PlatformIncident>();
+  private equipmentCheckoutRequestsMap = new Map<string, EquipmentCheckoutRequest>();
   private events = new Map<string, Event>();
   private tasks = new Map<string, Task>();
   private connectionSchemas = new Map<string, ConnectionSchema>();
@@ -1098,6 +1350,8 @@ class StubStorage implements IStorage {
   private projects = new Map<string, Project>();
   private computers = new Map<string, Computer>();
   private systems = new Map<string, System>();
+  private analytics = new Map<string, AnalyticsEvent>();
+  private vmixSchedulerEventsMap = new Map<string, VmixSchedulerEvent>();
   private otisSettings: OtisStreamSettings | null = null;
 
   constructor() {
@@ -1129,7 +1383,8 @@ class StubStorage implements IStorage {
   private uid() { return crypto.randomUUID(); }
   private now() { return new Date(); }
 
-  async getUsers(): Promise<User[]> { return Array.from(this.users.values()); }
+  async getUsers(): Promise<User[]> { return Array.from(this.users.values()).filter((user) => user.active !== false); }
+  async getAllUsers(): Promise<User[]> { return Array.from(this.users.values()); }
   async getUser(id: string): Promise<User | undefined> { return this.users.get(id); }
   async getUserByUsername(username: string): Promise<User | undefined> {
     return Array.from(this.users.values()).find(u => u.username === username);
@@ -1149,6 +1404,63 @@ class StubStorage implements IStorage {
     return updated;
   }
   async deleteUser(): Promise<boolean> { return true; }
+
+  async getCompanies(): Promise<Company[]> { return Array.from(this.companiesMap.values()); }
+  async getCompanyById(id: string): Promise<Company | undefined> { return this.companiesMap.get(id); }
+  async createCompany(data: InsertCompany): Promise<Company> {
+    const id = this.uid();
+    const company = { ...data, id, createdAt: this.now(), updatedAt: this.now() } as Company;
+    this.companiesMap.set(id, company);
+    return company;
+  }
+  async updateCompany(id: string, data: Partial<Company>): Promise<Company | undefined> {
+    const company = this.companiesMap.get(id);
+    if (!company) return undefined;
+    const updated = { ...company, ...data, updatedAt: this.now() } as Company;
+    this.companiesMap.set(id, updated);
+    return updated;
+  }
+  async getCompanyMembers(companyId: string): Promise<CompanyMember[]> {
+    return Array.from(this.companyMembersMap.values()).filter((member) => member.companyId === companyId);
+  }
+  async getUserCompanyMemberships(userId: string): Promise<CompanyMember[]> {
+    return Array.from(this.companyMembersMap.values()).filter((member) => member.userId === userId);
+  }
+  async getCompanyMembershipByUser(companyId: string, userId: string): Promise<CompanyMember | undefined> {
+    return Array.from(this.companyMembersMap.values()).find((member) => member.companyId === companyId && member.userId === userId);
+  }
+  async createCompanyMember(data: InsertCompanyMember): Promise<CompanyMember> {
+    const id = this.uid();
+    const member = { ...data, id, createdAt: this.now(), updatedAt: this.now() } as CompanyMember;
+    this.companyMembersMap.set(id, member);
+    return member;
+  }
+  async updateCompanyMember(id: string, data: Partial<CompanyMember>): Promise<CompanyMember | undefined> {
+    const member = this.companyMembersMap.get(id);
+    if (!member) return undefined;
+    const updated = { ...member, ...data, updatedAt: this.now() } as CompanyMember;
+    this.companyMembersMap.set(id, updated);
+    return updated;
+  }
+  async getCompanyInviteByToken(token: string): Promise<CompanyInvite | undefined> {
+    return Array.from(this.companyInvitesMap.values()).find((invite) => invite.token === token);
+  }
+  async getCompanyInvites(companyId: string): Promise<CompanyInvite[]> {
+    return Array.from(this.companyInvitesMap.values()).filter((invite) => invite.companyId === companyId);
+  }
+  async createCompanyInvite(data: InsertCompanyInvite): Promise<CompanyInvite> {
+    const id = this.uid();
+    const invite = { ...data, id, createdAt: this.now() } as CompanyInvite;
+    this.companyInvitesMap.set(id, invite);
+    return invite;
+  }
+  async updateCompanyInvite(id: string, data: Partial<CompanyInvite>): Promise<CompanyInvite | undefined> {
+    const invite = this.companyInvitesMap.get(id);
+    if (!invite) return undefined;
+    const updated = { ...invite, ...data } as CompanyInvite;
+    this.companyInvitesMap.set(id, updated);
+    return updated;
+  }
 
   async getEventParticipants(): Promise<EventParticipant[]> { return []; }
   async createEventParticipant(data: InsertEventParticipant): Promise<EventParticipant> {
@@ -1183,7 +1495,13 @@ class StubStorage implements IStorage {
     return Array.from(this.equipment.values()).filter((e) => e.status === status);
   }
   async getEquipmentByBarcode(barcode: string): Promise<Equipment | undefined> {
-    return Array.from(this.equipment.values()).find((e) => e.barcode === barcode);
+    const normalized = String(barcode || "").trim().toLowerCase();
+    return Array.from(this.equipment.values()).find((e) => {
+      const candidates = [e.barcode, e.inventoryNumber, e.serialNumber, e.id]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
+      return candidates.includes(normalized);
+    });
   }
   async createEquipment(data: InsertEquipment): Promise<Equipment> {
     const id = this.uid();
@@ -1221,7 +1539,7 @@ class StubStorage implements IStorage {
   }
   async deleteSystem(id: string): Promise<boolean> { return this.systems.delete(id); }
   async pingSystem(id: string, status: string): Promise<System | undefined> {
-    return this.updateSystem(id, { status });
+    return this.updateSystem(id, { status, lastPing: this.now() });
   }
 
   async getStreams(): Promise<Stream[]> { return []; }
@@ -1241,12 +1559,105 @@ class StubStorage implements IStorage {
   async markAllNotificationsRead(): Promise<number> { return 0; }
   async deleteNotification(): Promise<boolean> { return true; }
 
+  async getPlatformSettings(): Promise<PlatformSetting[]> {
+    return Array.from(this.platformSettingsMap.values()).sort((a, b) => `${a.category}:${a.key}`.localeCompare(`${b.category}:${b.key}`));
+  }
+  async getPlatformSettingByKey(key: string): Promise<PlatformSetting | undefined> {
+    return Array.from(this.platformSettingsMap.values()).find((item) => item.key === key);
+  }
+  async upsertPlatformSetting(data: InsertPlatformSetting): Promise<PlatformSetting> {
+    const existing = await this.getPlatformSettingByKey(data.key);
+    const setting: PlatformSetting = {
+      id: existing?.id ?? this.uid(),
+      key: data.key,
+      category: data.category ?? "general",
+      value: data.value ?? {},
+      description: data.description ?? null,
+      updatedBy: data.updatedBy ?? null,
+      createdAt: existing?.createdAt ?? this.now(),
+      updatedAt: this.now(),
+    };
+    this.platformSettingsMap.set(setting.id, setting);
+    return setting;
+  }
+
+  async getPlatformIncidents(limit = 100): Promise<PlatformIncident[]> {
+    return Array.from(this.platformIncidentsMap.values())
+      .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())
+      .slice(0, limit);
+  }
+  async createPlatformIncident(data: InsertPlatformIncident): Promise<PlatformIncident> {
+    const incident: PlatformIncident = {
+      id: this.uid(),
+      companyId: data.companyId ?? null,
+      userId: data.userId ?? null,
+      source: data.source ?? "manual",
+      type: data.type ?? "incident",
+      severity: data.severity ?? "medium",
+      status: data.status ?? "open",
+      title: data.title,
+      message: data.message,
+      metadata: data.metadata ?? {},
+      resolvedAt: data.resolvedAt ?? null,
+      resolvedBy: data.resolvedBy ?? null,
+      createdAt: this.now(),
+      updatedAt: this.now(),
+    };
+    this.platformIncidentsMap.set(incident.id, incident);
+    return incident;
+  }
+  async updatePlatformIncident(id: string, data: Partial<PlatformIncident>): Promise<PlatformIncident | undefined> {
+    const incident = this.platformIncidentsMap.get(id);
+    if (!incident) return undefined;
+    const updated: PlatformIncident = { ...incident, ...data, updatedAt: this.now() };
+    this.platformIncidentsMap.set(id, updated);
+    return updated;
+  }
+
   async getEquipmentReservations(): Promise<EquipmentReservation[]> { return []; }
   async getEquipmentReservationsByEquipment(): Promise<EquipmentReservation[]> { return []; }
   async createEquipmentReservation(data: InsertEquipmentReservation): Promise<EquipmentReservation> {
     return { ...data, id: this.uid(), createdAt: this.now() } as EquipmentReservation;
   }
   async checkEquipmentConflicts(): Promise<EquipmentReservation[]> { return []; }
+  async getEquipmentCheckoutRequests(): Promise<EquipmentCheckoutRequest[]> {
+    return Array.from(this.equipmentCheckoutRequestsMap.values()).sort(
+      (a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime(),
+    );
+  }
+  async getEquipmentCheckoutRequestById(id: string): Promise<EquipmentCheckoutRequest | undefined> {
+    return this.equipmentCheckoutRequestsMap.get(id);
+  }
+  async createEquipmentCheckoutRequest(data: InsertEquipmentCheckoutRequest): Promise<EquipmentCheckoutRequest> {
+    const request: EquipmentCheckoutRequest = {
+      id: this.uid(),
+      companyId: data.companyId ?? null,
+      equipmentId: data.equipmentId,
+      requestedBy: data.requestedBy,
+      requestType: data.requestType ?? "checkout",
+      currentHolder: data.currentHolder ?? null,
+      reviewedBy: data.reviewedBy ?? null,
+      status: data.status ?? "pending",
+      location: data.location ?? null,
+      note: data.note ?? null,
+      decisionNote: data.decisionNote ?? null,
+      createdAt: this.now(),
+      updatedAt: this.now(),
+      reviewedAt: data.reviewedAt ?? null,
+    };
+    this.equipmentCheckoutRequestsMap.set(request.id, request);
+    return request;
+  }
+  async updateEquipmentCheckoutRequest(
+    id: string,
+    data: Partial<EquipmentCheckoutRequest>,
+  ): Promise<EquipmentCheckoutRequest | undefined> {
+    const existing = this.equipmentCheckoutRequestsMap.get(id);
+    if (!existing) return undefined;
+    const updated: EquipmentCheckoutRequest = { ...existing, ...data, updatedAt: this.now() };
+    this.equipmentCheckoutRequestsMap.set(id, updated);
+    return updated;
+  }
 
   async getTelegramUserByTelegramId(): Promise<TelegramUser | undefined> { return undefined; }
   async createTelegramUser(data: InsertTelegramUser): Promise<TelegramUser> {
@@ -1263,9 +1674,18 @@ class StubStorage implements IStorage {
   async deleteObsConnection(): Promise<boolean> { return true; }
 
   async createAnalyticsEvent(data: InsertAnalyticsEvent): Promise<AnalyticsEvent> {
-    return { ...data, id: this.uid(), createdAt: this.now() } as AnalyticsEvent;
+    const id = this.uid();
+    const event = { ...data, id, timestamp: (data as any).timestamp ?? this.now() } as AnalyticsEvent;
+    this.analytics.set(id, event);
+    return event;
   }
-  async getAnalyticsEvents(): Promise<AnalyticsEvent[]> { return []; }
+  async getAnalyticsEvents(entityType?: string, startDate?: Date, endDate?: Date): Promise<AnalyticsEvent[]> {
+    return Array.from(this.analytics.values())
+      .filter((event) => !entityType || event.entityType === entityType)
+      .filter((event) => !startDate || new Date(event.timestamp).getTime() >= startDate.getTime())
+      .filter((event) => !endDate || new Date(event.timestamp).getTime() <= endDate.getTime())
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
 
   async getTasks(): Promise<Task[]> { return Array.from(this.tasks.values()); }
   async getTaskById(id: string): Promise<Task | undefined> { return this.tasks.get(id); }
@@ -1437,6 +1857,27 @@ class StubStorage implements IStorage {
     }
   }
 
+  private yougileStringStickerStatesMap = new Map<string, YougileStringStickerStateRow & { boardId: string }>();
+  async getYougileStringStickerStates(boardId: string): Promise<YougileStringStickerStateRow[]> {
+    return Array.from(this.yougileStringStickerStatesMap.values())
+      .filter((s) => s.boardId === boardId)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.id.localeCompare(b.id)));
+  }
+  async upsertYougileStringStickerStates(boardId: string, items: { id: string; title?: string | null; type?: string | null; order?: number; options?: unknown }[]): Promise<void> {
+    const now = new Date();
+    for (const row of items) {
+      this.yougileStringStickerStatesMap.set(row.id, {
+        id: row.id,
+        boardId,
+        title: row.title ?? null,
+        type: row.type ?? null,
+        order: row.order ?? 0,
+        options: row.options ?? null,
+        syncedAt: now,
+      } as YougileStringStickerStateRow & { boardId: string });
+    }
+  }
+
   async getConnectionSchemaComponents(schemaId: string): Promise<ConnectionSchemaComponent[]> {
     return Array.from(this.connectionSchemaComponents.values()).filter(c => c.schemaId === schemaId);
   }
@@ -1449,7 +1890,13 @@ class StubStorage implements IStorage {
     this.connectionSchemaComponents.set(id, comp);
     return comp;
   }
-  async updateConnectionSchemaComponent(): Promise<ConnectionSchemaComponent | undefined> { return undefined; }
+  async updateConnectionSchemaComponent(id: string, componentData: Partial<ConnectionSchemaComponent>): Promise<ConnectionSchemaComponent | undefined> {
+    const comp = this.connectionSchemaComponents.get(id);
+    if (!comp) return undefined;
+    const updated = { ...comp, ...componentData, updatedAt: this.now() } as ConnectionSchemaComponent;
+    this.connectionSchemaComponents.set(id, updated);
+    return updated;
+  }
   async deleteConnectionSchemaComponent(id: string): Promise<boolean> { return this.connectionSchemaComponents.delete(id); }
 
   async getConnectionSchemas(): Promise<ConnectionSchema[]> { return Array.from(this.connectionSchemas.values()); }
@@ -1474,61 +1921,131 @@ class StubStorage implements IStorage {
     return this.connectionSchemas.delete(id);
   }
 
-  async getChatSessionsByUser(): Promise<ChatSession[]> { return []; }
-  async getChatSessionById(): Promise<ChatSession | undefined> { return undefined; }
-  async createChatSession(data: InsertChatSession): Promise<ChatSession> {
-    return { ...data, id: this.uid(), createdAt: this.now(), updatedAt: this.now() } as ChatSession;
-  }
-  async updateChatSession(): Promise<ChatSession | undefined> { return undefined; }
-  async deleteChatSession(): Promise<boolean> { return true; }
-  async getChatMessagesBySession(): Promise<ChatMessage[]> { return []; }
-  async createChatMessage(data: InsertChatMessage): Promise<ChatMessage> {
-    return { ...data, id: this.uid(), createdAt: this.now() } as ChatMessage;
-  }
-  async deleteChatMessage(): Promise<boolean> { return true; }
+  private chatSessionsMap = new Map<string, ChatSession>();
+  private chatMessagesMap = new Map<string, ChatMessage>();
 
-  async getVmixSchedulerEvents(): Promise<VmixSchedulerEvent[]> { return []; }
-  async getVmixSchedulerEventById(): Promise<VmixSchedulerEvent | undefined> { return undefined; }
-  async createVmixSchedulerEvent(data: InsertVmixSchedulerEvent): Promise<VmixSchedulerEvent> {
-    return { ...data, id: this.uid(), createdAt: this.now(), updatedAt: this.now() } as VmixSchedulerEvent;
+  async getChatSessionsByUser(userId: string): Promise<ChatSession[]> {
+    return Array.from(this.chatSessionsMap.values())
+      .filter((s) => s.userId === userId)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
-  async updateVmixSchedulerEvent(): Promise<VmixSchedulerEvent | undefined> { return undefined; }
-  async deleteVmixSchedulerEvent(): Promise<boolean> { return true; }
+  async getChatSessionById(id: string): Promise<ChatSession | undefined> {
+    return this.chatSessionsMap.get(id);
+  }
+  async createChatSession(data: InsertChatSession): Promise<ChatSession> {
+    const id = this.uid();
+    const session = { ...data, id, createdAt: this.now(), updatedAt: this.now() } as ChatSession;
+    this.chatSessionsMap.set(id, session);
+    return session;
+  }
+  async updateChatSession(id: string, sessionData: Partial<ChatSession>): Promise<ChatSession | undefined> {
+    const s = this.chatSessionsMap.get(id);
+    if (!s) return undefined;
+    const updated = { ...s, ...sessionData, updatedAt: this.now() } as ChatSession;
+    this.chatSessionsMap.set(id, updated);
+    return updated;
+  }
+  async deleteChatSession(id: string): Promise<boolean> {
+    for (const [mid, m] of this.chatMessagesMap) {
+      if (m.sessionId === id) this.chatMessagesMap.delete(mid);
+    }
+    return this.chatSessionsMap.delete(id);
+  }
+  async getChatMessagesBySession(sessionId: string): Promise<ChatMessage[]> {
+    return Array.from(this.chatMessagesMap.values())
+      .filter((m) => m.sessionId === sessionId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }
+  async createChatMessage(data: InsertChatMessage): Promise<ChatMessage> {
+    const id = this.uid();
+    const msg = { ...data, id, createdAt: this.now() } as ChatMessage;
+    this.chatMessagesMap.set(id, msg);
+    const session = this.chatSessionsMap.get(data.sessionId);
+    if (session) {
+      this.chatSessionsMap.set(data.sessionId, { ...session, updatedAt: this.now() } as ChatSession);
+    }
+    return msg;
+  }
+  async deleteChatMessage(id: string): Promise<boolean> {
+    return this.chatMessagesMap.delete(id);
+  }
+
+  async getVmixSchedulerEvents(): Promise<VmixSchedulerEvent[]> {
+    return Array.from(this.vmixSchedulerEventsMap.values())
+      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+  }
+  async getVmixSchedulerEventById(id: string): Promise<VmixSchedulerEvent | undefined> {
+    return this.vmixSchedulerEventsMap.get(id);
+  }
+  async createVmixSchedulerEvent(data: InsertVmixSchedulerEvent): Promise<VmixSchedulerEvent> {
+    const id = this.uid();
+    const event = { ...data, id, createdAt: this.now(), updatedAt: this.now() } as VmixSchedulerEvent;
+    this.vmixSchedulerEventsMap.set(id, event);
+    return event;
+  }
+  async updateVmixSchedulerEvent(id: string, data: Partial<VmixSchedulerEvent>): Promise<VmixSchedulerEvent | undefined> {
+    const event = this.vmixSchedulerEventsMap.get(id);
+    if (!event) return undefined;
+    const updated = { ...event, ...data, updatedAt: this.now() } as VmixSchedulerEvent;
+    this.vmixSchedulerEventsMap.set(id, updated);
+    return updated;
+  }
+  async deleteVmixSchedulerEvent(id: string): Promise<boolean> { return this.vmixSchedulerEventsMap.delete(id); }
 }
 
 storage = new StubStorage();
+
+const INIT_DB_RETRIES = 3;
+const INIT_DB_RETRY_DELAY_MS = 2000;
 
 export async function initDatabase(): Promise<void> {
   if (!connectionString || connectionString.trim() === "") {
     console.warn("\n⚠️  DATABASE_URL не задан — работа в режиме заглушки (данные в памяти, не сохраняются между перезапусками).\n");
     return;
   }
-  try {
-    client = postgres(connectionString, {
-      max: 5,
-      idle_timeout: 30,
-      connect_timeout: 15,
-      max_lifetime: 60 * 30,
-      prepare: false,
-      statement_timeout: 30000,
-    });
-    db = drizzle(client);
-    await client`SELECT 1`;
-    storage = new PostgreSQLStorage();
-    isStubStorage = false;
-    console.log("✅ Подключение к PostgreSQL успешно.");
+  let lastError: any;
+  for (let attempt = 1; attempt <= INIT_DB_RETRIES; attempt++) {
     try {
-      await db!.select().from(users).limit(0);
-    } catch (tableErr: any) {
-      const tableMsg = (tableErr?.message ?? "").toLowerCase();
-      if (/relation.*does not exist|table.*does not exist/.test(tableMsg)) {
-        console.warn("\n⚠️  Таблица users не найдена. Выполните миграции: npm run db:push или npx drizzle-kit push\n");
+      if (attempt > 1) {
+        console.warn(`[DB] Повтор подключения (${attempt}/${INIT_DB_RETRIES}) через ${INIT_DB_RETRY_DELAY_MS / 1000} с...`);
+        await new Promise((r) => setTimeout(r, INIT_DB_RETRY_DELAY_MS));
+      }
+      client = postgres(connectionString, {
+        max: 5,
+        idle_timeout: 30,
+        connect_timeout: 15,
+        max_lifetime: 60 * 30,
+        prepare: false,
+        statement_timeout: 30000,
+      });
+      db = drizzle(client);
+      await client`SELECT 1`;
+      storage = new PostgreSQLStorage();
+      isStubStorage = false;
+      console.log("✅ Подключение к PostgreSQL успешно.");
+      try {
+        await db!.select().from(users).limit(0);
+      } catch (tableErr: any) {
+        const tableMsg = (tableErr?.message ?? "").toLowerCase();
+        if (/relation.*does not exist|table.*does not exist/.test(tableMsg)) {
+          console.warn("\n⚠️  Таблица users не найдена. Выполните миграции: npm run db:push или npx drizzle-kit push\n");
+        }
+      }
+      return;
+    } catch (e: any) {
+      lastError = e;
+      if (client) {
+        try {
+          if (typeof (client as any).end === "function") await (client as any).end({ timeout: 2 });
+          else if (typeof (client as any).close === "function") await (client as any).close();
+        } catch (_) {}
+        client = null;
+        db = null;
       }
     }
-  } catch (e: any) {
-    const msg = e?.message ?? String(e);
-    console.warn("\n⚠️  Не удалось подключиться к БД — режим заглушки:", msg);
-    console.warn("   Данные будут в памяти (события, задачи, схемы создаются, но не сохраняются после перезапуска).\n");
-    storage = new StubStorage();
   }
+  const msg = lastError?.message ?? String(lastError);
+  console.warn("\n⚠️  Не удалось подключиться к БД после", INIT_DB_RETRIES, "попыток — режим заглушки:", msg);
+  console.warn("   Данные будут в памяти (события, задачи, схемы создаются, но не сохраняются после перезапуска).\n");
+  storage = new StubStorage();
 }

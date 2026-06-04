@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,36 @@ import { Search, Loader2, Plus, ExternalLink, Radio, Signal } from "lucide-react
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Equipment } from "@shared/schema";
+
+/** Нормализация для поиска: нижний регистр, похожие кириллица/латиница к одному виду, двойные буквы убрать */
+function normalizeForSearch(s: string): string {
+  let t = s.toLowerCase().trim();
+  const toLatin: [string, string][] = [
+    ["ё", "e"], ["й", "i"], ["ы", "i"], ["ъ", ""], ["ь", ""],
+    ["а", "a"], ["о", "o"], ["е", "e"], ["р", "p"], ["х", "x"], ["у", "y"], ["к", "k"], ["м", "m"], ["н", "n"], ["т", "t"], ["с", "c"], ["в", "b"], ["и", "i"],
+  ];
+  for (const [a, b] of toLatin) t = t.split(a).join(b);
+  return t.replace(/(.)\1+/g, "$1");
+}
+
+/** Оценка совпадения: 0 = нет, >0 чем выше — тем лучше. Учитывает вхождение подстроки и подпоследовательность (для опечаток). */
+function fuzzyScore(search: string, str: string): number {
+  const s = normalizeForSearch(search);
+  const t = normalizeForSearch(str);
+  if (!s.length) return 0;
+  const idx = t.indexOf(s);
+  if (idx !== -1) return 1000 - idx;
+  let j = 0;
+  for (let i = 0; i < t.length && j < s.length; i++) {
+    if (t[i] === s[j]) j++;
+  }
+  if (j === s.length) return 100;
+  j = 0;
+  for (let i = 0; i < t.length && j < s.length; i++) {
+    if (t[i] === s[j] || (s[j] === "о" && t[i] === "а") || (s[j] === "а" && t[i] === "о")) j++;
+  }
+  return j === s.length ? 50 : 0;
+}
 
 interface Port {
   id: string;
@@ -53,6 +83,10 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
     portsIn: [],
     portsOut: [],
   });
+  const [stockDropdownOpen, setStockDropdownOpen] = useState(false);
+  const [searchSuggestionsOpen, setSearchSuggestionsOpen] = useState(false);
+  const stockInputRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLDivElement>(null);
 
   // Получение оборудования со склада
   const { data: equipment = [], isLoading: isLoadingEquipment } = useQuery<Equipment[]>({
@@ -60,62 +94,104 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
     enabled: open,
   });
 
-  // Поиск оборудования в интернете
+  // Поиск только по Enter или кнопке — один запрос, один список результатов
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
+
   const searchEquipmentOnline = async (query: string) => {
     if (!query.trim()) {
       setSearchResults([]);
+      setSearchSuggestionsOpen(false);
       return;
     }
 
     setIsSearching(true);
+    setSearchResults([]);
+    setSearchSuggestionsOpen(false);
     try {
-      // Здесь можно использовать API для поиска оборудования
-      // Пока используем заглушку с парсингом через поиск
       const response = await apiRequest("POST", "/api/equipment/search", { query });
-      
       if (response.ok) {
         const data = await response.json();
-        setSearchResults(data.results || []);
-      } else {
-        // Fallback: пытаемся парсить из названия
-        const parsed = parseEquipmentFromName(query);
-        if (parsed) {
-          setSearchResults([parsed]);
+        const results = data.results || [];
+        setSearchResults(results);
+        if (results.length > 0) {
+          setSearchHistory((prev) => {
+            const q = query.trim();
+            if (prev.includes(q)) return prev;
+            return [q, ...prev.filter((p) => p !== q)].slice(0, 10);
+          });
         }
+      } else {
+        const parsed = parseEquipmentFromName(query);
+        setSearchResults(parsed ? [parsed] : []);
       }
     } catch (error) {
       console.error("Search error:", error);
-      // Fallback: парсинг из названия
       const parsed = parseEquipmentFromName(query);
-      if (parsed) {
-        setSearchResults([parsed]);
-      }
+      setSearchResults(parsed ? [parsed] : []);
     } finally {
       setIsSearching(false);
     }
   };
 
-  // Парсинг оборудования из названия (базовая логика)
-  const parseEquipmentFromName = (name: string): EquipmentTemplate | null => {
-    const nameLower = name.toLowerCase();
-    
-    // Определяем тип оборудования
-    let type = "computer";
-    if (nameLower.includes("камера") || nameLower.includes("camera")) type = "camera";
-    else if (nameLower.includes("микрофон") || nameLower.includes("mic")) type = "mic";
-    else if (nameLower.includes("микшер") || nameLower.includes("mixer")) type = "audio";
-    else if (nameLower.includes("роутер") || nameLower.includes("router") || nameLower.includes("switch")) type = "network";
-    else if (nameLower.includes("монитор") || nameLower.includes("monitor") || nameLower.includes("телевизор") || nameLower.includes("tv")) type = "display";
+  // Подсказки для вкладки «Поиск в интернете»: история + со склада, с учётом опечаток
+  const searchSuggestions = useMemo(() => {
+    const term = searchTerm.trim();
+    if (!term) return [];
+    const fromHistory = searchHistory
+      .filter((q) => fuzzyScore(term, q) > 0)
+      .sort((a, b) => fuzzyScore(term, b) - fuzzyScore(term, a))
+      .slice(0, 5);
+    const fromStock = equipment
+      .map((e) => e.name)
+      .filter((name) => fuzzyScore(term, name) > 0)
+      .sort((a, b) => fuzzyScore(term, b) - fuzzyScore(term, a))
+      .slice(0, 5);
+    const merged = Array.from(new Set([...fromHistory, ...fromStock]));
+    return merged.slice(0, 10);
+  }, [searchTerm, searchHistory, equipment]);
 
-    // Парсим производителя и модель
+  // Выпадающий список для «Мой склад»: при вводе от одной буквы — оборудование со склада (нечёткий поиск)
+  const stockDropdownSuggestions = useMemo(() => {
+    const term = searchTerm.trim();
+    if (!term) return [];
+    return equipment
+      .map((item) => ({
+        item,
+        score:
+          fuzzyScore(term, item.name) * 2 +
+          fuzzyScore(term, item.model || "") +
+          fuzzyScore(term, item.type || ""),
+      }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+      .map((x) => x.item);
+  }, [searchTerm, equipment]);
+
+  // Парсинг оборудования из названия: с учётом опечаток (нормализация + нечёткие ключевые слова)
+  const parseEquipmentFromName = (name: string): EquipmentTemplate | null => {
+    const raw = name.trim();
+    if (!raw) return null;
+    const nameNorm = normalizeForSearch(name);
+    
+    const match = (keywords: string[]) =>
+      keywords.some((kw) => nameNorm.includes(normalizeForSearch(kw)));
+
+    let type = "computer";
+    if (match(["камер", "camera", "cam", "видео"])) type = "camera";
+    else if (match(["микрофон", "mic", "мк", "петлич"])) type = "mic";
+    else if (match(["микшер", "mixer", "консоль", "аудио"])) type = "audio";
+    else if (match(["роутер", "router", "switch", "свитч", "коммутатор", "lan", "сеть"])) type = "network";
+    else if (match(["монитор", "monitor", "телевизор", "tv", "дисплей", "экран"])) type = "display";
+
     const parts = name.split(/\s+/);
     let manufacturer = "";
     let model = "";
-    
-    // Популярные производители
-    const manufacturers = ["Sony", "Canon", "Panasonic", "Blackmagic", "ATEM", "Elgato", "Behringer", "TP-Link", "D-Link", "LG", "Samsung"];
+    const manufacturers = ["Sony", "Canon", "Panasonic", "Blackmagic", "ATEM", "Elgato", "Behringer", "TP-Link", "D-Link", "LG", "Samsung", "Black Magic", "BMD"];
     for (const part of parts) {
-      if (manufacturers.some(m => part.toLowerCase().includes(m.toLowerCase()))) {
+      const pNorm = normalizeForSearch(part);
+      const found = manufacturers.find((m) => pNorm.includes(normalizeForSearch(m)) || normalizeForSearch(m).includes(pNorm));
+      if (found) {
         manufacturer = part;
         break;
       }
@@ -155,13 +231,23 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
     };
   };
 
-  const filteredEquipment = equipment.filter(item => {
-    const matchesSearch = !searchTerm || 
-      item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.model?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = typeFilters.length === 0 || typeFilters.includes(item.type);
-    return matchesSearch && matchesType;
-  });
+  const filteredEquipment = useMemo(() => {
+    const term = searchTerm.trim();
+    if (!term)
+      return equipment.filter((item) => typeFilters.length === 0 || typeFilters.includes(item.type));
+    return equipment
+      .filter((item) => typeFilters.length === 0 || typeFilters.includes(item.type))
+      .map((item) => ({
+        item,
+        score:
+          fuzzyScore(term, item.name) * 2 +
+          fuzzyScore(term, item.model || "") +
+          fuzzyScore(term, item.type || ""),
+      }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((x) => x.item);
+  }, [equipment, searchTerm, typeFilters]);
 
   const handleAddFromStock = (item: Equipment) => {
     const template: EquipmentTemplate = {
@@ -180,6 +266,9 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
 
   const handleAddFromSearch = (result: EquipmentTemplate) => {
     onAdd(result);
+    setSearchTerm("");
+    setSearchResults([]);
+    setSearchSuggestionsOpen(false);
     onClose();
   };
 
@@ -312,13 +401,47 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                   </Button>
                 </div>
               </div>
-              <div>
+              <div ref={stockInputRef} className="relative mb-4">
                 <Input
-                  placeholder="Поиск в моем складе..."
+                  placeholder="Начните вводить название — появится список (например: камера, Sony, ATEM...)"
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="mb-4"
+                  autoComplete="off"
+                  onChange={(e) => {
+                    setSearchTerm(e.target.value);
+                    setStockDropdownOpen(true);
+                  }}
+                  onFocus={() => searchTerm.trim().length >= 1 && setStockDropdownOpen(true)}
+                  onBlur={() => setTimeout(() => setStockDropdownOpen(false), 150)}
+                  className="w-full"
                 />
+                {stockDropdownOpen && stockDropdownSuggestions.length > 0 && (
+                  <div
+                    className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md max-h-[280px] overflow-auto"
+                    onMouseDown={(e) => e.preventDefault()}
+                  >
+                    {stockDropdownSuggestions.map((item) => {
+                      const portsIn = (item.specifications?.portsIn as Port[]) || [];
+                      const portsOut = (item.specifications?.portsOut as Port[]) || [];
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className="w-full px-3 py-2.5 text-left hover:bg-muted focus:bg-muted focus:outline-none flex items-center justify-between gap-2 border-b last:border-b-0"
+                          onClick={() => {
+                            handleAddFromStock(item);
+                            setSearchTerm("");
+                            setStockDropdownOpen(false);
+                          }}
+                        >
+                          <span className="font-medium truncate">{item.name}</span>
+                          {item.model && (
+                            <span className="text-xs text-muted-foreground truncate shrink-0">{item.model}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-4">
@@ -431,30 +554,68 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
 
           <TabsContent value="search" className="flex-1 flex flex-col min-h-0 mt-4">
             <div className="space-y-4">
-              <div className="flex gap-2">
+              <p className="text-xs text-muted-foreground">
+                Введите хотя бы одну букву — появится выпадающий список. Выберите подсказку или нажмите «Поиск» / Enter.
+              </p>
+              <div ref={searchInputRef} className="flex gap-2 relative">
+                <div className="flex-1 relative">
                 <Input
-                  placeholder="Введите название оборудования (например: Sony FX3, Canon EOS R5)..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      searchEquipmentOnline(searchTerm);
-                    }
-                  }}
-                />
-                <Button onClick={() => searchEquipmentOnline(searchTerm)} disabled={isSearching}>
+                    placeholder="Например: Sony FX3, камера, ATEM, Behringer..."
+                    value={searchTerm}
+                    autoComplete="off"
+                    onChange={(e) => {
+                      setSearchTerm(e.target.value);
+                      setSearchSuggestionsOpen(e.target.value.trim().length >= 1);
+                    }}
+                    onFocus={() => searchTerm.trim().length >= 1 && setSearchSuggestionsOpen(true)}
+                    onBlur={() => setTimeout(() => setSearchSuggestionsOpen(false), 150)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        searchEquipmentOnline(searchTerm);
+                      }
+                    }}
+                  />
+                  {searchSuggestionsOpen && searchTerm.trim().length >= 1 && searchSuggestions.length > 0 && (
+                    <div
+                      className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md max-h-[240px] overflow-auto"
+                      onMouseDown={(e) => e.preventDefault()}
+                    >
+                      {searchSuggestions.map((s, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          className="w-full px-3 py-2 text-left hover:bg-muted focus:bg-muted focus:outline-none text-sm border-b last:border-b-0"
+                          onClick={() => {
+                            setSearchTerm(s);
+                            setSearchSuggestionsOpen(false);
+                          }}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Button onClick={() => searchEquipmentOnline(searchTerm)} disabled={isSearching} className="shrink-0">
                   {isSearching ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <Search className="w-4 h-4" />
                   )}
+                  Поиск
                 </Button>
               </div>
 
               <ScrollArea className="h-[500px]">
-                {searchResults.length === 0 ? (
+                {searchResults.length === 0 && !isSearching ? (
                   <div className="text-center py-8 text-muted-foreground">
-                    <p>Введите название оборудования и нажмите поиск</p>
+                    <p>Введите название и нажмите «Поиск» — здесь появится список</p>
+                  </div>
+                ) : isSearching ? (
+                  <div className="text-center py-8 text-muted-foreground flex items-center justify-center gap-2">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Поиск…</span>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -506,15 +667,16 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
             </div>
           </TabsContent>
 
-          <TabsContent value="custom" className="flex-1 flex flex-col min-h-0 mt-4">
-            <ScrollArea className="flex-1">
-              <div className="space-y-4">
+          <TabsContent value="custom" className="flex-1 flex flex-col min-h-0 mt-4 overflow-hidden">
+            <ScrollArea className="flex-1 min-h-0 max-h-[65vh] overflow-y-auto pr-3">
+              <div className="space-y-4 pb-4" onPointerDown={(e) => e.stopPropagation()}>
                 <div>
                   <Label>Название *</Label>
                   <Input
                     value={customEquipment.name}
                     onChange={(e) => setCustomEquipment({ ...customEquipment, name: e.target.value })}
                     placeholder="Например: ECHO_1"
+                    className="flex-1 min-w-[200px]"
                   />
                 </div>
 
@@ -585,6 +747,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                           <option value="BNC">BNC</option>
                           <option value="DC">DC</option>
                           <option value="XLR">XLR</option>
+                          <option value="Wireless">Wireless</option>
                         </select>
                         <Button
                           size="sm"
@@ -629,6 +792,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                           <option value="BNC">BNC</option>
                           <option value="DC">DC</option>
                           <option value="XLR">XLR</option>
+                          <option value="Wireless">Wireless</option>
                         </select>
                         <Button
                           size="sm"

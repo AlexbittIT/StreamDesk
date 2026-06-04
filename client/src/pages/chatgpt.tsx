@@ -9,7 +9,7 @@ import {
   Plus, Paperclip, X, FileIcon, Music, Image as ImageIcon, FileText, Download, Menu, MessageSquare
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, apiUrl } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -96,17 +96,33 @@ export default function ChatGPT() {
   }, []);
 
   const [models, setModels] = useState<LocalModel[]>([
+    // Облачные модели Hugging Face Inference Providers (через router.huggingface.co)
+    {
+      id: "openai/gpt-oss-120b:fastest",
+      name: "HF GPT-OSS 120B (fastest)",
+      description: "Облачная модель Hugging Face (policy: fastest) через router.huggingface.co. Нужен HF_TOKEN / HUGGINGFACE_API_KEY.",
+      status: "online",
+      endpoint: "https://router.huggingface.co/v1/chat/completions",
+    },
+    {
+      id: "openai/gpt-oss-120b:cheapest",
+      name: "HF GPT-OSS 120B (cheapest)",
+      description: "Та же модель GPT-OSS 120B, но с policy: cheapest — дешевле, может быть медленнее.",
+      status: "online",
+      endpoint: "https://router.huggingface.co/v1/chat/completions",
+    },
+    // Примеры локальных моделей (можно настроить свои TGI / Ollama / LM Studio и т.п.)
     {
       id: "local-llama",
-      name: "Llama 3.1",
-      description: "Локальная модель Llama 3.1",
+      name: "Llama 3.1 (локально)",
+      description: "Пример локальной модели Llama 3.1 (нужно запустить свой сервер /v1/chat/completions).",
       status: "offline",
       endpoint: "http://localhost:8080/v1/chat/completions",
     },
     {
       id: "local-mistral",
-      name: "Mistral 7B",
-      description: "Локальная модель Mistral 7B",
+      name: "Mistral 7B (локально)",
+      description: "Пример локальной модели Mistral 7B.",
       status: "offline",
       endpoint: "http://localhost:8081/v1/chat/completions",
     },
@@ -136,27 +152,34 @@ export default function ChatGPT() {
     },
   });
 
-  // Загрузка сообщений выбранного чата
+  // Загрузка сообщений выбранного чата (fetch вручную, чтобы при 404 не ломать UI и сбросить выбор)
   const { data: chatMessages = [], isLoading: messagesLoading } = useQuery<Message[]>({
     queryKey: ["/api/chat/sessions", selectedChatId, "messages"],
     enabled: !!selectedChatId && !!currentUser?.id,
+    retry: false,
     queryFn: async () => {
       if (!selectedChatId || !currentUser?.id) return [];
-      try {
-        const response = await apiRequest("GET", `/api/chat/sessions/${selectedChatId}/messages?userId=${currentUser.id}`);
-        if (!response.ok) {
-          throw new Error("Failed to fetch messages");
-        }
-        const data = await response.json();
-        return data.map((msg: any) => ({
-          ...msg,
-          timestamp: new Date(msg.timestamp || msg.createdAt),
-          attachments: msg.attachments || [],
-        }));
-      } catch (error: any) {
-        console.error("Error fetching messages:", error);
+      const url = apiUrl(`/api/chat/sessions/${selectedChatId}/messages?userId=${currentUser.id}`);
+      const response = await fetch(url, { method: "GET", credentials: "include" });
+      if (response.status === 404) {
+        setSelectedChatId(null);
+        toast({
+          title: "Чат не найден",
+          description: "Сессия могла быть удалена. Выберите другой чат или создайте новый.",
+          variant: "destructive",
+        });
         return [];
       }
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || "Не удалось загрузить сообщения");
+      }
+      const data = await response.json();
+      return (Array.isArray(data) ? data : []).map((msg: any) => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp || msg.createdAt),
+        attachments: msg.attachments || [],
+      }));
     },
   });
 
@@ -183,6 +206,11 @@ export default function ChatGPT() {
   const checkModelsStatus = async () => {
     const updatedModels = await Promise.all(
       models.map(async (model) => {
+        // Для Hugging Face router health-конечная точка не используется — считаем модель доступной,
+        // а ошибки покажем уже при реальном запросе.
+        if (model.endpoint.includes("router.huggingface.co")) {
+          return { ...model, status: "online" as const };
+        }
         try {
           const response = await fetch(`${model.endpoint.replace('/v1/chat/completions', '/health')}`, {
             method: 'GET',
@@ -505,20 +533,20 @@ export default function ChatGPT() {
         <div className="flex flex-col sm:flex-row h-[calc(100vh-11rem)] min-h-[320px] rounded-xl overflow-hidden shadow-xl border border-slate-200/80 dark:border-slate-700/80 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm relative flex-1">
       {/* Боковая панель с чатами */}
       <div className={`${sidebarOpen ? 'block' : 'hidden'} sm:block absolute sm:relative z-50 sm:z-auto w-full sm:w-72 flex-shrink-0 flex flex-col border-r border-slate-200/80 dark:border-slate-700/80 bg-slate-50/80 dark:bg-slate-900/80 h-full min-h-0`}>
-        <div className="p-3 sm:p-4 border-b border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between sm:block">
+        <div className="p-3 sm:p-4 border-b border-slate-200/80 dark:border-slate-700/80 flex flex-nowrap items-center gap-2 min-w-0">
           <Button
             size="sm"
             onClick={handleCreateChat}
-            className="w-full sm:w-full justify-start gap-2 h-9 sm:h-10 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md hover:shadow-lg transition-all duration-200 border-0 text-sm font-medium"
+            className="flex-1 min-w-0 justify-center sm:justify-start gap-2 h-9 sm:h-10 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md hover:shadow-lg transition-all duration-200 border-0 text-sm font-medium shrink-0"
           >
-            <Plus className="w-4 h-4" />
-            <span>Новый чат</span>
+            <Plus className="w-4 h-4 shrink-0" />
+            <span className="truncate">Новый чат</span>
           </Button>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setSidebarOpen(false)}
-            className="sm:hidden ml-2 h-8 w-8 p-0 hover:bg-gray-100 dark:hover:bg-gray-800"
+            className="sm:hidden h-9 w-9 p-0 shrink-0 hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             <X className="w-4 h-4" />
           </Button>
@@ -539,20 +567,20 @@ export default function ChatGPT() {
                   setNewChatTitle("");
                 }
               }}
-              className="h-9 text-sm border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-blue-500"
+              className="h-9 text-sm border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 w-full"
               autoFocus
             />
-            <div className="flex gap-2">
+            <div className="flex flex-nowrap gap-2">
               <Button
                 size="sm"
                 onClick={handleCreateChat}
-                className="h-8 flex-1 text-sm bg-blue-600 hover:bg-blue-700 text-white"
+                className="h-9 flex-1 min-w-0 text-sm bg-blue-600 hover:bg-blue-700 text-white shrink-0"
                 disabled={createChatMutation.isPending}
               >
                 {createChatMutation.isPending ? (
                   <>
-                    <Loader2 className="w-3 h-3 mr-2 animate-spin" />
-                    Создание...
+                    <Loader2 className="w-3 h-3 mr-2 animate-spin shrink-0" />
+                    <span className="truncate">Создание...</span>
                   </>
                 ) : (
                   "Создать"
@@ -565,7 +593,7 @@ export default function ChatGPT() {
                   setIsCreatingChat(false);
                   setNewChatTitle("");
                 }}
-                className="h-8 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="h-9 shrink-0 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
                 disabled={createChatMutation.isPending}
               >
                 Отмена
@@ -659,28 +687,28 @@ export default function ChatGPT() {
       {/* Основная область чата */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-white dark:bg-slate-900/50">
         {/* Header с выбором модели */}
-        <div className="border-b border-slate-200/80 dark:border-slate-700/80 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm gap-3">
-          <div className="flex items-center gap-3">
+        <div className="border-b border-slate-200/80 dark:border-slate-700/80 px-3 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center justify-between gap-2 sm:gap-3 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm min-w-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="sm:hidden h-9 w-9 p-0 hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="sm:hidden h-9 w-9 p-0 shrink-0 hover:bg-slate-100 dark:hover:bg-slate-800"
             >
               <Menu className="w-5 h-5" />
             </Button>
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-md">
+            <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+              <div className="w-9 h-9 shrink-0 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-md">
                 <Bot className="w-5 h-5 text-white" />
               </div>
-              <div>
-                <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 block">AI Ассистент</span>
-                <span className="text-xs text-slate-500 dark:text-slate-400">Готов к общению</span>
+              <div className="min-w-0">
+                <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 block truncate">AI Ассистент</span>
+                <span className="text-xs text-slate-500 dark:text-slate-400 block">Готов к общению</span>
               </div>
             </div>
           </div>
           <Select value={selectedModel} onValueChange={setSelectedModel}>
-            <SelectTrigger className="w-[160px] sm:w-[200px] h-9 text-sm border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-blue-500">
+            <SelectTrigger className="w-full min-w-[140px] max-w-[200px] sm:w-[200px] h-9 text-sm border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 shrink-0">
               <SelectValue placeholder="Выберите модель" />
             </SelectTrigger>
             <SelectContent>
@@ -853,7 +881,7 @@ export default function ChatGPT() {
                 ))}
               </div>
             )}
-            <div className="flex items-end gap-2">
+            <div className="flex flex-nowrap items-end gap-2 min-w-0">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -862,14 +890,15 @@ export default function ChatGPT() {
                 className="hidden"
               />
               <button
+                type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading || !selectedModel}
-                className="p-2.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="p-2.5 shrink-0 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Прикрепить файл"
               >
                 <Paperclip className="w-5 h-5" />
               </button>
-              <div className="flex-1 relative">
+              <div className="flex-1 min-w-0 flex items-end gap-2">
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -889,19 +918,20 @@ export default function ChatGPT() {
                   placeholder="Напишите сообщение..."
                   disabled={isLoading || !selectedModel}
                   rows={1}
-                  className="w-full px-4 py-3 pr-14 text-sm sm:text-base border-2 border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                  className="flex-1 min-w-0 w-full px-4 py-3 text-sm sm:text-base border-2 border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   style={{ minHeight: '52px', maxHeight: '200px' }}
                 />
                 <button
+                  type="button"
                   onClick={handleSend}
                   disabled={isLoading || (!input.trim() && attachedFiles.length === 0) || !selectedModel}
-                  className="absolute right-2 bottom-2 p-2 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                  className="shrink-0 p-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 h-[52px] w-[52px] flex items-center justify-center"
                   title="Отправить"
                 >
                   {isLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="w-5 h-5 animate-spin" />
                   ) : (
-                    <Send className="w-4 h-4" />
+                    <Send className="w-5 h-5" />
                   )}
                 </button>
               </div>

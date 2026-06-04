@@ -1,31 +1,184 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { Monitor, Server, Wifi, Activity, AlertTriangle, CheckCircle, RefreshCw, TrendingUp } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Monitor, Server, Wifi, Activity, AlertTriangle, CheckCircle, RefreshCw, TrendingUp, Cpu, HardDrive, MemoryStick, Radio, Download, Power, Trash2, Edit2 } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { useWebSocket } from "@/hooks/use-websocket";
-import { queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+
+type AgentMetricPoint = {
+  timestamp: string;
+  cpuPercent: number | null;
+  memoryPercent: number | null;
+  memoryUsedGb?: number | null;
+  memoryTotalGb?: number | null;
+  diskPercent: number | null;
+  diskFreeGb?: number | null;
+  diskTotalGb?: number | null;
+  networkRxMbps: number | null;
+  networkTxMbps: number | null;
+  sampleLagMs?: number | null;
+};
+
+type MonitoringRange = "10m" | "1h" | "24h" | "7d";
+
+type CompaniesMe = {
+  companies: Array<{
+    company: { id: string; name: string; status: string };
+    membership: { id: string; role: string; status: string };
+  }>;
+};
+
+const RANGE_CONFIG: Record<MonitoringRange, { label: string; hours: number; limit: number; tick: Intl.DateTimeFormatOptions }> = {
+  "10m": { label: "10 минут", hours: 1, limit: 120, tick: { hour: "2-digit", minute: "2-digit", second: "2-digit" } },
+  "1h": { label: "1 час", hours: 2, limit: 180, tick: { hour: "2-digit", minute: "2-digit", second: "2-digit" } },
+  "24h": { label: "24 часа", hours: 24, limit: 240, tick: { hour: "2-digit", minute: "2-digit" } },
+  "7d": { label: "7 дней", hours: 168, limit: 320, tick: { day: "2-digit", month: "2-digit", hour: "2-digit" } },
+};
+
+const asRecord = (value: unknown): Record<string, any> =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+
+const fmtPercent = (value: unknown) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${Math.round(n)}%` : "-";
+};
+
+const fmtNumber = (value: unknown, suffix = "") => {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${n}${suffix}` : "-";
+};
+
+const fmtGbPair = (used: unknown, total: unknown, fallbackPercent?: unknown) => {
+  const usedN = Number(used);
+  const totalN = Number(total);
+  if (Number.isFinite(usedN) && Number.isFinite(totalN) && totalN > 0) {
+    return `${usedN.toFixed(1)} / ${totalN.toFixed(1)} GB`;
+  }
+  return fmtPercent(fallbackPercent);
+};
 
 export default function Monitoring() {
-  const { data: systems, isLoading, refetch } = useQuery({
+  const [selectedAgentSystemId, setSelectedAgentSystemId] = useState<string>("");
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("none");
+  const [selectedRange, setSelectedRange] = useState<MonitoringRange>("24h");
+  const [agentAutostart, setAgentAutostart] = useState(true);
+  const [renameSystemId, setRenameSystemId] = useState<string>("");
+  const [renameValue, setRenameValue] = useState("");
+  const { toast } = useToast();
+
+  const { data: systems = [], isLoading, refetch } = useQuery<any[]>({
     queryKey: ["/api/systems"],
-    refetchInterval: 30000, // Автоматическое обновление каждые 30 секунд
+    refetchInterval: 10000,
   });
 
-  const { data: streams } = useQuery({
+  const { data: companyData } = useQuery<CompaniesMe>({
+    queryKey: ["/api/companies/me"],
+    refetchInterval: 60_000,
+  });
+
+  const { data: streams = [] } = useQuery<any[]>({
     queryKey: ["/api/streams", "active=true"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/streams?active=true");
+      return response.json();
+    },
     refetchInterval: 60000,
   });
+
+  const renameSystemMutation = useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      const response = await apiRequest("PUT", `/api/systems/${id}`, { name });
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Сохранено", description: "Устройство переименовано" });
+      setRenameSystemId("");
+      setRenameValue("");
+      queryClient.invalidateQueries({ queryKey: ["/api/systems"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error?.message || "Не удалось переименовать устройство", variant: "destructive" });
+    },
+  });
+
+  const deleteSystemMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/systems/${id}`);
+    },
+    onSuccess: (_data, id) => {
+      toast({ title: "Удалено", description: "Устройство удалено из мониторинга" });
+      if (selectedAgentSystemId === id) setSelectedAgentSystemId("");
+      queryClient.invalidateQueries({ queryKey: ["/api/systems"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error?.message || "Не удалось удалить устройство", variant: "destructive" });
+    },
+  });
+
+  const handleDeleteSystem = (system: any) => {
+    if (!confirm(`Удалить "${system.name || "устройство"}" из мониторинга?`)) return;
+    deleteSystemMutation.mutate(system.id);
+  };
+
+  const startRenameSystem = (system: any) => {
+    setRenameSystemId(system.id);
+    setRenameValue(system.name || "");
+  };
+
+  const submitRenameSystem = () => {
+    const name = renameValue.trim();
+    if (!renameSystemId || !name) return;
+    renameSystemMutation.mutate({ id: renameSystemId, name });
+  };
 
   // Connect to WebSocket for real-time updates (опционально)
   // WebSocket не критичен - приложение должно работать без него
   const { isConnected } = useWebSocket();
 
-  const onlineSystems = systems?.filter((system: any) => system.status === "online") || [];
-  const offlineSystems = systems?.filter((system: any) => system.status === "offline") || [];
-  const maintenanceSystems = systems?.filter((system: any) => system.status === "maintenance") || [];
+  const onlineSystems = systems.filter((system: any) => system.status === "online") || [];
+  const offlineSystems = systems.filter((system: any) => system.status === "offline") || [];
+  const maintenanceSystems = systems.filter((system: any) => system.status === "maintenance") || [];
+  const agentSystems = systems.filter((system: any) => {
+    const specifications = asRecord(system.specifications);
+    return Boolean(specifications.agentKey || asRecord(specifications.agent).agentKey);
+  });
+  const selectedAgentSystem = agentSystems.find((system: any) => system.id === selectedAgentSystemId) || agentSystems[0];
+  const selectedRangeConfig = RANGE_CONFIG[selectedRange];
+
+  const { data: metricsHistory } = useQuery<{ points: AgentMetricPoint[] }>({
+    queryKey: ["/api/agents/metrics", selectedAgentSystem?.id, selectedRange],
+    queryFn: async () => {
+      const response = await apiRequest(
+        "GET",
+        `/api/agents/metrics?systemId=${encodeURIComponent(selectedAgentSystem?.id || "")}&limit=${selectedRangeConfig.limit}&hours=${selectedRangeConfig.hours}`,
+      );
+      return response.json();
+    },
+    enabled: Boolean(selectedAgentSystem?.id),
+    refetchInterval: 15000,
+  });
+
+  useEffect(() => {
+    if (!selectedAgentSystemId && agentSystems[0]?.id) {
+      setSelectedAgentSystemId(agentSystems[0].id);
+    }
+  }, [agentSystems, selectedAgentSystemId]);
+
+  useEffect(() => {
+    if (selectedCompanyId !== "none") return;
+    const firstCompanyId = companyData?.companies?.[0]?.company?.id;
+    if (firstCompanyId) {
+      setSelectedCompanyId(firstCompanyId);
+    }
+  }, [companyData, selectedCompanyId]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -64,11 +217,42 @@ export default function Monitoring() {
   };
 
   const systemsStats = {
-    total: systems?.length || 0,
+    total: systems.length || 0,
     online: onlineSystems.length,
     offline: offlineSystems.length,
     maintenance: maintenanceSystems.length,
-    uptime: systems?.length ? Math.round((onlineSystems.length / systems.length) * 100) : 0,
+    uptime: systems.length ? Math.round((onlineSystems.length / systems.length) * 100) : 0,
+  };
+
+  const chartData = (metricsHistory?.points || []).map((point) => ({
+    ...point,
+    time: new Date(point.timestamp).toLocaleString("ru-RU", selectedRangeConfig.tick),
+    cpuPercent: point.cpuPercent ?? undefined,
+    memoryPercent: point.memoryPercent ?? undefined,
+    diskPercent: point.diskPercent ?? undefined,
+    memoryUsedGb: point.memoryUsedGb ?? undefined,
+    memoryTotalGb: point.memoryTotalGb ?? undefined,
+    diskFreeGb: point.diskFreeGb ?? undefined,
+    diskTotalGb: point.diskTotalGb ?? undefined,
+    networkRxMbps: point.networkRxMbps ?? undefined,
+    networkTxMbps: point.networkTxMbps ?? undefined,
+  }));
+  const selectedAgentSpec = asRecord(selectedAgentSystem?.specifications);
+  const selectedAgentMetrics = asRecord(selectedAgentSpec.metrics);
+  const selectedAgentHardware = asRecord(selectedAgentSpec.hardware);
+  const selectedAgentVmix = asRecord(selectedAgentSpec.vmix);
+  const selectedAgentInfo = asRecord(selectedAgentSpec.agent);
+  const selectedGpuNames = [
+    ...(Array.isArray(selectedAgentHardware.gpus) ? selectedAgentHardware.gpus : []),
+    ...(Array.isArray(selectedAgentHardware.videoControllers) ? selectedAgentHardware.videoControllers : []),
+  ]
+    .map((gpu) => String(asRecord(gpu).name || asRecord(gpu).caption || asRecord(gpu).description || "").trim())
+    .filter(Boolean);
+  const selectedGpuText = Array.from(new Set(selectedGpuNames)).join(", ");
+
+  const downloadAgent = (osName: "windows" | "linux", agentType: "server" | "computer" | "vmix", autostart = agentAutostart) => {
+    if (!selectedCompanyId || selectedCompanyId === "none") return;
+    window.open(`/api/companies/${selectedCompanyId}/agent-download?os=${osName}&type=${agentType}&autostart=${autostart ? "1" : "0"}`, "_blank");
   };
 
   if (isLoading) {
@@ -113,6 +297,89 @@ export default function Monitoring() {
       </div>
 
       {/* System Overview — плитки с иконками и акцентами */}
+      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <Card className="rounded-2xl border-border/70 bg-card/90">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base sm:text-lg">Точность графиков и диапазон</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-foreground">Интервал просмотра</div>
+              <Select value={selectedRange} onValueChange={(value) => setSelectedRange(value as MonitoringRange)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите диапазон" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(RANGE_CONFIG).map(([value, config]) => (
+                    <SelectItem key={value} value={value}>
+                      {config.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-muted-foreground">
+                Для коротких интервалов графики показываются почти посекундно, для длинных — спокойным обзором за часы и дни.
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-foreground">Рабочее пространство компании</div>
+              <Select value={selectedCompanyId} onValueChange={setSelectedCompanyId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите компанию" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(companyData?.companies || []).map((item) => (
+                    <SelectItem key={item.company.id} value={item.company.id}>
+                      {item.company.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="text-xs text-muted-foreground">
+                Любой скачанный агент будет привязан именно к этой компании и её monitoring workspace.
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl border-primary/20 bg-primary/5">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base sm:text-lg">Агенты для компании</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="text-sm text-muted-foreground">
+              Запустите bat/sh на машине, и она сама передаст характеристики, тип устройства и heartbeat в систему мониторинга компании.
+            </div>
+            <label className="flex items-center justify-between gap-3 rounded-xl border border-border bg-background/80 px-3 py-2 text-sm">
+              <span className="flex items-center gap-2 font-medium text-foreground">
+                <Power className="h-4 w-4 text-primary" />
+                Добавить в автозапуск
+              </span>
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-primary"
+                checked={agentAutostart}
+                onChange={(event) => setAgentAutostart(event.target.checked)}
+              />
+            </label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Button variant="outline" onClick={() => downloadAgent("windows", "computer")} disabled={selectedCompanyId === "none"} className="justify-start">
+                <Download className="mr-2 h-4 w-4" />
+                Компьютер Windows
+              </Button>
+              <Button variant="outline" onClick={() => downloadAgent("windows", "server")} disabled={selectedCompanyId === "none"} className="justify-start">
+                <Download className="mr-2 h-4 w-4" />
+                Сервер Windows
+              </Button>
+              <Button variant="outline" onClick={() => downloadAgent("windows", "vmix")} disabled={selectedCompanyId === "none"} className="justify-start sm:col-span-2">
+                <Download className="mr-2 h-4 w-4" />
+                vMix Windows
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
         <Card className="rounded-2xl border-border shadow-sm overflow-hidden">
           <CardContent className="p-5 sm:p-6">
@@ -175,6 +442,191 @@ export default function Monitoring() {
       </div>
 
       {/* Systems Grid — современные карточки */}
+      <Card className="rounded-2xl border border-border shadow-sm overflow-hidden">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
+            <span className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Radio className="w-5 h-5 text-primary" />
+            </span>
+            Агентский мониторинг ({agentSystems.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {agentSystems.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border p-5 text-sm text-muted-foreground">
+              Запустите `agent-computer.bat`, `agent-server.bat` или `agent-vmix.bat`, и машина появится здесь без ручного ввода IP.
+            </div>
+          ) : (
+            <>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {agentSystems.map((system: any) => {
+                  const spec = asRecord(system.specifications);
+                  const agent = asRecord(spec.agent);
+                  const isSelected = system.id === selectedAgentSystem?.id;
+                  return (
+                    <Button
+                      key={system.id}
+                      variant={isSelected ? "default" : "outline"}
+                      size="sm"
+                      className="shrink-0 rounded-lg"
+                      onClick={() => setSelectedAgentSystemId(system.id)}
+                    >
+                      {system.name}
+                      {agent.deviceType && <span className="ml-2 text-xs opacity-80">{agent.deviceType}</span>}
+                    </Button>
+                  );
+                })}
+              </div>
+
+              {selectedAgentSystem && (
+                <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-5">
+                  <div className="space-y-3">
+                    <div className="rounded-xl border border-border p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm text-muted-foreground">Выбранный агент</p>
+                          {renameSystemId === selectedAgentSystem.id ? (
+                            <div className="mt-1 flex gap-2">
+                              <Input
+                                value={renameValue}
+                                onChange={(event) => setRenameValue(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") submitRenameSystem();
+                                  if (event.key === "Escape") setRenameSystemId("");
+                                }}
+                                className="h-8"
+                                autoFocus
+                              />
+                              <Button size="sm" onClick={submitRenameSystem} disabled={renameSystemMutation.isPending || !renameValue.trim()}>
+                                OK
+                              </Button>
+                            </div>
+                          ) : (
+                            <p className="font-semibold text-foreground truncate">{selectedAgentSystem.name}</p>
+                          )}
+                          <p className="text-xs text-muted-foreground font-mono truncate">{selectedAgentSystem.ipAddress || selectedAgentInfo.agentKey}</p>
+                        </div>
+                        <Badge className={cn("rounded-lg", selectedAgentSystem.status === "online" ? "bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300" : "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300")}>
+                          {getStatusText(selectedAgentSystem.status)}
+                        </Badge>
+                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => startRenameSystem(selectedAgentSystem)} title="Переименовать">
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDeleteSystem(selectedAgentSystem)} title="Удалить">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+                        <div className="rounded-lg bg-muted/40 px-2 py-1">
+                          Интервал: <span className="font-medium text-foreground">{selectedAgentInfo.intervalSec ?? "-" } c</span>
+                        </div>
+                        <div className="rounded-lg bg-muted/40 px-2 py-1">
+                          Задержка: <span className="font-medium text-foreground">{Number.isFinite(Number(selectedAgentInfo.sampleLagMs)) ? `${Math.round(Number(selectedAgentInfo.sampleLagMs))} мс` : "-"}</span>
+                        </div>
+                        <div className="rounded-lg bg-muted/40 px-2 py-1">
+                          Давность: <span className="font-medium text-foreground">{selectedAgentInfo.staleSec ?? 0} c</span>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 gap-3">
+                        <div>
+                          <div className="mb-1 flex items-center justify-between text-sm">
+                            <span className="flex items-center gap-2"><Cpu className="w-4 h-4 text-muted-foreground" /> CPU</span>
+                            <span className="font-medium">{fmtPercent(selectedAgentMetrics.cpuPercent)}</span>
+                          </div>
+                          <Progress value={Number(selectedAgentMetrics.cpuPercent) || 0} className="h-2" />
+                        </div>
+                        <div>
+                          <div className="mb-1 flex items-center justify-between text-sm">
+                            <span className="flex items-center gap-2"><MemoryStick className="w-4 h-4 text-muted-foreground" /> RAM</span>
+                            <span className="font-medium">{fmtGbPair(selectedAgentMetrics.memoryUsedGb, selectedAgentMetrics.memoryTotalGb, selectedAgentMetrics.memoryPercent)}</span>
+                          </div>
+                          <Progress value={Number(selectedAgentMetrics.memoryPercent) || 0} className="h-2" />
+                        </div>
+                        <div>
+                          <div className="mb-1 flex items-center justify-between text-sm">
+                            <span className="flex items-center gap-2"><HardDrive className="w-4 h-4 text-muted-foreground" /> Диск C:</span>
+                            <span className="font-medium">{Number.isFinite(Number(selectedAgentMetrics.diskFreeGb)) && Number.isFinite(Number(selectedAgentMetrics.diskTotalGb)) ? `${Number(selectedAgentMetrics.diskFreeGb).toFixed(1)} GB свободно` : fmtPercent(selectedAgentMetrics.diskPercent)}</span>
+                          </div>
+                          <Progress value={Number(selectedAgentMetrics.diskPercent) || 0} className="h-2" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-xl border border-border p-3 col-span-2">
+                        <p className="text-xs text-muted-foreground">GPU</p>
+                        <p className="text-sm font-semibold leading-snug">{selectedGpuText || "-"}</p>
+                      </div>
+                      <div className="rounded-xl border border-border p-3">
+                        <p className="text-xs text-muted-foreground">Сеть вход</p>
+                        <p className="text-lg font-semibold">{fmtNumber(selectedAgentMetrics.networkRxMbps, " Mbps")}</p>
+                      </div>
+                      <div className="rounded-xl border border-border p-3">
+                        <p className="text-xs text-muted-foreground">Сеть выход</p>
+                        <p className="text-lg font-semibold">{fmtNumber(selectedAgentMetrics.networkTxMbps, " Mbps")}</p>
+                      </div>
+                      <div className="rounded-xl border border-border p-3">
+                        <p className="text-xs text-muted-foreground">vMix</p>
+                        <p className={cn("text-lg font-semibold", selectedAgentVmix.connected ? "text-green-600 dark:text-green-400" : "text-muted-foreground")}>
+                          {selectedAgentVmix.enabled ? (selectedAgentVmix.connected ? "online" : "offline") : "off"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-border p-4 min-h-[460px]">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-foreground">График нагрузки</p>
+                        <p className="text-xs text-muted-foreground">История heartbeat по выбранной машине</p>
+                      </div>
+                      <Badge variant="secondary" className="rounded-lg">{chartData.length} точек</Badge>
+                    </div>
+                    {chartData.length === 0 ? (
+                      <div className="h-[250px] flex items-center justify-center rounded-lg bg-muted/30 text-sm text-muted-foreground">
+                        История появится после нескольких heartbeat от агента
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="h-[210px] rounded-lg border border-border/60 p-2">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                              <XAxis dataKey="time" tick={{ fontSize: 12 }} minTickGap={24} />
+                              <YAxis tick={{ fontSize: 12 }} width={36} domain={[0, 100]} />
+                              <Tooltip />
+                              <Legend />
+                              <Line type="monotone" dataKey="cpuPercent" name="CPU %" stroke="#16a34a" dot={false} strokeWidth={2} />
+                              <Line type="monotone" dataKey="memoryPercent" name="RAM %" stroke="#2563eb" dot={false} strokeWidth={2} />
+                              <Line type="monotone" dataKey="diskPercent" name="Disk %" stroke="#dc2626" dot={false} strokeWidth={2} />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="grid gap-4">
+                          <div className="h-[220px] rounded-lg border border-border/60 p-2">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                                <XAxis dataKey="time" tick={{ fontSize: 12 }} minTickGap={24} />
+                                <YAxis tick={{ fontSize: 12 }} width={44} />
+                                <Tooltip />
+                                <Legend />
+                                <Line type="monotone" dataKey="networkRxMbps" name="Сеть IN Mbps" stroke="#0891b2" dot={false} strokeWidth={2} />
+                                <Line type="monotone" dataKey="networkTxMbps" name="Сеть OUT Mbps" stroke="#f59e0b" dot={false} strokeWidth={2} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Online Systems */}
         <Card className="rounded-2xl border border-border shadow-sm overflow-hidden bg-card/50 dark:bg-card/30">

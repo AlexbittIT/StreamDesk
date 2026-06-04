@@ -17,7 +17,49 @@ export const users = pgTable("users", {
   telegramId: text("telegram_id").unique(), // привязка к Telegram
   avatar: text("avatar"), // URL аватара
   active: boolean("active").default(true),
+  onboardingCompleted: boolean("onboarding_completed").default(false),
+  workspaceMode: text("workspace_mode").default("pending"),
   lastLogin: timestamp("last_login"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const companies = pgTable("companies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  slug: text("slug"),
+  description: text("description"),
+  ownerId: varchar("owner_id").references(() => users.id).notNull(),
+  status: text("status").notNull().default("active"),
+  settings: jsonb("settings").default('{}'),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const companyMembers = pgTable("company_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id").references(() => companies.id).notNull(),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  role: text("role").notNull().default("member"),
+  status: text("status").notNull().default("active"),
+  invitedBy: varchar("invited_by").references(() => users.id),
+  approvedBy: varchar("approved_by").references(() => users.id),
+  permissions: jsonb("permissions").default('[]'),
+  joinedAt: timestamp("joined_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const companyInvites = pgTable("company_invites", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id").references(() => companies.id).notNull(),
+  token: text("token").notNull().unique(),
+  createdBy: varchar("created_by").references(() => users.id).notNull(),
+  role: text("role").notNull().default("member"),
+  status: text("status").notNull().default("active"),
+  note: text("note"),
+  expiresAt: timestamp("expires_at"),
+  usedBy: varchar("used_by").references(() => users.id),
+  usedAt: timestamp("used_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -102,6 +144,34 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const platformSettings = pgTable("platform_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  key: text("key").notNull().unique(),
+  category: text("category").notNull().default("general"),
+  value: jsonb("value").default('{}'),
+  description: text("description"),
+  updatedBy: varchar("updated_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const platformIncidents = pgTable("platform_incidents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id").references(() => companies.id),
+  userId: varchar("user_id").references(() => users.id),
+  source: text("source").notNull().default("manual"),
+  type: text("type").notNull().default("incident"),
+  severity: text("severity").notNull().default("medium"),
+  status: text("status").notNull().default("open"),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  metadata: jsonb("metadata").default('{}'),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: varchar("resolved_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const equipmentReservations = pgTable("equipment_reservations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   equipmentId: varchar("equipment_id").references(() => equipment.id),
@@ -111,6 +181,23 @@ export const equipmentReservations = pgTable("equipment_reservations", {
   endTime: timestamp("end_time").notNull(),
   status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const equipmentCheckoutRequests = pgTable("equipment_checkout_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id").references(() => companies.id),
+  equipmentId: varchar("equipment_id").references(() => equipment.id).notNull(),
+  requestedBy: varchar("requested_by").references(() => users.id).notNull(),
+  requestType: text("request_type").notNull().default("checkout"),
+  currentHolder: varchar("current_holder"),
+  reviewedBy: varchar("reviewed_by").references(() => users.id),
+  status: text("status").notNull().default("pending"),
+  location: text("location"),
+  note: text("note"),
+  decisionNote: text("decision_note"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  reviewedAt: timestamp("reviewed_at"),
 });
 
 export const telegramUsers = pgTable("telegram_users", {
@@ -155,6 +242,7 @@ export const tasks = pgTable("tasks", {
   priority: text("priority").notNull().default("medium"), // low, medium, high, urgent
   creatorId: varchar("creator_id").references(() => users.id).notNull(),
   assigneeId: varchar("assignee_id").references(() => users.id),
+  companyId: varchar("company_id").references(() => companies.id),
   dueDate: timestamp("due_date"),
   startDate: timestamp("start_date"),
   completedAt: timestamp("completed_at"),
@@ -224,12 +312,17 @@ export const computers = pgTable("computers", {
 export const projects = pgTable("projects", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
+  ownerId: varchar("owner_id").references(() => users.id),
+  companyId: varchar("company_id").references(() => companies.id),
+  visibility: text("visibility").notNull().default("company"),
   client: text("client"),
   description: text("description"),
   status: text("status").notNull().default("planning"),
   category: text("category"),
   deadline: timestamp("deadline"),
   assignedTo: varchar("assigned_to").references(() => users.id),
+  participants: jsonb("participants").default('[]'), // участники проекта: массив userId
+  showInTaskManager: boolean("show_in_task_manager").default(false), // локальная доска в таск-менеджере без обязательного YouGile
   devices: jsonb("devices").default('[]'),
   storageLocation: text("storage_location"),
   estimatedSize: text("estimated_size"),
@@ -398,6 +491,17 @@ export const yougileUsers = pgTable("yougile_users", {
   syncedAt: timestamp("synced_at").defaultNow(),
 });
 
+// Кэш стикеров доски YouGile (StringStickerState): читаем из БД, без лишних запросов к API
+export const yougileStringStickerStates = pgTable("yougile_string_sticker_states", {
+  id: varchar("id").primaryKey(),
+  boardId: varchar("board_id").notNull(),
+  title: text("title"),
+  type: text("type"), // "user" | "list" | "string"
+  order: integer("order").default(0),
+  options: jsonb("options"), // [{ id, title }] для выпадающего списка
+  syncedAt: timestamp("synced_at").defaultNow(),
+});
+
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
@@ -410,6 +514,23 @@ export const insertEventSchema = createInsertSchema(events).omit({
 });
 
 export const insertEventParticipantSchema = createInsertSchema(eventParticipants).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertCompanySchema = createInsertSchema(companies).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertCompanyMemberSchema = createInsertSchema(companyMembers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertCompanyInviteSchema = createInsertSchema(companyInvites).omit({
   id: true,
   createdAt: true,
 });
@@ -434,9 +555,28 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
   createdAt: true,
 });
 
+export const insertPlatformSettingSchema = createInsertSchema(platformSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertPlatformIncidentSchema = createInsertSchema(platformIncidents).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const insertEquipmentReservationSchema = createInsertSchema(equipmentReservations).omit({
   id: true,
   createdAt: true,
+});
+
+export const insertEquipmentCheckoutRequestSchema = createInsertSchema(equipmentCheckoutRequests).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  reviewedAt: true,
 });
 
 export const insertTelegramUserSchema = createInsertSchema(telegramUsers).omit({
@@ -549,6 +689,15 @@ export type InsertEvent = z.infer<typeof insertEventSchema>;
 export type EventParticipant = typeof eventParticipants.$inferSelect;
 export type InsertEventParticipant = z.infer<typeof insertEventParticipantSchema>;
 
+export type Company = typeof companies.$inferSelect;
+export type InsertCompany = z.infer<typeof insertCompanySchema>;
+
+export type CompanyMember = typeof companyMembers.$inferSelect;
+export type InsertCompanyMember = z.infer<typeof insertCompanyMemberSchema>;
+
+export type CompanyInvite = typeof companyInvites.$inferSelect;
+export type InsertCompanyInvite = z.infer<typeof insertCompanyInviteSchema>;
+
 export type Equipment = typeof equipment.$inferSelect;
 export type InsertEquipment = z.infer<typeof insertEquipmentSchema>;
 
@@ -561,8 +710,17 @@ export type InsertStream = z.infer<typeof insertStreamSchema>;
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 
+export type PlatformSetting = typeof platformSettings.$inferSelect;
+export type InsertPlatformSetting = z.infer<typeof insertPlatformSettingSchema>;
+
+export type PlatformIncident = typeof platformIncidents.$inferSelect;
+export type InsertPlatformIncident = z.infer<typeof insertPlatformIncidentSchema>;
+
 export type EquipmentReservation = typeof equipmentReservations.$inferSelect;
 export type InsertEquipmentReservation = z.infer<typeof insertEquipmentReservationSchema>;
+
+export type EquipmentCheckoutRequest = typeof equipmentCheckoutRequests.$inferSelect;
+export type InsertEquipmentCheckoutRequest = z.infer<typeof insertEquipmentCheckoutRequestSchema>;
 
 export type TelegramUser = typeof telegramUsers.$inferSelect;
 export type InsertTelegramUser = z.infer<typeof insertTelegramUserSchema>;
@@ -628,6 +786,7 @@ export type YougileProject = typeof yougileProjects.$inferSelect;
 export type YougileBoard = typeof yougileBoards.$inferSelect;
 export type YougileColumn = typeof yougileColumns.$inferSelect;
 export type YougileUser = typeof yougileUsers.$inferSelect;
+export type YougileStringStickerStateRow = typeof yougileStringStickerStates.$inferSelect;
 
 // Константы для разрешений
 export const PERMISSIONS = {
@@ -663,10 +822,15 @@ export const PERMISSIONS = {
   USERS_VIEW: 'users:view',
   USERS_MANAGE: 'users:manage',
   ROLES_MANAGE: 'roles:manage',
+  COMPANIES_MANAGE: 'companies:manage',
+  INTEGRATIONS_MANAGE: 'integrations:manage',
+  PROJECTS_VIEW_ALL: 'projects:view_all',
   
   // Админ
   ADMIN_PANEL: 'admin:panel',
   SETTINGS_MANAGE: 'settings:manage',
+  PLATFORM_ADMIN: 'platform:admin',
+  MONITORING_PLATFORM: 'monitoring:platform',
 } as const;
 
 export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];
@@ -679,7 +843,7 @@ export const TAB_KEYS = [
   "maps",
   "room-booking",
   "equipment",
-  "transcription",
+  "estimates",
   "computers",
   "projects",
   "monitoring",
@@ -701,9 +865,9 @@ export const TAB_LABELS: Record<string, string> = {
   maps: "Карты",
   "room-booking": "Бронирование комнат",
   equipment: "Склад техники",
-  transcription: "Транскрибация",
+  estimates: "Смета",
   computers: "Компьютеры",
-  projects: "Видеопроекты",
+  projects: "Проекты",
   monitoring: "Мониторинг системы",
   streams: "Стриминг",
   servers: "Серверы",

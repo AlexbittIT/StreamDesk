@@ -9,6 +9,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
+import { Checkbox } from "@/components/ui/checkbox";
 import { 
   Plus, HardDrive, Calendar,
   User, Edit, Trash2, Film, Clock, CheckCircle2,
@@ -35,6 +36,9 @@ const projectSchema = z.object({
   category: z.string().optional(),
   deadline: z.string().optional(),
   assignedTo: z.string().optional(),
+  participants: z.array(z.string()).optional(),
+  showInTaskManager: z.boolean().default(false),
+  createYougileBoard: z.boolean().default(false),
   devices: z.array(z.string()).optional(),
   storageLocation: z.string().optional(),
   estimatedSize: z.string().optional(),
@@ -325,6 +329,8 @@ function EditProjectForm({
   const [name, setName] = useState(project?.name ?? "");
   const [description, setDescription] = useState(project?.description ?? "");
   const [assignedTo, setAssignedTo] = useState(project?.assignedTo ?? "");
+  const [participants, setParticipants] = useState<string[]>(normalizeParticipantIds(project?.participants));
+  const [showInTaskManager, setShowInTaskManager] = useState(Boolean(project?.showInTaskManager));
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
 
@@ -333,7 +339,9 @@ function EditProjectForm({
     setName(project.name ?? "");
     setDescription(project.description ?? "");
     setAssignedTo(project.assignedTo ?? "");
-  }, [project?.id, project?.name, project?.description, project?.assignedTo]);
+    setParticipants(normalizeParticipantIds(project.participants));
+    setShowInTaskManager(Boolean(project.showInTaskManager));
+  }, [project?.id, project?.name, project?.description, project?.assignedTo, project?.participants, project?.showInTaskManager]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -348,6 +356,8 @@ function EditProjectForm({
         name: name.trim(),
         description: description.trim() || undefined,
         assignedTo: assignedTo || undefined,
+        participants,
+        showInTaskManager,
       });
       onSuccess();
     } catch (error: any) {
@@ -381,6 +391,34 @@ function EditProjectForm({
           </SelectContent>
         </Select>
       </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium block">Участники проекта</label>
+        <div className="max-h-44 overflow-y-auto rounded-lg border bg-background p-2 space-y-2">
+          {safeUsers.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Пользователей пока нет</p>
+          ) : (
+            safeUsers.map((u: any) => (
+              <label key={u.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/60">
+                <Checkbox
+                  checked={participants.includes(u.id)}
+                  onCheckedChange={() => setParticipants((prev) => toggleId(prev, u.id))}
+                />
+                <span className="min-w-0">
+                  <span className="block truncate">{u.name ?? u.username ?? u.id}</span>
+                  {u.email && <span className="block truncate text-xs text-muted-foreground">{u.email}</span>}
+                </span>
+              </label>
+            ))
+          )}
+        </div>
+      </div>
+      <label className="flex items-start gap-2 rounded-lg border bg-muted/20 p-3 text-sm">
+        <Checkbox checked={showInTaskManager} onCheckedChange={(checked) => setShowInTaskManager(Boolean(checked))} />
+        <span>
+          <span className="block font-medium">Показывать в таск-менеджере</span>
+          <span className="text-muted-foreground">Локальная доска StreamDesk, без обязательной доски YouGile.</span>
+        </span>
+      </label>
       <div className="flex gap-2 pt-2">
         <Button type="button" variant="outline" onClick={onCancel}>Отмена</Button>
         <Button type="submit" disabled={saving}>{saving ? "Сохранение..." : "Сохранить"}</Button>
@@ -414,6 +452,15 @@ function saveTaskManagerColumns(cols: { id: string; name: string; order: number 
   }
 }
 
+function normalizeParticipantIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map((item) => String(item || "").trim()).filter(Boolean)));
+}
+
+function toggleId(list: string[], id: string): string[] {
+  return list.includes(id) ? list.filter((item) => item !== id) : [...list, id];
+}
+
 export default function Projects() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -429,6 +476,10 @@ export default function Projects() {
 
   const { data: users = [] } = useQuery({
     queryKey: ["/api/users"],
+  });
+
+  const { data: equipmentOnProjects = [] } = useQuery<Array<{ projectId: string; equipmentId: string }>>({
+    queryKey: ["/api/equipment-on-projects"],
   });
 
   const { data: yougileProjects = [] } = useQuery<Array<{ id: string; title?: string }>>({
@@ -471,6 +522,9 @@ export default function Projects() {
       category: "",
       deadline: "",
       assignedTo: "",
+      participants: [],
+      showInTaskManager: false,
+      createYougileBoard: false,
       devices: [],
       storageLocation: "",
       estimatedSize: "",
@@ -504,7 +558,11 @@ export default function Projects() {
       if (firstBoard?.id && existing.some((p: any) => p.yougileBoardId === firstBoard.id)) {
         throw new Error("Этот проект уже в видеопроектах");
       }
-      const payload: { name: string; status: string; yougileBoardId?: string } = { name, status: "planning" };
+      const payload: { name: string; status: string; yougileBoardId?: string; showInTaskManager?: boolean } = {
+        name,
+        status: "planning",
+        showInTaskManager: true,
+      };
       if (firstBoard?.id) payload.yougileBoardId = firstBoard.id;
       const res = await apiRequest("POST", "/api/projects", payload);
       return res.json();
@@ -549,7 +607,7 @@ export default function Projects() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
-      toast({ title: "Готово", description: "Доска создана в таск-менеджере" });
+      toast({ title: "Готово", description: "Доска YouGile создана и привязана" });
     },
     onError: (e: any) => {
       toast({ title: "Ошибка", description: e?.message || "Не удалось создать доску", variant: "destructive" });
@@ -577,13 +635,21 @@ export default function Projects() {
   });
 
   const filteredProjects = (projects as any[]).filter((item) => {
+    const participantIds = normalizeParticipantIds(item.participants);
     const matchesSearch = item.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          item.client?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === "all" || item.status === statusFilter;
     const matchesCategory = categoryFilter === "all" || item.category === categoryFilter;
-    const matchesAssigned = assignedFilter === "all" || item.assignedTo === assignedFilter;
+    const matchesAssigned = assignedFilter === "all" || item.assignedTo === assignedFilter || participantIds.includes(assignedFilter);
     return matchesSearch && matchesStatus && matchesCategory && matchesAssigned;
   });
+
+  const equipmentCountByProject = equipmentOnProjects.reduce<Record<string, number>>((acc, item) => {
+    const key = String(item.projectId || "").trim();
+    if (!key) return acc;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
 
   const exportProjectsToExcel = () => {
     const BOM = "\uFEFF";
@@ -688,20 +754,86 @@ export default function Projects() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Участник</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value || ""}>
+                      <Select
+                        onValueChange={(v) => field.onChange(v === "__none__" ? "" : v)}
+                        value={field.value || "__none__"}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Выберите участника" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="">Не назначен</SelectItem>
+                          <SelectItem value="__none__">Не назначен</SelectItem>
                           {(users as any[]).map((user: any) => (
                             <SelectItem key={user.id} value={user.id}>{user.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                       <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="participants"
+                  render={({ field }) => {
+                    const selected = normalizeParticipantIds(field.value);
+                    return (
+                      <FormItem>
+                        <FormLabel>Участники проекта</FormLabel>
+                        <FormControl>
+                          <div className="max-h-48 overflow-y-auto rounded-lg border bg-background p-2 space-y-2">
+                            {(users as any[]).length === 0 ? (
+                              <p className="text-sm text-muted-foreground px-2 py-1">Пользователей пока нет</p>
+                            ) : (
+                              (users as any[]).map((user: any) => (
+                                <label key={user.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/60">
+                                  <Checkbox
+                                    checked={selected.includes(user.id)}
+                                    onCheckedChange={() => field.onChange(toggleId(selected, user.id))}
+                                  />
+                                  <span className="min-w-0">
+                                    <span className="block truncate">{user.name || user.username || user.id}</span>
+                                    {user.email && <span className="block truncate text-xs text-muted-foreground">{user.email}</span>}
+                                  </span>
+                                </label>
+                              ))
+                            )}
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    );
+                  }}
+                />
+                <FormField
+                  control={form.control}
+                  name="showInTaskManager"
+                  render={({ field }) => (
+                    <FormItem>
+                      <label className="flex items-start gap-2 rounded-lg border bg-muted/20 p-3 text-sm">
+                        <Checkbox checked={Boolean(field.value)} onCheckedChange={(checked) => field.onChange(Boolean(checked))} />
+                        <span>
+                          <span className="block font-medium">Показывать в таск-менеджере</span>
+                          <span className="text-muted-foreground">Создать локальную доску StreamDesk без обязательного YouGile.</span>
+                        </span>
+                      </label>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="createYougileBoard"
+                  render={({ field }) => (
+                    <FormItem>
+                      <label className="flex items-start gap-2 rounded-lg border bg-muted/20 p-3 text-sm">
+                        <Checkbox checked={Boolean(field.value)} onCheckedChange={(checked) => field.onChange(Boolean(checked))} />
+                        <span>
+                          <span className="block font-medium">Создать доску в YouGile</span>
+                          <span className="text-muted-foreground">Опционально. Оставьте выключенным для сотрудников без YouGile.</span>
+                        </span>
+                      </label>
                     </FormItem>
                   )}
                 />
@@ -825,6 +957,14 @@ export default function Projects() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <CardTitle className="text-lg line-clamp-1">{project.name}</CardTitle>
+                      {equipmentCountByProject[project.id] > 0 && (
+                        <div className="mt-2">
+                          <Badge variant="secondary" className="inline-flex items-center gap-1">
+                            <HardDrive className="h-3.5 w-3.5" />
+                            {equipmentCountByProject[project.id]} на проекте
+                          </Badge>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </CardHeader>
@@ -836,6 +976,20 @@ export default function Projects() {
                     <div className="flex items-center gap-2 text-sm">
                       <User className="w-4 h-4 text-muted-foreground shrink-0" />
                       <span>{getUserName(project.assignedTo)}</span>
+                    </div>
+                  )}
+                  {normalizeParticipantIds(project.participants).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {normalizeParticipantIds(project.participants).slice(0, 4).map((userId) => (
+                        <Badge key={userId} variant="secondary" className="text-[11px]">
+                          {getUserName(userId)}
+                        </Badge>
+                      ))}
+                      {normalizeParticipantIds(project.participants).length > 4 && (
+                        <Badge variant="outline" className="text-[11px]">
+                          +{normalizeParticipantIds(project.participants).length - 4}
+                        </Badge>
+                      )}
                     </div>
                   )}
                   <div className="flex flex-wrap gap-2 pt-1">
@@ -858,39 +1012,57 @@ export default function Projects() {
                       <BarChart3 className="w-4 h-4 mr-1 shrink-0" />
                       Статистика
                     </Button>
+                    {project.showInTaskManager ? (
+                      <Link href="/tasks">
+                        <Button variant="outline" size="sm" className="shrink-0 min-w-[5rem]" title="Открыть локальную доску проекта в таск-менеджере">
+                          <ListTodo className="w-4 h-4 mr-1 shrink-0" />
+                          Таск
+                        </Button>
+                      </Link>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0 min-w-[7rem]"
+                        title="Показывать проект как локальную доску StreamDesk"
+                        disabled={updateMutation.isPending}
+                        onClick={() => updateMutation.mutate({ id: project.id, data: { showInTaskManager: true } })}
+                      >
+                        <ListTodo className="w-4 h-4 mr-1 shrink-0" />
+                        В таск
+                      </Button>
+                    )}
                     {project.yougileBoardId ? (
                       <>
                         <Button
                           variant="outline"
                           size="sm"
                           className="shrink-0 min-w-[7rem]"
-                          title="Добавить колонку на доску"
+                          title="Добавить колонку на доску YouGile"
                           disabled={addColumnMutation.isPending}
                           onClick={() => setProjectForAddColumn(project)}
                         >
                           <Columns className="w-4 h-4 mr-1 shrink-0" />
                           Колонка
                         </Button>
-                        <Link href="/tasks">
-                          <Button variant="outline" size="sm" className="shrink-0 min-w-[5rem]" title="Открыть в таск-менеджере">
-                            <ListTodo className="w-4 h-4 mr-1 shrink-0" />
-                            Таск
-                          </Button>
-                        </Link>
+                        <Badge variant="outline" className="h-8 px-2 inline-flex items-center gap-1">
+                          <Link2 className="w-3.5 h-3.5" />
+                          YouGile
+                        </Badge>
                       </>
                     ) : (
                       <Button 
                         variant="outline" 
                         size="sm"
                         className="shrink-0 min-w-[7rem]"
-                        title="Добавить в таск-менеджер (создать доску YouGile)"
+                        title="Создать и привязать доску YouGile"
                         disabled={linkBoardMutation.isPending}
                         onClick={() => linkBoardMutation.mutate(project.id)}
                       >
                         {linkBoardMutation.isPending ? (
-                          <span className="inline-flex items-center gap-1"><span className="animate-pulse">…</span>В таск</span>
+                          <span className="inline-flex items-center gap-1"><span className="animate-pulse">…</span>YouGile</span>
                         ) : (
-                          <><ListTodo className="w-4 h-4 mr-1 shrink-0" />В таск</>
+                          <><Link2 className="w-4 h-4 mr-1 shrink-0" />YouGile</>
                         )}
                       </Button>
                     )}
@@ -898,7 +1070,11 @@ export default function Projects() {
                       variant="outline" 
                       size="sm"
                       className="shrink-0 min-w-[2.5rem] text-destructive hover:bg-destructive/10"
-                      onClick={() => deleteMutation.mutate(project.id)}
+                      onClick={() => {
+                        if (confirm(`Точно удалить проект "${project.name || "без названия"}"?`)) {
+                          deleteMutation.mutate(project.id);
+                        }
+                      }}
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>

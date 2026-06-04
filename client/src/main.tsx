@@ -2,6 +2,34 @@ import { createRoot } from "react-dom/client";
 import React from "react";
 import App from "./App";
 import "./index.css";
+import { apiUrl } from "@/lib/queryClient";
+import { installMojibakeRepair } from "@/lib/mojibake";
+
+installMojibakeRepair();
+
+function reportClientRuntimeIssue(title: string, message: string, metadata: Record<string, unknown>) {
+  try {
+    fetch(apiUrl("/api/platform/incidents/report"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        message,
+        type: "bug",
+        severity: "medium",
+        source: "client-runtime",
+        metadata: {
+          path: window.location.pathname,
+          userAgent: navigator.userAgent,
+          ...metadata,
+        },
+      }),
+    }).catch(() => {});
+  } catch {
+    // Runtime telemetry must never interrupt the app itself.
+  }
+}
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
@@ -35,5 +63,23 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js').catch(() => {});
       }
     } catch (_) {}
+  });
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("error", (event) => {
+    reportClientRuntimeIssue("Ошибка браузера в интерфейсе", event.message || "window.error", {
+      filename: event.filename,
+      line: event.lineno,
+      column: event.colno,
+      stack: event.error?.stack,
+    });
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason instanceof Error ? event.reason : null;
+    reportClientRuntimeIssue("Необработанная ошибка интерфейса", reason?.message || String(event.reason || "unhandledrejection"), {
+      stack: reason?.stack,
+    });
   });
 }

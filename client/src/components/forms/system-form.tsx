@@ -42,6 +42,17 @@ export function SystemForm({ isOpen, onClose, system }: SystemFormProps) {
     },
   });
 
+  const updateSpecification = (key: string, value: string) => {
+    const current = form.getValues("specifications") || {};
+    const next = { ...current };
+    if (value.trim()) {
+      next[key] = value;
+    } else {
+      delete next[key];
+    }
+    form.setValue("specifications", next, { shouldDirty: true });
+  };
+
   useEffect(() => {
     if (isOpen) {
       if (system) {
@@ -63,8 +74,9 @@ export function SystemForm({ isOpen, onClose, system }: SystemFormProps) {
           specifications: {},
         });
       }
+      setPingResult(null);
     }
-  }, [isOpen, system?.id]);
+  }, [form, isOpen, system?.id]);
 
   const createMutation = useMutation({
     mutationFn: async (data: z.infer<typeof systemFormSchema>) => {
@@ -171,6 +183,8 @@ export function SystemForm({ isOpen, onClose, system }: SystemFormProps) {
       createMutation.mutate(data);
     }
   };
+
+  const specifications = form.watch("specifications") || {};
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -316,27 +330,51 @@ export function SystemForm({ isOpen, onClose, system }: SystemFormProps) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Процессор</label>
-                  <Input placeholder="Intel Core i7-12700K" />
+                  <Input
+                    placeholder="Intel Core i7-12700K"
+                    value={specifications.cpu || ""}
+                    onChange={(e) => updateSpecification("cpu", e.target.value)}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Оперативная память</label>
-                  <Input placeholder="32 GB DDR4" />
+                  <Input
+                    placeholder="32 GB DDR4"
+                    value={specifications.ram || ""}
+                    onChange={(e) => updateSpecification("ram", e.target.value)}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Видеокарта</label>
-                  <Input placeholder="NVIDIA RTX 4070" />
+                  <Input
+                    placeholder="NVIDIA RTX 4070"
+                    value={specifications.gpu || ""}
+                    onChange={(e) => updateSpecification("gpu", e.target.value)}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Хранилище</label>
-                  <Input placeholder="1TB NVMe SSD" />
+                  <Input
+                    placeholder="1TB NVMe SSD"
+                    value={specifications.storage || ""}
+                    onChange={(e) => updateSpecification("storage", e.target.value)}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Операционная система</label>
-                  <Input placeholder="Ubuntu 22.04 LTS" />
+                  <Input
+                    placeholder="Ubuntu 22.04 LTS"
+                    value={specifications.os || ""}
+                    onChange={(e) => updateSpecification("os", e.target.value)}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Порты</label>
-                  <Input placeholder="SSH: 22, HTTP: 80, HTTPS: 443" />
+                  <Input
+                    placeholder="SSH: 22, HTTP: 80, HTTPS: 443"
+                    value={specifications.ports || ""}
+                    onChange={(e) => updateSpecification("ports", e.target.value)}
+                  />
                 </div>
               </div>
             </div>

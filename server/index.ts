@@ -1,10 +1,12 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { setupVite, serveStatic, log, logSuccess, logWarn, logError, logRequest } from "./vite";
 import { seedDatabase } from "./seed-data";
 import { initDatabase, isStubStorage } from "./database";
 import { addTerminalLog } from "./terminal-log";
+import { triggerYougileSync, startYougileRetryScheduler } from "./yougile-sync";
+import { isYouGileConfigured } from "./yougile";
 
 const app = express();
 app.use(express.json());
@@ -32,7 +34,7 @@ app.use((req, res, next) => {
       if (logLine.length > 80) {
         logLine = logLine.slice(0, 79) + "…";
       }
-      log(logLine);
+      logRequest(logLine, res.statusCode);
       addTerminalLog(`[${new Date().toISOString()}] ${logLine}`);
     }
   });
@@ -56,9 +58,9 @@ app.use((req, res, next) => {
   if (app.get("env") === "development" && !isStubStorage) {
     try {
       await seedDatabase();
-      log("✅ Database seeding completed");
+      logSuccess("Database seeding completed");
     } catch (error: any) {
-      log(`\n❌ Database seeding failed: ${error?.message}\n`);
+      logError(`Database seeding failed: ${error?.message}`);
     }
   }
 
@@ -79,13 +81,13 @@ app.use((req, res, next) => {
     server.once('error', (err: any) => {
       const tryNext = port < basePort + maxTries;
       if ((err.code === 'EADDRINUSE' || err.code === 'EACCES') && tryNext) {
-        log(`⚠️ Порт ${port} недоступен (${err.code === 'EACCES' ? 'нет прав / системный' : 'занят'}), пробуем ${port + 1}...`);
+        logWarn(`Порт ${port} недоступен (${err.code === 'EACCES' ? 'нет прав / системный' : 'занят'}), пробуем ${port + 1}...`);
         tryListen(port + 1);
       } else if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
-        log(`❌ Порты ${basePort}–${basePort + maxTries - 1} недоступны. Смените PORT в .env (например 5000) или запустите от имени администратора.`);
+        logError(`Порты ${basePort}–${basePort + maxTries - 1} недоступны. Смените PORT в .env (например 5000) или запустите от имени администратора.`);
         process.exit(1);
       } else {
-        log(`❌ Ошибка сервера: ${err.message}`);
+        logError(`Ошибка сервера: ${err.message}`);
         process.exit(1);
       }
     });
@@ -93,8 +95,17 @@ app.use((req, res, next) => {
     const protocol = process.env.SSL_CERT_PATH && process.env.SSL_KEY_PATH ? "https" : "http";
     server.listen(port, "0.0.0.0", () => {
       server.removeAllListeners("error");
-      log(`✅ Сервер: ${protocol}://localhost:${port} — откройте в браузере`);
+      logSuccess(`Сервер: ${protocol}://localhost:${port} — откройте в браузере`);
       addTerminalLog(`[${new Date().toISOString()}] Server listening ${protocol}://0.0.0.0:${port} NODE_ENV=${process.env.NODE_ENV || "development"}`);
+      // YouGile: подтяжка по запросу (очередь), при старте — один запуск в фоне
+      if (isYouGileConfigured()) {
+        startYougileRetryScheduler();
+        triggerYougileSync(); // сразу ставим в очередь, обработается по мере запросов
+        const syncIntervalMs = Math.max(Number(process.env.YOUGILE_SYNC_INTERVAL_MS || 120_000), 60_000);
+        setInterval(() => {
+          if (isYouGileConfigured()) triggerYougileSync();
+        }, syncIntervalMs);
+      }
     });
   }
 

@@ -3,8 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { 
-  Users, 
-  CheckCircle2, 
   Clock, 
   AlertCircle, 
   TrendingUp, 
@@ -46,20 +44,19 @@ interface ManagerStats {
     dueDate: string;
     priority: string;
   }[];
+  projects?: { id: string; name: string; status: string }[];
+  tasksByProject?: { projectId: string; projectName: string; total: number; done: number; overdue: number }[];
 }
 
 export default function ManagerDashboard() {
   const { t } = useI18n();
   
-  const { data: stats, isLoading } = useQuery<ManagerStats>({
+  const { data: stats, isLoading, isError } = useQuery<ManagerStats>({
     queryKey: ["/api/manager/stats"],
     retry: 1,
     retryDelay: 1000,
-  });
-
-  const { data: users } = useQuery<any[]>({
-    queryKey: ["/api/users"],
-    retry: 1,
+    refetchOnWindowFocus: false,
+    staleTime: 30_000,
   });
 
   if (isLoading) {
@@ -82,6 +79,8 @@ export default function ManagerDashboard() {
     recentActivity: [],
     topPerformers: [],
     needsAttention: [],
+    projects: [],
+    tasksByProject: [],
   };
 
   const getPriorityColor = (priority: string) => {
@@ -92,12 +91,18 @@ export default function ManagerDashboard() {
       default: return 'bg-gray-500/20 text-gray-400 border-gray-500/50';
     }
   };
+  const percent = (value: number) => `${Math.min(100, Math.round((value / Math.max(statsData.totalTasks, 1)) * 100))}%`;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">{t('managerDashboard.title')}</h1>
         <p className="text-muted-foreground mt-1">{t('managerDashboard.teamOverview')}</p>
+        {isError && (
+          <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">
+            Часть данных временно недоступна, показана последняя безопасная сводка.
+          </p>
+        )}
       </div>
 
       {/* Основные метрики */}
@@ -176,7 +181,7 @@ export default function ManagerDashboard() {
                         <div
                           className="h-full bg-primary rounded-full transition-all"
                           style={{
-                            width: `${(item.count / statsData.totalTasks) * 100}%`,
+                            width: percent(item.count),
                           }}
                         />
                       </div>
@@ -218,7 +223,7 @@ export default function ManagerDashboard() {
                             'bg-green-500': item.priority.toLowerCase() === 'low',
                           })}
                           style={{
-                            width: `${(item.count / statsData.totalTasks) * 100}%`,
+                            width: percent(item.count),
                           }}
                         />
                       </div>
@@ -235,6 +240,49 @@ export default function ManagerDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Проекты в зоне доступа */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Target className="w-5 h-5 mr-2" />
+            Проекты в работе
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {(statsData.tasksByProject ?? []).length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {(statsData.tasksByProject ?? []).map((project) => {
+                const donePercent = Math.round((project.done / Math.max(project.total, 1)) * 100);
+                return (
+                  <div key={project.projectId} className="rounded-xl border border-border bg-muted/25 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{project.projectName}</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {project.total} задач · {project.done} готово
+                        </p>
+                      </div>
+                      {project.overdue > 0 && (
+                        <Badge variant="destructive" className="shrink-0">
+                          {project.overdue} проср.
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="mt-3 h-2 bg-background rounded-full overflow-hidden">
+                      <div className="h-full bg-primary rounded-full" style={{ width: `${donePercent}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              Нет проектов с задачами в вашей зоне доступа
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Лучшие исполнители и задачи требующие внимания */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -166,17 +166,6 @@ export default function Calendar() {
     });
   };
 
-  const getEventTypeColor = (type: string) => {
-    switch (type) {
-      case "stream": return "bg-rose-500/20 text-rose-600 dark:text-rose-400";
-      case "meeting": return "bg-primary/20 text-primary";
-      case "production": return "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400";
-      case "maintenance": return "bg-amber-500/20 text-amber-600 dark:text-amber-400";
-      case "recording": return "bg-sky-500/20 text-sky-600 dark:text-sky-400";
-      default: return "bg-primary/20 text-primary";
-    }
-  };
-
   const getEventTypeText = (type: string) => {
     switch (type) {
       case "stream": return "Стрим";
@@ -303,30 +292,70 @@ export default function Calendar() {
     return { left: `${left}%`, width: `${w}%` };
   };
 
-  /** Цвет карточки: слева сплошная полоска (strip), основная часть полупрозрачная (body) — в фиолетовой гамме */
-  const getEventColorClasses = (type: string) => {
-    switch (type) {
-      case "stream":   return { strip: "border-l-[#9747FF]", bg: "bg-[#9747FF]/60", text: "text-white" };
-      case "meeting":  return { strip: "border-l-sky-500", bg: "bg-sky-500/45", text: "text-white" };
-      case "production": return { strip: "border-l-emerald-500", bg: "bg-emerald-500/45", text: "text-white" };
-      case "maintenance": return { strip: "border-l-amber-400", bg: "bg-amber-400/45", text: "text-slate-900" };
-      case "recording": return { strip: "border-l-pink-500", bg: "bg-pink-500/45", text: "text-white" };
-      default: return { strip: "border-l-[#9747FF]", bg: "bg-[#9747FF]/55", text: "text-white" };
-    }
+  const EVENT_COLOR_PALETTES = [
+    {
+      card: "border-l-rose-400 border-rose-200/80 dark:border-rose-900/70 bg-rose-100/90 dark:bg-rose-950/45 text-rose-950 dark:text-rose-50",
+      inline: "border-l-rose-400 border-rose-200/80 dark:border-rose-900/70 bg-rose-100/95 dark:bg-rose-950/55 text-rose-950 dark:text-rose-50",
+      dot: "bg-rose-400",
+      badge: "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-200",
+    },
+    {
+      card: "border-l-sky-400 border-sky-200/80 dark:border-sky-900/70 bg-sky-100/90 dark:bg-sky-950/45 text-sky-950 dark:text-sky-50",
+      inline: "border-l-sky-400 border-sky-200/80 dark:border-sky-900/70 bg-sky-100/95 dark:bg-sky-950/55 text-sky-950 dark:text-sky-50",
+      dot: "bg-sky-400",
+      badge: "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-200",
+    },
+    {
+      card: "border-l-emerald-400 border-emerald-200/80 dark:border-emerald-900/70 bg-emerald-100/90 dark:bg-emerald-950/45 text-emerald-950 dark:text-emerald-50",
+      inline: "border-l-emerald-400 border-emerald-200/80 dark:border-emerald-900/70 bg-emerald-100/95 dark:bg-emerald-950/55 text-emerald-950 dark:text-emerald-50",
+      dot: "bg-emerald-400",
+      badge: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-200",
+    },
+    {
+      card: "border-l-amber-400 border-amber-200/80 dark:border-amber-900/70 bg-amber-100/90 dark:bg-amber-950/45 text-amber-950 dark:text-amber-50",
+      inline: "border-l-amber-400 border-amber-200/80 dark:border-amber-900/70 bg-amber-100/95 dark:bg-amber-950/55 text-amber-950 dark:text-amber-50",
+      dot: "bg-amber-400",
+      badge: "bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-200",
+    },
+    {
+      card: "border-l-violet-400 border-violet-200/80 dark:border-violet-900/70 bg-violet-100/90 dark:bg-violet-950/45 text-violet-950 dark:text-violet-50",
+      inline: "border-l-violet-400 border-violet-200/80 dark:border-violet-900/70 bg-violet-100/95 dark:bg-violet-950/55 text-violet-950 dark:text-violet-50",
+      dot: "bg-violet-400",
+      badge: "bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-200",
+    },
+    {
+      card: "border-l-cyan-400 border-cyan-200/80 dark:border-cyan-900/70 bg-cyan-100/90 dark:bg-cyan-950/45 text-cyan-950 dark:text-cyan-50",
+      inline: "border-l-cyan-400 border-cyan-200/80 dark:border-cyan-900/70 bg-cyan-100/95 dark:bg-cyan-950/55 text-cyan-950 dark:text-cyan-50",
+      dot: "bg-cyan-400",
+      badge: "bg-cyan-100 text-cyan-700 dark:bg-cyan-950/60 dark:text-cyan-200",
+    },
+    {
+      card: "border-l-fuchsia-400 border-fuchsia-200/80 dark:border-fuchsia-900/70 bg-fuchsia-100/90 dark:bg-fuchsia-950/45 text-fuchsia-950 dark:text-fuchsia-50",
+      inline: "border-l-fuchsia-400 border-fuchsia-200/80 dark:border-fuchsia-900/70 bg-fuchsia-100/95 dark:bg-fuchsia-950/55 text-fuchsia-950 dark:text-fuchsia-50",
+      dot: "bg-fuchsia-400",
+      badge: "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-950/60 dark:text-fuchsia-200",
+    },
+  ] as const;
+
+  const getEventPalette = (event: any) => {
+    const key = `${event?.id ?? ""}:${event?.title ?? ""}:${event?.type ?? ""}`;
+    const hash = Array.from(key).reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return EVENT_COLOR_PALETTES[hash % EVENT_COLOR_PALETTES.length];
   };
-  const getEventColor = (type: string) => {
-    const c = getEventColorClasses(type);
-    return `border-l-4 ${c.strip} ${c.bg} ${c.text}`;
+
+  const getEventInlineClasses = (event: any) => {
+    const palette = getEventPalette(event);
+    return `border border-l-4 ${palette.inline}`;
   };
-  const getEventCardClasses = (type: string) => getEventColor(type);
-  /** Сплошной цвет для точки в деталях события */
-  const getEventDotClass = (type: string) => {
-    const map: Record<string, string> = {
-      stream: "bg-rose-500", meeting: "bg-blue-500", production: "bg-emerald-500",
-      maintenance: "bg-amber-500", recording: "bg-sky-500",
-    };
-    return map[type] || "bg-primary";
+
+  const getEventCardClasses = (event: any) => {
+    const palette = getEventPalette(event);
+    return `border-l-4 ${palette.card}`;
   };
+
+  const getEventDotClass = (event: any) => getEventPalette(event).dot;
+
+  const getEventBadgeClasses = (event: any) => getEventPalette(event).badge;
 
   return (
     <div className="space-y-1.5 sm:space-y-2 p-0 w-full min-w-0 max-w-full overflow-hidden">
@@ -450,7 +479,7 @@ export default function Calendar() {
                           {dayEvents.slice(0, 3).map((event: any, idx: number) => (
                             <div
                               key={event.id}
-                              className={cn("text-[10px] sm:text-xs px-2 py-1 rounded-r-xl rounded-l-md border-l-4 truncate shadow-sm cursor-pointer", getEventColor(event.type))}
+                              className={cn("text-[10px] sm:text-xs px-2 py-1 rounded-r-xl rounded-l-md truncate shadow-sm cursor-pointer", getEventInlineClasses(event))}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedEvent(event);
@@ -573,7 +602,7 @@ export default function Calendar() {
                         key={event.id}
                         className={cn(
                           "absolute rounded-xl text-xs overflow-hidden cursor-pointer pointer-events-auto shadow-md hover:shadow-lg transition-all duration-200 backdrop-blur-sm border border-white/10 dark:border-white/5",
-                          getEventCardClasses(event.type)
+                          getEventCardClasses(event)
                         )}
                         style={{ ...style, ...overlapStyle, minHeight: 24 }}
                         onClick={() => { setSelectedEvent(event); setIsDetailOpen(true); }}
@@ -672,7 +701,7 @@ export default function Calendar() {
                         key={event.id}
                         className={cn(
                           "absolute rounded-xl text-xs overflow-hidden cursor-pointer shadow-md hover:shadow-lg transition-all duration-200 backdrop-blur-sm border border-white/10 dark:border-white/5",
-                          getEventCardClasses(event.type)
+                          getEventCardClasses(event)
                         )}
                         style={{ ...style, ...overlapStyle, minHeight: 24 }}
                         onClick={() => { setSelectedEvent(event); setIsDetailOpen(true); }}
@@ -720,7 +749,7 @@ export default function Calendar() {
                 );
               }
               return listEvents.map((event: any) => (
-                <Card key={event.id} className={cn("rounded-xl border-l-4 border border-border shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden backdrop-blur-sm", getEventCardClasses(event.type))} onClick={() => { setSelectedEvent(event); setIsDetailOpen(true); }}>
+                <Card key={event.id} className={cn("rounded-xl border border-border shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden backdrop-blur-sm", getEventCardClasses(event))} onClick={() => { setSelectedEvent(event); setIsDetailOpen(true); }}>
                   <CardHeader className="pb-1.5 p-2.5 sm:p-3">
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5">
                       <div className="flex-1 min-w-0">
@@ -745,7 +774,7 @@ export default function Calendar() {
                           )}
                         </div>
                       </div>
-                      <Badge className={cn("shrink-0", getEventTypeColor(event.type), "text-xs sm:text-sm")}>
+                      <Badge className={cn("shrink-0", getEventBadgeClasses(event), "text-xs sm:text-sm")}>
                         {getEventTypeText(event.type)}
                       </Badge>
                     </div>
@@ -786,7 +815,7 @@ export default function Calendar() {
                   </div>
                 ) : (
                   getEventsForDate(selectedDate).map((event: any) => (
-                    <Card key={event.id} className={cn("rounded-xl border-l-4 border border-border shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden backdrop-blur-sm", getEventCardClasses(event.type))} onClick={() => { setSelectedEvent(event); setIsDetailOpen(true); }}>
+                    <Card key={event.id} className={cn("rounded-xl border border-border shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden backdrop-blur-sm", getEventCardClasses(event))} onClick={() => { setSelectedEvent(event); setIsDetailOpen(true); }}>
                       <CardHeader className="pb-1.5 p-2.5 sm:p-3">
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1.5">
                           <div className="flex-1 min-w-0">
@@ -810,7 +839,7 @@ export default function Calendar() {
                               )}
                             </div>
                           </div>
-                          <Badge className={cn("shrink-0", getEventTypeColor(event.type), "text-xs sm:text-sm")}>
+                          <Badge className={cn("shrink-0", getEventBadgeClasses(event), "text-xs sm:text-sm")}>
                             {getEventTypeText(event.type)}
                           </Badge>
                         </div>
@@ -835,7 +864,7 @@ export default function Calendar() {
           {selectedEvent && (
             <div className="p-4 sm:p-5 space-y-4">
               <div className="flex items-start gap-3">
-                <div className={cn("w-3 h-3 rounded-full shrink-0 mt-1", getEventDotClass(selectedEvent.type))} />
+                <div className={cn("w-3 h-3 rounded-full shrink-0 mt-1", getEventDotClass(selectedEvent))} />
                 <h3 className="text-lg font-semibold text-foreground leading-tight break-words pr-6">
                   {selectedEvent.title}
                 </h3>
@@ -914,7 +943,7 @@ export default function Calendar() {
                   </div>
                 )}
                 <div className="flex items-center gap-2 pt-1">
-                  <Badge className={cn(getEventTypeColor(selectedEvent.type), "text-xs")}>
+                  <Badge className={cn(getEventBadgeClasses(selectedEvent), "text-xs")}>
                     {getEventTypeText(selectedEvent.type)}
                   </Badge>
                 </div>

@@ -13,7 +13,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { 
   Users, Shield, Settings, Edit, Trash2, 
-  UserPlus, Key, Check, X, AlertCircle, Github, Plus, History, Clock, FileText
+  UserPlus, Key, Check, X, AlertCircle, Github, Plus, History, Clock, FileText,
+  Building2, Copy, Link as LinkIcon, Loader2
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -88,6 +89,7 @@ export default function Admin() {
   const [repositoryUrl, setRepositoryUrl] = useState("");
   const [repositoryType, setRepositoryType] = useState("github");
   const [repositoryDescription, setRepositoryDescription] = useState("");
+  const [inviteLinks, setInviteLinks] = useState<Record<string, string>>({});
   const { toast } = useToast();
 
   const currentUser = JSON.parse(localStorage.getItem('streamstudio_user') || '{}');
@@ -104,13 +106,58 @@ export default function Admin() {
     queryKey: ["/api/repositories"],
   });
 
+  const { data: myCompanies } = useQuery<any>({
+    queryKey: ["/api/companies/me"],
+    retry: 1,
+  });
+
+  const companyItems = Array.isArray(myCompanies?.companies) ? myCompanies.companies : [];
+  const manageableCompanies = companyItems.filter((item: any) => ["owner", "admin"].includes(item?.membership?.role || ""));
+  const pendingCompanyApprovals = Array.isArray(myCompanies?.pendingApprovals) ? myCompanies.pendingApprovals : [];
+  const refreshCompanyAdminData = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/companies/me"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/auth/onboarding-state"] });
+    queryClient.refetchQueries({ queryKey: ["/api/companies/me"] });
+    queryClient.refetchQueries({ queryKey: ["/api/users"] });
+  };
+
+  const inviteMutation = useMutation({
+    mutationFn: async (companyId: string) => {
+      const response = await apiRequest("POST", "/api/company-invites", { companyId });
+      return response.json();
+    },
+    onSuccess: (data: any, companyId: string) => {
+      if (data?.url) setInviteLinks((prev) => ({ ...prev, [companyId]: data.url }));
+      refreshCompanyAdminData();
+      toast({ title: "Ссылка активирована", description: "Приглашение будет доступно 24 часа." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error?.message || "Не удалось активировать приглашение", variant: "destructive" });
+    },
+  });
+
+  const approveCompanyMemberMutation = useMutation({
+    mutationFn: async ({ companyId, memberId }: { companyId: string; memberId: string }) => {
+      const response = await apiRequest("POST", `/api/company-members/${memberId}/approve`, { companyId });
+      return response.json();
+    },
+    onSuccess: () => {
+      refreshCompanyAdminData();
+      toast({ title: "Сотрудник добавлен", description: "Доступ к компании активирован." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error?.message || "Не удалось подтвердить сотрудника", variant: "destructive" });
+    },
+  });
+
   const updatePermissionsMutation = useMutation({
     mutationFn: async ({ userId, role, permissions }: { userId: string; role: string; permissions: string[] }) => {
       const response = await apiRequest("PUT", `/api/users/${userId}/permissions`, { role, permissions });
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      refreshCompanyAdminData();
       toast({ title: "Успешно", description: "Права доступа обновлены" });
       setIsPermissionsOpen(false);
     },
@@ -122,7 +169,7 @@ export default function Admin() {
   const deleteUserMutation = useMutation({
     mutationFn: (userId: string) => apiRequest("DELETE", `/api/users/${userId}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      refreshCompanyAdminData();
       toast({ title: "Успешно", description: "Пользователь деактивирован" });
     },
   });
@@ -130,11 +177,36 @@ export default function Admin() {
   const activateUserMutation = useMutation({
     mutationFn: (userId: string) => apiRequest("PUT", `/api/users/${userId}`, { active: true }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      refreshCompanyAdminData();
       toast({ title: "Успешно", description: "Пользователь активирован" });
     },
     onError: () => {
       toast({ title: "Ошибка", description: "Не удалось активировать пользователя", variant: "destructive" });
+    },
+  });
+
+  const banUserMutation = useMutation({
+    mutationFn: (userId: string) => apiRequest("PUT", `/api/users/${userId}`, { active: false }),
+    onSuccess: () => {
+      refreshCompanyAdminData();
+      toast({ title: "Готово", description: "Пользователь заблокирован" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error?.message || "Не удалось заблокировать пользователя", variant: "destructive" });
+    },
+  });
+
+  const addUserToCompanyMutation = useMutation({
+    mutationFn: async ({ userId, companyId }: { userId: string; companyId: string }) => {
+      const response = await apiRequest("POST", `/api/companies/${companyId}/members`, { userId, role: "member" });
+      return response.json();
+    },
+    onSuccess: () => {
+      refreshCompanyAdminData();
+      toast({ title: "Готово", description: "Пользователь добавлен в компанию" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error?.message || "Не удалось добавить пользователя в компанию", variant: "destructive" });
     },
   });
 
@@ -193,7 +265,24 @@ export default function Admin() {
     }
   };
 
-  if (currentUser.role !== "admin") {
+  const copyInviteLink = async (link: string) => {
+    try {
+      await navigator.clipboard.writeText(link);
+      toast({ title: "Скопировано", description: "Ссылка приглашения в буфере обмена." });
+    } catch {
+      toast({ title: "Ссылка", description: link });
+    }
+  };
+
+  const currentPermissions = Array.isArray(currentUser?.permissions) ? currentUser.permissions : [];
+  const canOpenAdmin =
+    currentUser?.role === "admin" ||
+    currentUser?.role === "manager" ||
+    currentUser?.workspaceMode === "company_owner" ||
+    currentPermissions.includes(PERMISSIONS.ADMIN_PANEL) ||
+    manageableCompanies.length > 0;
+
+  if (!canOpenAdmin) {
     return (
       <div className="flex items-center justify-center h-64">
         <Card className="max-w-md">
@@ -218,8 +307,14 @@ export default function Admin() {
         </div>
       </div>
 
-      <Tabs defaultValue="users">
+      <Tabs defaultValue={manageableCompanies.length ? "company" : "users"}>
         <TabsList>
+          {manageableCompanies.length > 0 && (
+            <TabsTrigger value="company" className="flex items-center gap-2">
+              <Building2 className="w-4 h-4" />
+              Компания
+            </TabsTrigger>
+          )}
           <TabsTrigger value="users" className="flex items-center gap-2">
             <Users className="w-4 h-4" />
             Пользователи
@@ -237,6 +332,103 @@ export default function Admin() {
             Логи сотрудников
           </TabsTrigger>
         </TabsList>
+
+        {manageableCompanies.length > 0 && (
+          <TabsContent value="company" className="mt-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <LinkIcon className="w-5 h-5" />
+                  Приглашение в компанию
+                </CardTitle>
+                <CardDescription>
+                  Владелец или администратор может активировать ссылку на 24 часа и отправить ее сотруднику.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {manageableCompanies.map((item: any) => {
+                  const companyId = item.company?.id;
+                  const activeUrl = inviteLinks[companyId] || item.activeInvite?.url || "";
+                  const expiresAt = item.activeInvite?.expiresAt ? new Date(item.activeInvite.expiresAt).toLocaleString("ru-RU") : "";
+                  return (
+                    <div key={companyId} className="rounded-lg border border-border p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="min-w-0">
+                          <div className="font-medium">{item.company?.name || "Компания"}</div>
+                          <div className="mt-1 text-sm text-muted-foreground">
+                            {activeUrl ? `Активна${expiresAt ? ` до ${expiresAt}` : ""}` : "Ссылка сейчас не активна"}
+                          </div>
+                          {activeUrl && (
+                            <Input value={activeUrl} readOnly className="mt-3 max-w-2xl font-mono text-xs" />
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {activeUrl && (
+                            <Button type="button" variant="outline" onClick={() => copyInviteLink(activeUrl)}>
+                              <Copy className="mr-2 h-4 w-4" />
+                              Скопировать
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            onClick={() => inviteMutation.mutate(companyId)}
+                            disabled={inviteMutation.isPending}
+                          >
+                            {inviteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LinkIcon className="mr-2 h-4 w-4" />}
+                            {activeUrl ? "Обновить на 24 часа" : "Активировать"}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <UserPlus className="w-5 h-5" />
+                  Заявки сотрудников
+                </CardTitle>
+                <CardDescription>
+                  Здесь появляются пользователи, которые перешли по ссылке приглашения и ждут доступа к компании.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {pendingCompanyApprovals.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
+                    Новых заявок сейчас нет.
+                  </div>
+                ) : (
+                  pendingCompanyApprovals.map((approval: any) => (
+                    <div key={approval.id} className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">
+                          {approval.user?.name || approval.user?.username || approval.userId}
+                        </div>
+                        <div className="text-sm text-muted-foreground truncate">
+                          {approval.company?.name || "Компания"}
+                          {approval.user?.email ? ` · ${approval.user.email}` : ""}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => approveCompanyMemberMutation.mutate({ companyId: approval.companyId, memberId: approval.id })}
+                        disabled={approveCompanyMemberMutation.isPending}
+                        className="w-full sm:w-auto"
+                      >
+                        {approveCompanyMemberMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+                        Подтвердить
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
         <TabsContent value="users" className="mt-6">
           {/* Users List */}
@@ -291,7 +483,24 @@ export default function Admin() {
                         </div>
                       </div>
                       
-                      <div className="flex flex-wrap items-center gap-2 shrink-0 sm:flex-nowrap">
+                      <div className="flex w-full flex-wrap items-center gap-2 shrink-0 sm:w-auto sm:flex-nowrap sm:justify-end">
+                        {manageableCompanies.length > 0 && user.id !== currentUser.id && (
+                          <Select
+                            onValueChange={(companyId) => addUserToCompanyMutation.mutate({ userId: user.id, companyId })}
+                            disabled={addUserToCompanyMutation.isPending}
+                          >
+                            <SelectTrigger className="h-9 w-full sm:w-[190px]">
+                              <SelectValue placeholder="В компанию" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {manageableCompanies.map((item: any) => (
+                                <SelectItem key={item.company?.id} value={item.company?.id}>
+                                  {item.company?.name || "Компания"}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                         {user.active === false && (
                           <Button
                             variant="default"
@@ -313,14 +522,15 @@ export default function Admin() {
                           <Key className="w-4 h-4 mr-1" />
                           Права
                         </Button>
-                        {user.id !== currentUser.id && (
+                        {user.id !== currentUser.id && user.active !== false && (
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => deleteUserMutation.mutate(user.id)}
+                            onClick={() => banUserMutation.mutate(user.id)}
                             className="text-red-500 hover:text-red-700"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <X className="w-4 h-4 mr-1" />
+                            Бан
                           </Button>
                         )}
                       </div>

@@ -23,6 +23,7 @@ export default function OtisOnAir() {
   const [muted, setMuted] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [streamUrlInput, setStreamUrlInput] = useState("");
+  const [srtInputUrl, setSrtInputUrl] = useState("");
   const [timecodeSourceInput, setTimecodeSourceInput] = useState<"local" | "vmix">("local");
   const [vmixHostInput, setVmixHostInput] = useState("localhost");
   const [vmixPortInput, setVmixPortInput] = useState("8088");
@@ -62,6 +63,7 @@ export default function OtisOnAir() {
       setTimecodeSourceInput((settings.timecodeSource as "local" | "vmix") || "local");
       setVmixHostInput(settings.vmixHost || "localhost");
       setVmixPortInput(String(settings.vmixPort ?? 8088));
+      setSrtInputUrl(settings.streamUrlBackup || "");
     }
   }, [settings]);
 
@@ -95,6 +97,7 @@ export default function OtisOnAir() {
     const url = streamUrlInput.trim() || (settings?.streamUrl ?? "");
     updateOtis.mutate({
       streamUrl: url || undefined,
+      streamUrlBackup: srtInputUrl.trim() || undefined,
       showTimecode: settings?.showTimecode !== false,
       withSound: settings?.withSound !== false,
       timecodeSource: timecodeSourceInput,
@@ -181,6 +184,11 @@ export default function OtisOnAir() {
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground p-4">
                     <p className="text-center">URL потока не задан.</p>
                     <p className="text-sm mt-2">Укажите HLS/поток в настройках (после конвертации SRT в HLS на сервере).</p>
+                    {settings?.streamUrlBackup && (
+                      <p className="text-xs mt-3 text-center">
+                        SRT-вход сохранён: {settings.streamUrlBackup}
+                      </p>
+                    )}
                     <Button variant="outline" className="mt-4 gap-2" onClick={() => setShowSettings(true)}>
                       <Settings2 className="h-4 w-4" />
                       Настройки
@@ -223,6 +231,17 @@ export default function OtisOnAir() {
                     value={streamUrlInput || settings?.streamUrl || ""}
                     onChange={(e) => setStreamUrlInput(e.target.value)}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label>SRT-вход</Label>
+                  <Input
+                    placeholder="srt://0.0.0.0:9000?mode=listener"
+                    value={srtInputUrl}
+                    onChange={(e) => setSrtInputUrl(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Это адрес для приёма SRT. Для просмотра в браузере всё равно нужен HLS/HTTP поток в поле выше.
+                  </p>
                 </div>
                 <div className="flex items-center justify-between">
                   <Label>Показывать таймкод</Label>

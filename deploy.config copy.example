@@ -1,0 +1,8 @@
+# Скопируйте в deploy.config и укажите свои данные (один раз).
+# Пароль НЕ храните в файле: задайте в переменной окружения SSH_PASSWORD или используйте SSH-ключ.
+# Тогда деплой: npm run deploy (или deploy-to-server.bat)
+
+SERVER_USER=root
+SERVER_IP=10.90.25.14
+SERVER_PORT=22232
+SERVER_PATH=/var/www/streamdesk

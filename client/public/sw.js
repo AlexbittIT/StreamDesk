@@ -1,131 +1,118 @@
-const CACHE_NAME = 'streamstudio-v1';
-const urlsToCache = [
-  '/',
-  '/calendar',
-  '/equipment', 
-  '/monitoring',
-  '/streams',
-  '/settings',
-  '/src/main.tsx',
-  '/src/index.css'
-];
+const CACHE_NAME = "streamdesk-shell-v20260506";
+const APP_SHELL = ["/", "/manifest.json"];
 
-// Install event - cache resources
-self.addEventListener('install', (event) => {
+self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Opened cache');
-        return cache.addAll(urlsToCache);
-      })
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
   );
 });
 
-// Fetch event - serve from cache when offline
-self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        // Return cached version or fetch from network
-        if (response) {
-          return response;
-        }
-        
-        return fetch(event.request).then((response) => {
-          // Check if valid response
-          if (!response || response.status !== 200 || response.type !== 'basic') {
-            return response;
-          }
-
-          // Clone the response
-          const responseToCache = response.clone();
-
-          caches.open(CACHE_NAME)
-            .then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
-
-          return response;
-        });
-      })
-      .catch(() => {
-        // Return offline page for navigation requests
-        if (event.request.destination === 'document') {
-          return caches.match('/');
-        }
-      })
-  );
-});
-
-// Activate event - clean up old caches
-self.addEventListener('activate', (event) => {
+self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
+    caches.keys().then((cacheNames) =>
+      Promise.all(
         cacheNames.map((cacheName) => {
           if (cacheName !== CACHE_NAME) {
-            console.log('Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }
+          return Promise.resolve();
         })
-      );
-    })
+      )
+    ).then(() => self.clients.claim())
   );
 });
 
-// Background sync for offline actions
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'background-sync') {
-    event.waitUntil(doBackgroundSync());
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
+  const isSameOrigin = url.origin === self.location.origin;
+  const isApiRequest = isSameOrigin && url.pathname.startsWith("/api/");
+  const isNavigation = request.mode === "navigate";
+  const isStaticAsset = isSameOrigin && /\/assets\/|\.css$|\.js$|\.woff2?$|\.png$|\.svg$|\.ico$/.test(url.pathname);
+
+  if (isApiRequest) {
+    return;
+  }
+
+  if (isNavigation) {
+    event.respondWith(networkFirst(request, "/"));
+    return;
+  }
+
+  if (isStaticAsset || isSameOrigin) {
+    event.respondWith(staleWhileRevalidate(request));
   }
 });
 
-function doBackgroundSync() {
-  // Handle any queued offline actions here
-  console.log('Background sync triggered');
-  return Promise.resolve();
+async function networkFirst(request, fallbackPath) {
+  try {
+    const response = await fetch(request);
+    const cache = await caches.open(CACHE_NAME);
+    cache.put(request, response.clone());
+    return response;
+  } catch (error) {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    return caches.match(fallbackPath);
+  }
 }
 
-// Push notifications
-self.addEventListener('push', (event) => {
-  if (event.data) {
-    const data = event.data.json();
-    const options = {
-      body: data.body,
-      icon: '/icon-192x192.png',
-      badge: '/badge-72x72.png',
-      vibrate: [100, 50, 100],
-      data: {
-        dateOfArrival: Date.now(),
-        primaryKey: data.primaryKey || 1
-      },
-      actions: [
-        {
-          action: 'explore',
-          title: 'Открыть',
-          icon: '/images/checkmark.png'
-        },
-        {
-          action: 'close',
-          title: 'Закрыть',
-          icon: '/images/xmark.png'
-        }
-      ]
-    };
+async function staleWhileRevalidate(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
 
-    event.waitUntil(
-      self.registration.showNotification(data.title, options)
-    );
+  const networkPromise = fetch(request)
+    .then((response) => {
+      if (response && response.ok) {
+        cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => cached);
+
+  return cached || networkPromise;
+}
+
+self.addEventListener("sync", (event) => {
+  if (event.tag === "background-sync") {
+    event.waitUntil(Promise.resolve());
   }
 });
 
-// Notification click handling
-self.addEventListener('notificationclick', (event) => {
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+
+  const data = event.data.json();
+  const options = {
+    body: data.body,
+    icon: "/icon-192x192.png",
+    badge: "/badge-72x72.png",
+    vibrate: [100, 50, 100],
+    data: {
+      dateOfArrival: Date.now(),
+      primaryKey: data.primaryKey || 1,
+    },
+    actions: [
+      {
+        action: "explore",
+        title: "Открыть",
+      },
+      {
+        action: "close",
+        title: "Закрыть",
+      },
+    ],
+  };
+
+  event.waitUntil(self.registration.showNotification(data.title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  if (event.action === 'explore') {
-    event.waitUntil(
-      clients.openWindow('/')
-    );
+  if (event.action === "explore") {
+    event.waitUntil(clients.openWindow("/"));
   }
 });

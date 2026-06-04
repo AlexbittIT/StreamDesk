@@ -15,7 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname);
 
 function readEnv() {
-  const env = {};
+  const env = { ...process.env };
   const files = [
     path.join(root, ".env"),
     path.join(root, "deploy.config"),
@@ -67,7 +67,7 @@ function run(cmd, args, opts = {}) {
 }
 
 /** Деплой через scp (Windows без rsync): robocopy → zip → scp → unzip на сервере */
-async function deployViaScp(rootDir, user, host, remotePath, runFn) {
+async function deployViaScp(rootDir, user, host, remotePath, runFn, port) {
   const tmpDir = path.join(os.tmpdir(), `streamdesk-deploy-${Date.now()}`);
   const zipPath = path.join(os.tmpdir(), `streamdesk-deploy-${Date.now()}.zip`);
   const excludeDirs = ["node_modules", ".git", "client\\node_modules", "attached_assets", "design-website"];
@@ -92,12 +92,14 @@ async function deployViaScp(rootDir, user, host, remotePath, runFn) {
       "-Command",
       `Compress-Archive -Path "${tmpDir}\\*" -DestinationPath "${zipPath}" -Force`,
     ], { cwd: rootDir });
-    await runFn("scp", ["-o", "StrictHostKeyChecking=no", zipPath, `${user}@${host}:${remotePath}/deploy.zip`]);
-    await runFn("ssh", [
-      "-o", "StrictHostKeyChecking=no",
-      `${user}@${host}`,
-      `cd ${remotePath} && unzip -o -q deploy.zip && rm -f deploy.zip && chmod +x deploy-to-server.sh && ./deploy-to-server.sh`,
-    ]);
+    const scpArgs = ["-o", "StrictHostKeyChecking=no"];
+    if (port) scpArgs.push("-P", String(port));
+    scpArgs.push(zipPath, `${user}@${host}:${remotePath}/deploy.zip`);
+    await runFn("scp", scpArgs);
+    const sshArgs = ["-o", "StrictHostKeyChecking=no"];
+    if (port) sshArgs.push("-p", String(port));
+    sshArgs.push(`${user}@${host}`, `cd ${remotePath} && unzip -o -q deploy.zip && rm -f deploy.zip && chmod +x deploy-to-server.sh && ./deploy-to-server.sh`);
+    await runFn("ssh", sshArgs);
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true }); } catch (_) {}
     try { fs.unlinkSync(zipPath); } catch (_) {}
@@ -109,6 +111,7 @@ async function main() {
   const SERVER_USER = env.SERVER_USER || process.env.SERVER_USER;
   const SERVER_IP = env.SERVER_IP || process.env.SERVER_IP;
   const SERVER_PATH = env.SERVER_PATH || process.env.SERVER_PATH;
+  const SERVER_PORT = env.SERVER_PORT || process.env.SERVER_PORT;
 
   if (!SERVER_USER || !SERVER_IP || !SERVER_PATH) {
     console.error(`
@@ -117,17 +120,15 @@ async function main() {
   SERVER_USER=ваш_пользователь
   SERVER_IP=194.58.112.174
   SERVER_PATH=/var/www/streamdesk
+  SERVER_PORT=22
 
-Пример deploy.config в корне проекта:
-  SERVER_USER=otis-server
-  SERVER_IP=194.58.112.174
-  SERVER_PATH=/var/www/streamdesk
+(Если SSH на нестандартном порту — укажите SERVER_PORT=22232)
 `);
     process.exit(1);
   }
 
   const target = `${SERVER_USER}@${SERVER_IP}:${SERVER_PATH}`;
-  console.log("Деплой:", target, "\n");
+  console.log("Деплой:", target, SERVER_PORT ? `(порт ${SERVER_PORT})` : "", "\n");
 
   console.log("1/3 Сборка проекта...");
   await run("npm", ["run", "build"]);
@@ -145,6 +146,8 @@ async function main() {
     "design-website",
   ].flatMap((x) => ["--exclude", x]);
 
+  const sshPortOpt = SERVER_PORT ? ["-e", `ssh -p ${SERVER_PORT}`] : [];
+
   console.log("2/3 Синхронизация на сервер...");
   const rsyncCmd = findRsync();
   if (rsyncCmd) {
@@ -152,20 +155,22 @@ async function main() {
     await run(rsyncCmd, [
       "-avz",
       "--delete",
+      ...sshPortOpt,
       ...rsyncExclude,
       sourcePath,
       target + "/",
     ]);
   } else if (process.platform === "win32") {
-    await deployViaScp(root, SERVER_USER, SERVER_IP, SERVER_PATH, run);
+    await deployViaScp(root, SERVER_USER, SERVER_IP, SERVER_PATH, run, SERVER_PORT);
   } else {
     console.error("rsync не найден. Установите rsync для вашей ОС.");
     process.exit(1);
   }
 
   console.log("3/3 Перезапуск на сервере...");
+  const sshArgs = SERVER_PORT ? ["-p", String(SERVER_PORT), `${SERVER_USER}@${SERVER_IP}`] : [`${SERVER_USER}@${SERVER_IP}`];
   await run("ssh", [
-    `${SERVER_USER}@${SERVER_IP}`,
+    ...sshArgs,
     `cd ${SERVER_PATH} && chmod +x deploy-to-server.sh && ./deploy-to-server.sh`,
   ]);
 

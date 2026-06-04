@@ -8,7 +8,13 @@ export default function AuthWrapper() {
       const userJson = JSON.stringify(userData);
       localStorage.setItem("streamstudio_user", userJson);
       if (localStorage.getItem("streamstudio_user")) {
-        setTimeout(() => { window.location.href = "/"; }, 400);
+        const search = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+        const invite = search?.get("invite");
+        const isPlatformAdmin = Array.isArray(userData?.permissions) && userData.permissions.includes("platform:admin");
+        const nextPath = userData.onboardingCompleted === false
+          ? invite ? `/onboarding?invite=${encodeURIComponent(invite)}` : "/onboarding"
+          : isPlatformAdmin ? "/platform-admin" : "/";
+        setTimeout(() => { window.location.href = nextPath; }, 400);
       }
     } catch (_) {}
   }, []);

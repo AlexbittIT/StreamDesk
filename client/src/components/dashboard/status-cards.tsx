@@ -1,11 +1,21 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Monitor, Video, Zap, Calendar } from "lucide-react";
+import { tabPermission } from "@shared/schema";
 
 interface StatusCardsProps {
   stats: any;
+  user?: any;
 }
 
-export default function StatusCards({ stats }: StatusCardsProps) {
+function canAccessTab(user: any, tabKey: string): boolean {
+  if (!user) return true;
+  const permissions = Array.isArray(user.permissions) ? user.permissions : [];
+  const hasTabPermissions = permissions.some((permission: string) => permission.startsWith("tab:"));
+  if (hasTabPermissions) return permissions.includes(tabPermission(tabKey));
+  return true;
+}
+
+export default function StatusCards({ stats, user }: StatusCardsProps) {
   if (!stats) {
     return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 sm:gap-2">
@@ -23,6 +33,7 @@ export default function StatusCards({ stats }: StatusCardsProps) {
   const cards = [
     {
       title: "Системы",
+      tabKey: "monitoring",
       value: stats.onlineSystems,
       icon: Monitor,
       iconColor: "text-emerald-500",
@@ -32,6 +43,7 @@ export default function StatusCards({ stats }: StatusCardsProps) {
     },
     {
       title: "Стримы", 
+      tabKey: "streams",
       value: stats.activeStreams,
       icon: Video,
       iconColor: "text-cyan-500",
@@ -41,8 +53,9 @@ export default function StatusCards({ stats }: StatusCardsProps) {
       description: "активных"
     },
     {
-      title: "Скорость",
-      value: "120",
+      title: "Сеть",
+      tabKey: "monitoring",
+      value: stats.networkMbps ?? 0,
       icon: Zap,
       iconColor: "text-amber-500", 
       bgColor: "bg-amber-500/10 dark:bg-amber-500/20",
@@ -51,6 +64,7 @@ export default function StatusCards({ stats }: StatusCardsProps) {
     },
     {
       title: "Событий",
+      tabKey: "calendar",
       value: stats.todayEvents,
       icon: Calendar,
       iconColor: "text-violet-500",
@@ -60,9 +74,11 @@ export default function StatusCards({ stats }: StatusCardsProps) {
     }
   ];
 
+  const visibleCards = cards.filter((card) => canAccessTab(user, card.tabKey));
+
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 w-full min-w-0">
-      {cards.map((card, index) => {
+      {visibleCards.map((card, index) => {
         const Icon = card.icon;
         return (
           <Card

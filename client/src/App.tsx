@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -11,6 +11,7 @@ import { AlertTriangle } from "lucide-react";
 import Dashboard from "@/pages/dashboard";
 import Calendar from "@/pages/calendar";
 import Equipment from "@/pages/equipment";
+import Estimates from "@/pages/estimates";
 import Monitoring from "@/pages/monitoring";
 import Streams from "@/pages/streams";
 import Servers from "@/pages/servers";
@@ -19,13 +20,12 @@ import Settings from "@/pages/settings";
 import Tasks from "@/pages/tasks";
 import TasksYouGile from "@/pages/tasks-yougile";
 import Admin from "@/pages/admin";
+import PlatformAdmin from "@/pages/platform-admin";
 import Login from "@/pages/login";
+import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
-import Computers from "@/pages/computers";
 import Projects from "@/pages/projects";
 import ChatGPT from "@/pages/chatgpt";
-import Transcription from "@/pages/transcription";
-import AITranscription from "@/pages/ai-transcription";
 import VmixScheduler from "@/pages/vmix-scheduler";
 import ManagerDashboard from "@/pages/manager-dashboard";
 import Terminal from "@/pages/terminal";
@@ -42,6 +42,7 @@ import { useSidebar } from "@/hooks/use-sidebar";
 import AuthWrapper from "@/components/auth-wrapper";
 import { ProtectedRoute } from "@/components/protected-route";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { PERMISSIONS } from "@shared/schema";
 
 function StubModeBanner() {
   const { data } = useQuery({
@@ -62,6 +63,11 @@ function Router({ user }: { user: any }) {
   return (
     <Switch>
       <Route path="/login" component={AuthWrapper} />
+      <Route path="/onboarding">
+        <ProtectedRoute user={user}>
+          <Onboarding />
+        </ProtectedRoute>
+      </Route>
       <Route path="/">
         <ProtectedRoute user={user}>
           <Dashboard />
@@ -87,9 +93,14 @@ function Router({ user }: { user: any }) {
           <Equipment />
         </ProtectedRoute>
       </Route>
+      <Route path="/estimates">
+        <ProtectedRoute user={user}>
+          <Estimates />
+        </ProtectedRoute>
+      </Route>
       <Route path="/computers">
         <ProtectedRoute user={user}>
-          <Computers />
+          <Servers />
         </ProtectedRoute>
       </Route>
       <Route path="/projects">
@@ -115,16 +126,6 @@ function Router({ user }: { user: any }) {
       <Route path="/chatgpt">
         <ProtectedRoute user={user}>
           <ChatGPT />
-        </ProtectedRoute>
-      </Route>
-      <Route path="/transcription">
-        <ProtectedRoute user={user}>
-          <Transcription />
-        </ProtectedRoute>
-      </Route>
-      <Route path="/ai-transcription">
-        <ProtectedRoute user={user}>
-          <AITranscription />
         </ProtectedRoute>
       </Route>
       <Route path="/vmix-scheduler">
@@ -167,8 +168,13 @@ function Router({ user }: { user: any }) {
         </ProtectedRoute>
       </Route>
       <Route path="/admin">
-        <ProtectedRoute user={user} requiredRole="admin">
+        <ProtectedRoute user={user}>
           <Admin />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/platform-admin">
+        <ProtectedRoute user={user} requiredRole="admin" requiredPermission={PERMISSIONS.PLATFORM_ADMIN}>
+          <PlatformAdmin />
         </ProtectedRoute>
       </Route>
       <Route path="/terminal">
@@ -184,6 +190,12 @@ function Router({ user }: { user: any }) {
       <Route component={NotFound} />
     </Switch>
   );
+}
+
+function getDefaultAuthenticatedPath(user: any): string {
+  const isPlatformAdmin = Array.isArray(user?.permissions) && user.permissions.includes("platform:admin");
+  if (isPlatformAdmin) return "/platform-admin";
+  return "/";
 }
 
 function App() {
@@ -211,6 +223,7 @@ function App() {
   const sidebarCollapsed = useSidebar();
   const swipeStartX = useRef<number>(0);
   const swipeStartY = useRef<number>(0);
+  const [location] = useLocation();
 
   useEffect(() => {
     const loadUser = () => {
@@ -258,6 +271,35 @@ function App() {
     window.location.href = '/login';
   };
 
+  useEffect(() => {
+    if (user && typeof window !== "undefined" && window.location.pathname === "/login") {
+      const nextPath = user.onboardingCompleted === false ? "/onboarding" : getDefaultAuthenticatedPath(user);
+      const t = setTimeout(() => { window.location.href = nextPath; }, 100);
+      return () => clearTimeout(t);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || typeof window === "undefined") return;
+    const path = window.location.pathname;
+    if (user.onboardingCompleted === false && path !== "/onboarding" && path !== "/login") {
+      const t = setTimeout(() => { window.location.href = "/onboarding"; }, 100);
+      return () => clearTimeout(t);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || typeof window === "undefined") return;
+    const isPlatformAdminUser = Array.isArray(user?.permissions) && user.permissions.includes(PERMISSIONS.PLATFORM_ADMIN);
+    if (!isPlatformAdminUser) return;
+    const path = window.location.pathname;
+    const allowedPaths = ["/platform-admin", "/settings", "/login", "/onboarding"];
+    if (!allowedPaths.includes(path)) {
+      const t = setTimeout(() => { window.location.href = "/platform-admin"; }, 100);
+      return () => clearTimeout(t);
+    }
+  }, [user]);
+
   if (isLoading && user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -280,13 +322,6 @@ function App() {
   }
 
   // Если пользователь авторизован и URL /login — редирект на главную (без useLocation, т.к. на экране входа Router не смонтирован)
-  useEffect(() => {
-    if (user && typeof window !== "undefined" && window.location.pathname === "/login") {
-      const t = setTimeout(() => { window.location.href = "/"; }, 100);
-      return () => clearTimeout(t);
-    }
-  }, [user]);
-
   if (!user || !user.id) {
     if (isLoading) {
       return (
@@ -317,12 +352,17 @@ function App() {
     );
   }
 
+  const isPlatformAdmin = Array.isArray(user?.permissions) && user.permissions.includes(PERMISSIONS.PLATFORM_ADMIN);
+  const showWorkspaceChrome = user.onboardingCompleted !== false && location !== "/onboarding";
+  const showBottomNav = showWorkspaceChrome && !isPlatformAdmin;
+  const isFullWidthWorkspace = location === "/tasks";
+
   return (
     <ThemeProvider defaultTheme="system" storageKey="streamstudio-theme">
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <div className="app-layout min-h-screen bg-background font-sans antialiased transition-colors duration-300 overflow-x-hidden w-full max-w-[100vw] flex">
-            {mobileNavOpen && (
+            {showWorkspaceChrome && mobileNavOpen && (
               <div
                 className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
                 onClick={() => setMobileNavOpen(false)}
@@ -338,7 +378,7 @@ function App() {
               />
             )}
             {/* Зона свайпа слева: потянуть вправо — открыть меню (только на мобильных) */}
-            <div
+            {showWorkspaceChrome && <div
               className="fixed left-0 top-0 bottom-0 w-6 z-30 lg:hidden touch-none"
               onTouchStart={(e) => {
                 swipeStartX.current = e.touches[0].clientX;
@@ -350,41 +390,51 @@ function App() {
                 if (dx > 50 && dy < 80 && !mobileNavOpen) setMobileNavOpen(true);
               }}
               aria-hidden
-            />
+            />}
             
-            <Sidebar 
+            {showWorkspaceChrome && <Sidebar
               user={user} 
               isOpen={mobileNavOpen}
               onClose={() => setMobileNavOpen(false)}
               onLogout={handleLogout}
-            />
+            />}
             
             {/* Spacer под сайдбар: на lg+ занимает место, контент не уезжает */}
-            <div
+            {showWorkspaceChrome && <div
               className={cn(
                 "hidden lg:block flex-shrink-0 transition-all duration-300",
-                sidebarCollapsed ? "w-16 xl:w-20" : "w-[260px] xl:w-72"
+                sidebarCollapsed ? "w-14 xl:w-16" : "w-[200px] xl:w-56"
               )}
               aria-hidden
-            />
+            />}
             
             <div
               className="flex-1 min-w-0 min-h-screen flex flex-col overflow-x-hidden hide-scrollbar bg-starry w-full"
               id="main-content"
             >
               <StubModeBanner />
-              <Header
-                onMobileMenuClick={() => setMobileNavOpen(true)}
-                user={user}
-                onLogout={handleLogout}
-              />
-              <main className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto hide-scrollbar safe-area-top page-content w-full max-w-full pb-24 md:pb-0 safe-area-bottom">
-                <div className="w-full min-w-0 max-w-[1600px] mx-auto">
+              {showWorkspaceChrome && (
+                <Header
+                  onMobileMenuClick={() => setMobileNavOpen(true)}
+                  user={user}
+                  onLogout={handleLogout}
+                />
+              )}
+              <main className={cn(
+                "flex-1 min-h-0 overflow-x-hidden overflow-y-auto hide-scrollbar page-content w-full max-w-full safe-area-bottom",
+                showWorkspaceChrome ? "safe-area-top pb-24 md:pb-0" : "py-0"
+              )}>
+                <div
+                  className={cn(
+                    "w-full min-w-0 mx-auto flex flex-col min-h-full",
+                    isFullWidthWorkspace ? "max-w-none" : "max-w-[1400px]"
+                  )}
+                >
                   <Router user={user} />
                 </div>
               </main>
-              <Footer />
-              <BottomNav user={user} onOpenMenu={() => setMobileNavOpen(true)} />
+              {showWorkspaceChrome && <Footer />}
+              {showBottomNav && <BottomNav user={user} onOpenMenu={() => setMobileNavOpen(true)} />}
             </div>
           </div>
           <Toaster />

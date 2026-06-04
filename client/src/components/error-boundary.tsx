@@ -2,6 +2,7 @@ import React, { Component, ErrorInfo, ReactNode } from "react";
 import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { apiUrl } from "@/lib/queryClient";
 
 interface Props {
   children: ReactNode;
@@ -38,6 +39,32 @@ export class ErrorBoundary extends Component<Props, State> {
       error,
       errorInfo,
     });
+    this.reportClientError(error, errorInfo);
+  }
+
+  reportClientError(error: Error, errorInfo: ErrorInfo) {
+    try {
+      fetch(apiUrl("/api/platform/incidents/report"), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `Ошибка интерфейса: ${error.name || "Error"}`,
+          message: error.message || String(error),
+          type: "bug",
+          severity: "high",
+          source: "client-error",
+          metadata: {
+            stack: error.stack,
+            componentStack: errorInfo.componentStack,
+            path: window.location.pathname,
+            userAgent: navigator.userAgent,
+          },
+        }),
+      }).catch(() => {});
+    } catch {
+      // Ошибка репорта не должна ломать fallback-экран.
+    }
   }
 
   handleReset = () => {

@@ -7,6 +7,7 @@ import {
   CalendarDays,
   ClipboardList,
   Package,
+  FileSpreadsheet,
   Bell,
   Settings,
   Menu,
@@ -29,6 +30,7 @@ const CANDIDATES: Array<{
   { tabKey: "room-booking", label: "Бронирование комнат", shortLabel: "Бронирование", icon: CalendarDays, href: "/room-booking" },
   { tabKey: "tasks", label: "Задачи", shortLabel: "Задачи", icon: ClipboardList, href: "/tasks" },
   { tabKey: "equipment", label: "Склад техники", shortLabel: "Склад", icon: Package, href: "/equipment" },
+  { tabKey: "estimates", label: "Смета", shortLabel: "Смета", icon: FileSpreadsheet, href: "/estimates" },
   { tabKey: "notifications", label: "Уведомления", shortLabel: "Уведомления", icon: Bell, href: "/notifications" },
   { tabKey: "settings", label: "Настройки", shortLabel: "Настройки", icon: Settings, href: "/settings" },
 ];

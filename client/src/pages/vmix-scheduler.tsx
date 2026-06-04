@@ -49,6 +49,10 @@ interface VmixEvent {
   input?: string;
   preset?: string;
   channel?: string;
+  vmixHost?: string | null;
+  vmixPort?: number | null;
+  executedAt?: string;
+  errorMessage?: string | null;
 }
 
 interface VmixConnection {
@@ -62,14 +66,43 @@ interface VmixConnection {
   streaming: boolean;
 }
 
+type VmixTargetMode = "agent" | "direct";
+
+const asRecord = (value: unknown): Record<string, any> =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+
 export default function VmixScheduler() {
   const [vmixHost, setVmixHost] = useState(localStorage.getItem("vmix_host") || "localhost");
   const [vmixPort, setVmixPort] = useState(localStorage.getItem("vmix_port") || "8088");
+  const [targetMode, setTargetMode] = useState<VmixTargetMode>((localStorage.getItem("vmix_target_mode") as VmixTargetMode) || "agent");
+  const [selectedAgentKey, setSelectedAgentKey] = useState(localStorage.getItem("vmix_agent_key") || "");
   const [isConnecting, setIsConnecting] = useState(false);
   const { toast } = useToast();
 
+  const { data: systems = [] } = useQuery<any[]>({
+    queryKey: ["/api/systems"],
+    refetchInterval: 10000,
+  });
+
+  const vmixAgents = systems.filter((system: any) => {
+    const spec = asRecord(system.specifications);
+    const agent = asRecord(spec.agent);
+    const vmix = asRecord(spec.vmix);
+    const caps = Array.isArray(agent.capabilities) ? agent.capabilities : [];
+    return agent.deviceType === "vmix" || caps.includes("vmix-scheduler") || vmix.enabled;
+  });
+  const selectedAgent = vmixAgents.find((system: any) => {
+    const spec = asRecord(system.specifications);
+    const agent = asRecord(spec.agent);
+    return String(agent.agentKey || spec.agentKey || "") === selectedAgentKey;
+  }) || vmixAgents[0];
+  const selectedAgentSpec = asRecord(selectedAgent?.specifications);
+  const selectedAgentInfo = asRecord(selectedAgentSpec.agent);
+  const selectedAgentVmix = asRecord(selectedAgentSpec.vmix);
+  const effectiveAgentKey = String(selectedAgentInfo.agentKey || selectedAgentSpec.agentKey || selectedAgentKey || "");
+
   // Проверка подключения только по кнопке «Подключиться» или «Обновить» — без авто-опросов и повторов
-  const { data: connection, refetch: checkConnection, isFetching: isCheckingConnection } = useQuery<VmixConnection>({
+  const { data: directConnection, refetch: checkConnection, isFetching: isCheckingConnection } = useQuery<VmixConnection>({
     queryKey: ["/api/vmix/status", vmixHost, vmixPort],
     queryFn: async () => {
       const response = await apiRequest("GET", `/api/vmix/status?host=${vmixHost}&port=${vmixPort}`);
@@ -78,6 +111,18 @@ export default function VmixScheduler() {
     enabled: false,
     retry: 0,
   });
+
+  const agentConnection: VmixConnection | undefined = selectedAgent ? {
+    connected: Boolean(selectedAgentVmix.connected),
+    host: selectedAgent?.name || "vMix agent",
+    port: 0,
+    inputs: Array.isArray(selectedAgentVmix.inputs) ? selectedAgentVmix.inputs : [],
+    preview: Number(selectedAgentVmix.preview || 0),
+    program: Number(selectedAgentVmix.active || selectedAgentVmix.program || 0),
+    recording: Boolean(selectedAgentVmix.recording),
+    streaming: Boolean(selectedAgentVmix.streaming),
+  } : undefined;
+  const connection = targetMode === "agent" ? agentConnection : directConnection;
 
   // Получение событий расписания
   const { data: eventsData, refetch: refetchEvents, isLoading: isLoadingEvents } = useQuery<{ events: VmixEvent[] }>({
@@ -169,7 +214,31 @@ export default function VmixScheduler() {
     }
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem("vmix_target_mode", targetMode);
+  }, [targetMode]);
+
+  useEffect(() => {
+    if (!localStorage.getItem("vmix_target_mode") && vmixAgents.length > 0) {
+      setTargetMode("agent");
+    }
+  }, [vmixAgents.length]);
+
+  useEffect(() => {
+    if (selectedAgentKey) localStorage.setItem("vmix_agent_key", selectedAgentKey);
+  }, [selectedAgentKey]);
+
+  useEffect(() => {
+    if (!selectedAgentKey && effectiveAgentKey) {
+      setSelectedAgentKey(effectiveAgentKey);
+    }
+  }, [selectedAgentKey, effectiveAgentKey]);
+
   const handleConnect = () => {
+    if (targetMode === "agent") {
+      refetchEvents();
+      return;
+    }
     setIsConnecting(true);
     connectMutation.mutate(
       { host: vmixHost, port: parseInt(vmixPort) },
@@ -180,6 +249,13 @@ export default function VmixScheduler() {
   };
 
   const handleCommand = (command: string, value?: string, input?: string, duration?: number) => {
+    if (targetMode === "agent") {
+      toast({
+        title: "vMix через агент",
+        description: "Прямые команды доступны только при IP-подключении. Через BAT-агент создайте событие расписания на нужное время.",
+      });
+      return;
+    }
     if (!connection?.connected) {
       toast({
         title: "Не подключено",
@@ -232,8 +308,8 @@ export default function VmixScheduler() {
       startTime: new Date(newEventStartTime).toISOString(),
       input: newEventInput || undefined,
       actions,
-      vmixHost: vmixHost || undefined,
-      vmixPort: parseInt(vmixPort) || undefined,
+      vmixHost: targetMode === "agent" ? effectiveAgentKey || undefined : vmixHost || undefined,
+      vmixPort: targetMode === "agent" ? undefined : parseInt(vmixPort) || undefined,
     });
   };
 
@@ -317,6 +393,7 @@ export default function VmixScheduler() {
 
   // Автоматическое выполнение событий по расписанию
   useEffect(() => {
+    if (targetMode !== "direct") return;
     if (!connection?.connected) return;
 
     const checkAndExecuteEvents = async () => {
@@ -466,6 +543,53 @@ export default function VmixScheduler() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            <div className="mb-4 grid gap-3 lg:grid-cols-[220px_1fr]">
+              <div>
+                <Label className="text-sm font-medium">Режим</Label>
+                <Select value={targetMode} onValueChange={(value) => setTargetMode(value as VmixTargetMode)}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="agent">Через BAT-агент</SelectItem>
+                    <SelectItem value="direct">Прямой IP</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {targetMode === "agent" ? (
+                <div>
+                  <Label className="text-sm font-medium">vMix-устройство</Label>
+                  <Select value={effectiveAgentKey || "__none__"} onValueChange={(value) => setSelectedAgentKey(value === "__none__" ? "" : value)}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Выберите vMix-агент" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {vmixAgents.length === 0 ? (
+                        <SelectItem value="__none__">Нет vMix-агентов</SelectItem>
+                      ) : (
+                        vmixAgents.map((system: any) => {
+                          const spec = asRecord(system.specifications);
+                          const agent = asRecord(spec.agent);
+                          const key = String(agent.agentKey || spec.agentKey || system.id);
+                          return (
+                            <SelectItem key={key} value={key}>
+                              {system.name} {asRecord(spec.vmix).connected ? "online" : "offline"}
+                            </SelectItem>
+                          );
+                        })
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Если vMix не в одной сети с CRM, скачайте vMix BAT в мониторинге и запустите его на этой машине.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  Прямой IP работает, когда сервер StreamDesk видит компьютер с vMix по сети.
+                </div>
+              )}
+            </div>
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-end">
               <div className="flex-1 w-full sm:w-auto">
                 <Label htmlFor="vmix-host" className="text-sm font-medium">
@@ -532,7 +656,7 @@ export default function VmixScheduler() {
                         Подключено к vMix
                       </p>
                       <p className="text-xs text-green-700 dark:text-green-300">
-                        {vmixHost}:{vmixPort} • {connection.inputs?.length || 0} входов
+                        {targetMode === "agent" ? (selectedAgent?.name || "vMix agent") : `${vmixHost}:${vmixPort}`} • {connection.inputs?.length || 0} входов
                       </p>
                     </div>
                   </>
@@ -1091,12 +1215,15 @@ export default function VmixScheduler() {
                         {connection?.inputs && connection.inputs.length > 0 && (
                           <div>
                             <Label>Инпут для переключения</Label>
-                            <Select value={newEventInput} onValueChange={setNewEventInput}>
+                              <Select
+                                value={newEventInput || "__none__"}
+                                onValueChange={(v) => setNewEventInput(v === "__none__" ? "" : v)}
+                              >
                               <SelectTrigger>
                                 <SelectValue placeholder="Выберите инпут (опционально)" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="">Не выбирать</SelectItem>
+                                <SelectItem value="__none__">Не выбирать</SelectItem>
                                 {connection.inputs.map((input) => (
                                   <SelectItem key={input.number} value={input.number.toString()}>
                                     {input.number}. {input.title || `Input ${input.number}`}

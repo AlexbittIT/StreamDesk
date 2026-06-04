@@ -138,7 +138,7 @@ echo "4. Установите зависимости: cd /var/www/streamdesk && 
 echo "5. Соберите проект: npm run build"
 echo "6. Настройте Nginx (см. DEPLOY_UBUNTU.md)"
 echo "7. Установите SSL сертификат"
-echo "8. Запустите приложение: pm2 start ecosystem.config.js"
+echo "8. Запустите приложение: pm2 start ecosystem.config.cjs"
 echo ""
 print_info "Подробные инструкции в файле DEPLOY_UBUNTU.md"
 print_info "Для автоматического деплоя см. АВТОМАТИЧЕСКИЙ_ДЕПЛОЙ.md"
