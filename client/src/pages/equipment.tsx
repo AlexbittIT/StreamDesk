@@ -14,6 +14,7 @@ import { EquipmentForm } from "@/components/forms/equipment-form";
 import { BarcodeScanner } from "@/components/equipment/barcode-scanner";
 import { EquipmentBarcodeModal } from "@/components/equipment/barcode-generator";
 import { canCreateEquipment, canEditEquipment, canReserveEquipment } from "@/lib/equipment-permissions";
+import { buildBarcodeLabelBitmapPayload, renderCompactBarcodeLabel } from "@/lib/barcode-label";
 import { apiRequest, apiUrl, encodeUserHeader } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -600,10 +601,30 @@ export default function EquipmentPage() {
   const printEquipmentLabelsMutation = useMutation({
     mutationFn: async (items: Equipment[]) => {
       if (items.length === 0) throw new Error("Выберите оборудование для печати этикеток");
-      const response = await apiRequest("POST", "/api/equipment/labels/print", {
-        equipmentIds: items.map((item) => item.id),
-      });
-      return response.json();
+      const holder = document.createElement("div");
+      holder.style.position = "fixed";
+      holder.style.left = "-10000px";
+      holder.style.top = "0";
+      holder.style.pointerEvents = "none";
+      document.body.appendChild(holder);
+
+      try {
+        const labels = [];
+        for (const item of items) {
+          const value = String(item.inventoryNumber || item.barcode || item.serialNumber || `EQ${item.id.slice(0, 10).toUpperCase()}`).trim();
+          if (!value) continue;
+          const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          holder.appendChild(svg);
+          renderCompactBarcodeLabel(svg, value);
+          labels.push(await buildBarcodeLabelBitmapPayload(svg, value));
+        }
+
+        if (labels.length === 0) throw new Error("Нет инвентарника для печати этикетки");
+        const response = await apiRequest("POST", "/api/equipment/labels/print-bitmaps", { labels });
+        return response.json();
+      } finally {
+        holder.remove();
+      }
     },
     onSuccess: (data: any) => {
       toast({
@@ -620,8 +641,37 @@ export default function EquipmentPage() {
     },
   });
 
+  const calibrateLabelPrinterMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/equipment/labels/calibrate", {});
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: "Калибровка отправлена",
+        description: `Принтер: ${data?.printer || "TSC"}.`,
+      });
+    },
+    onError: (e: any) => {
+      toast({
+        title: "Ошибка калибровки",
+        description: e?.message || "Не удалось откалибровать принтер",
+        variant: "destructive",
+      });
+    },
+  });
+
   const printEquipmentLabels = (items: Equipment[]) => {
-    printEquipmentLabelsMutation.mutate(items);
+    const printableItems = items.filter(Boolean);
+    if (printableItems.length === 0) {
+      toast({
+        title: "Нечего печатать",
+        description: "Выберите оборудование или нажмите печать на карточке.",
+        variant: "destructive",
+      });
+      return;
+    }
+    printEquipmentLabelsMutation.mutate(printableItems);
   };
 
   const createBundleMutation = useMutation({
@@ -1913,7 +1963,7 @@ export default function EquipmentPage() {
                     )}
                   </div>
 
-                  <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:max-w-[178px]">
+                  <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:max-w-[220px]">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -1954,6 +2004,20 @@ export default function EquipmentPage() {
                       data-testid={`button-print-label-${item.id}`}
                     >
                       <Printer className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 hover:bg-slate-100 dark:hover:bg-slate-700 sm:h-7 sm:w-7"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        calibrateLabelPrinterMutation.mutate();
+                      }}
+                      title="Калибровка принтера этикеток"
+                      disabled={calibrateLabelPrinterMutation.isPending}
+                      data-testid={`button-calibrate-label-${item.id}`}
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
                     </Button>
                     <Button
                       variant="ghost"

@@ -1,4 +1,4 @@
-const CP1251_CHARS = [
+﻿const CP1251_CHARS = [
   "\u0402", "\u0403", "\u201A", "\u0453", "\u201E", "\u2026", "\u2020", "\u2021",
   "\u20AC", "\u2030", "\u0409", "\u2039", "\u040A", "\u040C", "\u040B", "\u040F",
   "\u0452", "\u2018", "\u2019", "\u201C", "\u201D", "\u2022", "\u2013", "\u2014",
@@ -20,11 +20,11 @@ for (let code = 0x0410; code <= 0x044F; code += 1) {
   cp1251Bytes.set(String.fromCharCode(code), 0xC0 + (code - 0x0410));
 }
 
-const mojibakePattern = /(?:[РС][\u0400-\u04FF]|вЂ|В[«»]|Â[^\s]?|Ð|Ñ)/;
+const mojibakePattern = /(?:[\u0420\u0421][\u0400-\u04FF]|\u0432\u0402|\u0412[\u00AB\u00BB]|\u00C2[^\s]?|\u00D0|\u00D1)/;
 const utf8Decoder = typeof TextDecoder !== "undefined" ? new TextDecoder("utf-8", { fatal: true }) : null;
 
 function mojibakeScore(value: string) {
-  return (value.match(/[РС][\u0400-\u04FF]|вЂ|В[«»]|Â|Ð|Ñ/g) || []).length;
+  return (value.match(/[\u0420\u0421][\u0400-\u04FF]|\u0432\u0402|\u0412[\u00AB\u00BB]|\u00C2|\u00D0|\u00D1/g) || []).length;
 }
 
 export function fixMojibakeText(value: string): string {
@@ -34,6 +34,10 @@ export function fixMojibakeText(value: string): string {
   for (const char of value) {
     const code = char.charCodeAt(0);
     if (code <= 0x7F) {
+      bytes.push(code);
+      continue;
+    }
+    if (code >= 0x80 && code <= 0x9F) {
       bytes.push(code);
       continue;
     }

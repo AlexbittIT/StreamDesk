@@ -4,13 +4,13 @@ import { createServer as createHttpsServer } from "https";
 import fs from "fs";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage, isStubStorage } from "./database";
-import { 
+import {
   insertUserSchema,
   insertEventSchema,
-  insertEventParticipantSchema, 
-  insertEquipmentSchema, 
+  insertEventParticipantSchema,
+  insertEquipmentSchema,
   insertSystemSchema,
-  insertStreamSchema, 
+  insertStreamSchema,
   insertNotificationSchema,
   insertEquipmentReservationSchema,
   insertTelegramUserSchema,
@@ -34,7 +34,7 @@ import { hashPassword, verifyPassword, isPasswordHashed } from "./auth";
 import { getTerminalLogs } from "./terminal-log";
 import { getTerminalAllowedRoles, setTerminalAllowedRoles, canViewTerminal } from "./terminal-access";
 
-/** РџР°СЂСЃРёС‚ Р·Р°РіРѕР»РѕРІРѕРє x-user: РїРѕРґРґРµСЂР¶РёРІР°РµС‚ JSON Рё Base64 (РґР»СЏ РєРёСЂРёР»Р»РёС†С‹ РІ РёРјРµРЅРё). */
+/** Парсит заголовок x-user: поддерживает JSON и Base64 (для кириллицы в имени). */
 function parseUserHeader(header: string | undefined): Record<string, unknown> {
   if (!header || typeof header !== "string") return {};
   try {
@@ -135,11 +135,11 @@ const transcriptionUpload = multer({
     },
   }),
   limits: {
-    fileSize: 100 * 1024 * 1024, // 100MB РґР»СЏ РґРѕРєСѓРјРµРЅС‚РѕРІ/Р°СѓРґРёРѕ
+    fileSize: 100 * 1024 * 1024, // 100MB для документов/аудио
   },
 });
 
-// Multer РґР»СЏ Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»РѕРІ РІ С‡Р°С‚С‹ - Р»СЋР±С‹Рµ С‚РёРїС‹ С„Р°Р№Р»РѕРІ, Р±РµР· РѕРіСЂР°РЅРёС‡РµРЅРёР№
+// Multer для загрузки файлов в чаты - любые типы файлов, без ограничений
 const chatUpload = multer({
   storage: multer.diskStorage({
     destination: async (req, file, cb) => {
@@ -159,7 +159,7 @@ const chatUpload = multer({
       cb(null, base + "-" + uniqueSuffix + ext);
     },
   }),
-  // Р‘РµР· РѕРіСЂР°РЅРёС‡РµРЅРёР№ РїРѕ СЂР°Р·РјРµСЂСѓ Рё С‚РёРїСѓ С„Р°Р№Р»РѕРІ
+  // Без ограничений по размеру и типу файлов
 });
 
 const estimateUpload = multer({
@@ -167,7 +167,7 @@ const estimateUpload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
 });
 
-// Multer РґР»СЏ С„РѕС‚Рѕ СѓС‡Р°СЃС‚РЅРёРєРѕРІ РїСЂРѕРґР°РєС€РЅ (РїСЂРѕРґР°РєС€РЅ / С€РѕСѓ)
+// Multer для фото участников продакшн (продакшн / шоу)
 const productionPhotoUpload = multer({
   storage: multer.diskStorage({
     destination: async (req, file, cb) => {
@@ -194,7 +194,7 @@ const productionPhotoUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-// Multer РґР»СЏ Р°РІР°С‚Р°СЂР° РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+// Multer для аватара пользователя
 const avatarUpload = multer({
   storage: multer.diskStorage({
     destination: async (req, file, cb) => {
@@ -227,87 +227,87 @@ async function checkIP(ip: string, port: number = 80): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     socket.setTimeout(3000);
-    
+
     socket.on('connect', () => {
       socket.destroy();
       resolve(true);
     });
-    
+
     socket.on('timeout', () => {
       socket.destroy();
       resolve(false);
     });
-    
+
     socket.on('error', () => {
       resolve(false);
     });
-    
+
     socket.connect(port, ip);
   });
 }
 
-// РћР±РµСЂС‚РєР° РґР»СЏ Р±С‹СЃС‚СЂРѕР№ РѕР±СЂР°Р±РѕС‚РєРё РѕС€РёР±РѕРє Р‘Р” СЃ С‚Р°Р№РјР°СѓС‚РѕРј
+// Обертка для быстрой обработки ошибок БД с таймаутом
 async function withDbTimeout<T>(
   operation: () => Promise<T>,
-  timeoutMs: number = 3000, // 3 СЃРµРєСѓРЅРґС‹ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РґР»СЏ GET Р·Р°РїСЂРѕСЃРѕРІ (Р±С‹СЃС‚СЂРѕ!)
+  timeoutMs: number = 3000, // 3 секунды по умолчанию для GET запросов (быстро!)
   defaultValue: T
 ): Promise<T> {
   const startTime = Date.now();
   let timeoutId: NodeJS.Timeout | null = null;
-  
+
   try {
-    // РЈР±РµР¶РґР°РµРјСЃСЏ, С‡С‚Рѕ timeoutMs РїРѕР»РѕР¶РёС‚РµР»СЊРЅРѕРµ С‡РёСЃР»Рѕ
+    // Убеждаемся, что timeoutMs положительное число
     const safeTimeout = Math.max(1, Math.floor(timeoutMs));
-    
+
     const timeoutPromise = new Promise<T>((_, reject) => {
       timeoutId = setTimeout(() => {
         reject(new Error('Database operation timeout'));
       }, safeTimeout);
     });
-    
+
     const result = await Promise.race([operation(), timeoutPromise]);
-    
-    // РћС‡РёС‰Р°РµРј С‚Р°Р№РјР°СѓС‚ РµСЃР»Рё РѕРїРµСЂР°С†РёСЏ Р·Р°РІРµСЂС€РёР»Р°СЃСЊ СѓСЃРїРµС€РЅРѕ
+
+    // Очищаем таймаут если операция завершилась успешно
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
-    
-    const duration = Math.max(0, Date.now() - startTime); // РЈР±РµР¶РґР°РµРјСЃСЏ, С‡С‚Рѕ duration РЅРµ РѕС‚СЂРёС†Р°С‚РµР»СЊРЅРѕРµ
+
+    const duration = Math.max(0, Date.now() - startTime); // Убеждаемся, что duration не отрицательное
     if (duration > 1000) {
       console.warn(`[DB] Slow query: ${duration}ms`);
     }
     return result;
   } catch (error: any) {
-    // РћС‡РёС‰Р°РµРј С‚Р°Р№РјР°СѓС‚ РїСЂРё РѕС€РёР±РєРµ
+    // Очищаем таймаут при ошибке
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
-    
-    const duration = Math.max(0, Date.now() - startTime); // РЈР±РµР¶РґР°РµРјСЃСЏ, С‡С‚Рѕ duration РЅРµ РѕС‚СЂРёС†Р°С‚РµР»СЊРЅРѕРµ
+
+    const duration = Math.max(0, Date.now() - startTime); // Убеждаемся, что duration не отрицательное
     const errorMsg = error.message?.toLowerCase() || '';
-    
-    // Р›РѕРіРёСЂСѓРµРј С‚РѕР»СЊРєРѕ РІР°Р¶РЅС‹Рµ РѕС€РёР±РєРё, РЅРµ С‚Р°Р№РјР°СѓС‚С‹
+
+    // Логируем только важные ошибки, не таймауты
     if (errorMsg.includes('timeout')) {
-      // РўР°Р№РјР°СѓС‚ - СЌС‚Рѕ РЅРѕСЂРјР°Р»СЊРЅРѕ, РїСЂРѕСЃС‚Рѕ РІРѕР·РІСЂР°С‰Р°РµРј РґРµС„РѕР»С‚
+      // Таймаут - это нормально, просто возвращаем дефолт
       return defaultValue;
     } else if (errorMsg.includes('econnrefused') || errorMsg.includes('connect')) {
-      // РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ - РІРѕР·РІСЂР°С‰Р°РµРј РґРµС„РѕР»С‚ Р±С‹СЃС‚СЂРѕ
+      // Ошибка подключения - возвращаем дефолт быстро
       return defaultValue;
     }
-    
-    // Р’РѕР·РІСЂР°С‰Р°РµРј Р·РЅР°С‡РµРЅРёРµ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ (РїСѓСЃС‚РѕР№ РјР°СЃСЃРёРІ РґР»СЏ СЃРїРёСЃРєРѕРІ)
+
+    // Возвращаем значение по умолчанию (пустой массив для списков)
     return defaultValue;
   }
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Р—Р° РїСЂРѕРєСЃРё (nginx, cloud) вЂ” РґРѕРІРµСЂСЏРµРј X-Forwarded-Proto РґР»СЏ РѕРїСЂРµРґРµР»РµРЅРёСЏ HTTPS
+  // За прокси (nginx, cloud) — доверяем X-Forwarded-Proto для определения HTTPS
   app.set("trust proxy", 1);
 
-  // Р—Р°РіРѕР»РѕРІРєРё Р±РµР·РѕРїР°СЃРЅРѕСЃС‚Рё (XSS, clickjacking, MIME sniffing Рё С‚.Рґ.)
-  app.use(helmet({ contentSecurityPolicy: false })); // CSP РјРѕР¶РЅРѕ РІРєР»СЋС‡РёС‚СЊ РїРѕСЃР»Рµ РЅР°СЃС‚СЂРѕР№РєРё РїРѕРґ С„СЂРѕРЅС‚
+  // Заголовки безопасности (XSS, clickjacking, MIME sniffing и т.д.)
+  app.use(helmet({ contentSecurityPolicy: false })); // CSP можно включить после настройки под фронт
 
-  // HSTS: РІ production РїСЂРё HTTPS Р±СЂР°СѓР·РµСЂ РІСЃРµРіРґР° С…РѕРґРёС‚ РїРѕ HTTPS (Р·Р°С‰РёС‚Р° РѕС‚ РїРµСЂРµС…РІР°С‚Р° Р»РѕРіРёРЅР°/РїР°СЂРѕР»СЏ)
+  // HSTS: в production при HTTPS браузер всегда ходит по HTTPS (защита от перехвата логина/пароля)
   app.use((req, res, next) => {
     const isSecure = isHttpsRequest(req);
     if (isSecure && process.env.NODE_ENV === "production") {
@@ -316,31 +316,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   });
 
-  // Р’ production Р»РѕРіРёРЅ/РїР°СЂРѕР»СЊ РїСЂРёРЅРёРјР°РµРј С‚РѕР»СЊРєРѕ РїРѕ HTTPS (РёРЅР°С‡Рµ РёС… РІРёРґРЅРѕ РІ Wireshark Рё С‚.Рї.)
+  // В production логин/пароль принимаем только по HTTPS (иначе их видно в Wireshark и т.п.)
   app.use("/api/auth/login", (req, res, next) => {
     if (process.env.NODE_ENV !== "production") return next();
     const isSecure = isHttpsRequest(req);
     if (!isSecure) {
       return res.status(403).json({
-        message: "Р’С…РѕРґ РїРѕ РїР°СЂРѕР»СЋ СЂР°Р·СЂРµС€С‘РЅ С‚РѕР»СЊРєРѕ РїРѕ HTTPS. РСЃРїРѕР»СЊР·СѓР№С‚Рµ https:// РІ Р°РґСЂРµСЃРµ СЃР°Р№С‚Р°.",
+        message: "Вход по паролю разрешён только по HTTPS. Используйте https:// в адресе сайта.",
       });
     }
     next();
   });
 
-  // Р›РёРјРёС‚ РїРѕРїС‹С‚РѕРє РІС…РѕРґР° (Р·Р°С‰РёС‚Р° РѕС‚ РїРµСЂРµР±РѕСЂР° РїР°СЂРѕР»РµР№)
+  // Лимит попыток входа (защита от перебора паролей)
   const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 20,
-    message: { message: "РЎР»РёС€РєРѕРј РјРЅРѕРіРѕ РїРѕРїС‹С‚РѕРє РІС…РѕРґР°. РџРѕРїСЂРѕР±СѓР№С‚Рµ С‡РµСЂРµР· 15 РјРёРЅСѓС‚." },
+    message: { message: "Слишком много попыток входа. Попробуйте через 15 минут." },
     standardHeaders: true,
     legacyHeaders: false,
   });
 
-  // РЎРµСЃСЃРёРё: С‚РѕР»СЊРєРѕ СЃРµСЂРІРµСЂ Р·РЅР°РµС‚, РєС‚Рѕ РІРѕС€С‘Р»; РєР»РёРµРЅС‚ РЅРµ РјРѕР¶РµС‚ РїРѕРґРґРµР»Р°С‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+  // Сессии: только сервер знает, кто вошёл; клиент не может подделать пользователя
   const sessionSecret = process.env.SESSION_SECRET || (process.env.NODE_ENV === "production" ? "" : "dev-secret-change-me");
   if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
-    console.warn("[Security] Р’ production Р·Р°РґР°Р№С‚Рµ SESSION_SECRET РІ .env");
+    console.warn("[Security] В production задайте SESSION_SECRET в .env");
   }
   app.use(
     session({
@@ -357,14 +357,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     })
   );
 
-  // Р”Р»СЏ /api Р·Р°РїРѕР»РЅСЏРµРј req.user РёР· СЃРµСЃСЃРёРё (РЅРµ РґРѕРІРµСЂСЏРµРј Р·Р°РіРѕР»РѕРІРѕРє x-user РґР»СЏ Р°РІС‚РѕСЂРёР·Р°С†РёРё)
+  // Для /api заполняем req.user из сессии (не доверяем заголовок x-user для авторизации)
   app.use("/api", async (req, res, next) => {
     const sid = req.session?.userId;
     if (sid === "admin-fallback") {
       req.user = {
         id: "admin-fallback",
         username: process.env.ADMIN_USERNAME || "admin",
-        name: "РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ",
+        name: "Администратор",
         email: null,
         phone: null,
         position: null,
@@ -390,7 +390,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   });
 
-  // Р РµР¶РёРј Р·Р°РіР»СѓС€РєРё: С„СЂРѕРЅС‚ РјРѕР¶РµС‚ РїРѕРєР°Р·Р°С‚СЊ Р±Р°РЅРЅРµСЂ В«РґР°РЅРЅС‹Рµ РЅРµ СЃРѕС…СЂР°РЅСЏСЋС‚СЃСЏВ»
+  // Режим заглушки: фронт может показать баннер «данные не сохраняются»
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, stubMode: isStubStorage });
   });
@@ -452,15 +452,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const equipmentInventoryPrefix = (type: unknown) => {
     const normalized = String(type || "").trim().toLowerCase();
-    if (/camera|РєР°РјРµСЂР°/.test(normalized)) return "cam";
-    if (/microphone|mic|РјРёРєСЂРѕС„РѕРЅ/.test(normalized)) return "mic";
-    if (/lighting|light|СЃРІРµС‚/.test(normalized)) return "lgt";
-    if (/computer|РєРѕРјРї/.test(normalized)) return "pc";
-    if (/server|СЃРµСЂРІРµСЂ/.test(normalized)) return "srv";
-    if (/display|monitor|СЌРєСЂР°РЅ|РјРѕРЅРёС‚РѕСЂ/.test(normalized)) return "dsp";
-    if (/audio|Р·РІСѓРє/.test(normalized)) return "aud";
-    if (/video|РІРёРґРµРѕ/.test(normalized)) return "vid";
-    if (/network|lan|СЃРµС‚СЊ/.test(normalized)) return "net";
+    if (/camera|камера/.test(normalized)) return "cam";
+    if (/microphone|mic|микрофон/.test(normalized)) return "mic";
+    if (/lighting|light|свет/.test(normalized)) return "lgt";
+    if (/computer|комп/.test(normalized)) return "pc";
+    if (/server|сервер/.test(normalized)) return "srv";
+    if (/display|monitor|экран|монитор/.test(normalized)) return "dsp";
+    if (/audio|звук/.test(normalized)) return "aud";
+    if (/video|видео/.test(normalized)) return "vid";
+    if (/network|lan|сеть/.test(normalized)) return "net";
     return "eqp";
   };
 
@@ -479,7 +479,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const user = req.user as any;
     const permissions = Array.isArray(user?.permissions) ? user.permissions : [];
     if (!user?.id || (user.role !== "admin" && !permissions.includes("platform:admin"))) {
-      res.status(403).json({ message: "Р”РѕСЃС‚СѓРїРЅРѕ С‚РѕР»СЊРєРѕ РІР»Р°РґРµР»СЊС†Сѓ РїР»Р°С‚С„РѕСЂРјС‹" });
+      res.status(403).json({ message: "Доступно только владельцу платформы" });
       return null;
     }
     return user;
@@ -488,7 +488,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/companies/me", async (req, res) => {
     try {
       const currentUser = req.user as any;
-      if (!currentUser?.id) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
+      if (!currentUser?.id) return res.status(401).json({ message: "Требуется авторизация" });
       const origin = inviteOrigin(req);
       const memberships = await storage.getUserCompanyMemberships(currentUser.id).catch(() => []);
       const companies = await Promise.all((memberships as any[]).map(async (membership: any) => {
@@ -525,18 +525,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ companies: cleanCompanies, pendingApprovals });
     } catch (error) {
       console.error("[Companies] me error:", error);
-      res.status(500).json({ message: "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РєРѕРјРїР°РЅРёРё" });
+      res.status(500).json({ message: "Не удалось загрузить компании" });
     }
   });
 
   app.post("/api/company-invites", async (req, res) => {
     try {
       const currentUser = req.user as any;
-      if (!currentUser?.id) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
+      if (!currentUser?.id) return res.status(401).json({ message: "Требуется авторизация" });
       const companyId = String(req.body?.companyId || "").trim();
-      if (!companyId) return res.status(400).json({ message: "companyId РѕР±СЏР·Р°С‚РµР»РµРЅ" });
+      if (!companyId) return res.status(400).json({ message: "companyId обязателен" });
       if (!(await canManageCompany(currentUser, companyId))) {
-        return res.status(403).json({ message: "РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїСЂР°РІ РґР»СЏ РїСЂРёРіР»Р°С€РµРЅРёР№" });
+        return res.status(403).json({ message: "Недостаточно прав для приглашений" });
       }
 
       const oldInvites = await storage.getCompanyInvites(companyId).catch(() => []);
@@ -557,27 +557,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ invite, url: `${inviteOrigin(req)}/login?invite=${invite.token}` });
     } catch (error) {
       console.error("[Companies] invite error:", error);
-      res.status(500).json({ message: "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РїСЂРёРіР»Р°С€РµРЅРёРµ" });
+      res.status(500).json({ message: "Не удалось создать приглашение" });
     }
   });
 
   app.get("/api/company-invites/resolve/:token", async (req, res) => {
     try {
       const invite = await storage.getCompanyInviteByToken(String(req.params.token || ""));
-      if (!invite) return res.status(404).json({ message: "РџСЂРёРіР»Р°С€РµРЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ" });
+      if (!invite) return res.status(404).json({ message: "Приглашение не найдено" });
       const company = await storage.getCompanyById(invite.companyId).catch(() => undefined);
       const expired = Boolean(invite.expiresAt && new Date(invite.expiresAt).getTime() <= Date.now());
       const valid = invite.status === "active" && !expired && Boolean(company);
       res.json({ invite, company, valid, expired });
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕРІРµСЂРёС‚СЊ РїСЂРёРіР»Р°С€РµРЅРёРµ" });
+      res.status(500).json({ message: error?.message || "Не удалось проверить приглашение" });
     }
   });
 
   app.get("/api/auth/onboarding-state", async (req, res) => {
     try {
       const user = req.user as any;
-      if (!user?.id) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
+      if (!user?.id) return res.status(401).json({ message: "Требуется авторизация" });
       const memberships = await storage.getUserCompanyMemberships(user.id).catch(() => []);
       const rows = await Promise.all((memberships as any[]).map(async (membership) => ({
         membership,
@@ -599,13 +599,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pendingCompanies,
       });
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃС‚Р°СЂС‚РѕРІРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ" });
+      res.status(500).json({ message: error?.message || "Не удалось загрузить стартовое состояние" });
     }
   });
 
   app.post("/api/onboarding/personal", async (req, res) => {
     const user = req.user as any;
-    if (!user?.id) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
+    if (!user?.id) return res.status(401).json({ message: "Требуется авторизация" });
     const updated = await storage.updateUser(user.id, { active: true, onboardingCompleted: true, workspaceMode: "personal" } as any);
     res.json({ user: { ...updated, password: undefined } });
   });
@@ -613,9 +613,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/onboarding/company", async (req, res) => {
     try {
       const user = req.user as any;
-      if (!user?.id) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
+      if (!user?.id) return res.status(401).json({ message: "Требуется авторизация" });
       const name = String(req.body?.name || "").trim();
-      if (!name) return res.status(400).json({ message: "РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ РєРѕРјРїР°РЅРёРё" });
+      if (!name) return res.status(400).json({ message: "Укажите название компании" });
       const company = await storage.createCompany({
         name,
         description: req.body?.description ? String(req.body.description).trim() : null,
@@ -633,19 +633,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updated = await storage.updateUser(user.id, { active: true, onboardingCompleted: true, workspaceMode: "company_owner" } as any);
       res.json({ company, user: { ...updated, password: undefined } });
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РєРѕРјРїР°РЅРёСЋ" });
+      res.status(500).json({ message: error?.message || "Не удалось создать компанию" });
     }
   });
 
   app.post("/api/onboarding/join", async (req, res) => {
     try {
       const user = req.user as any;
-      if (!user?.id) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
+      if (!user?.id) return res.status(401).json({ message: "Требуется авторизация" });
       const token = String(req.body?.token || "").trim();
       const invite = await storage.getCompanyInviteByToken(token);
-      if (!invite) return res.status(404).json({ message: "РџСЂРёРіР»Р°С€РµРЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ" });
+      if (!invite) return res.status(404).json({ message: "Приглашение не найдено" });
       if (invite.status !== "active" || (invite.expiresAt && new Date(invite.expiresAt).getTime() <= Date.now())) {
-        return res.status(400).json({ message: "РџСЂРёРіР»Р°С€РµРЅРёРµ РЅРµ Р°РєС‚РёРІРЅРѕ РёР»Рё СЃСЂРѕРє РёСЃС‚С‘Рє" });
+        return res.status(400).json({ message: "Приглашение не активно или срок истёк" });
       }
       const existing = await storage.getCompanyMembershipByUser(invite.companyId, user.id).catch(() => undefined);
       if (existing) {
@@ -653,7 +653,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? existing
           : await storage.updateCompanyMember(existing.id, { status: "active", approvedBy: invite.createdBy, joinedAt: new Date() } as any);
         const updatedUser = await storage.updateUser(user.id, { active: true, onboardingCompleted: true, workspaceMode: "company_member" } as any);
-        return res.json({ membership: activeMember || existing, user: { ...updatedUser, password: undefined }, message: "Р’С‹ РІ РєРѕРјРїР°РЅРёРё" });
+        return res.json({ membership: activeMember || existing, user: { ...updatedUser, password: undefined }, message: "Вы в компании" });
       }
       const membership = await storage.createCompanyMember({
         companyId: invite.companyId,
@@ -666,9 +666,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } as any);
       await storage.updateCompanyInvite(invite.id, { usedBy: user.id, usedAt: new Date() } as any).catch(() => undefined);
       const updatedUser = await storage.updateUser(user.id, { active: true, onboardingCompleted: true, workspaceMode: "company_member" } as any);
-      res.json({ membership, user: { ...updatedUser, password: undefined }, message: "Р’С‹ РґРѕР±Р°РІР»РµРЅС‹ РІ РєРѕРјРїР°РЅРёСЋ" });
+      res.json({ membership, user: { ...updatedUser, password: undefined }, message: "Вы добавлены в компанию" });
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ Р·Р°СЏРІРєСѓ" });
+      res.status(500).json({ message: error?.message || "Не удалось отправить заявку" });
     }
   });
 
@@ -676,17 +676,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as any;
       const companyId = String(req.body?.companyId || "").trim();
-      if (!(await canManageCompany(user, companyId))) return res.status(403).json({ message: "РќРµС‚ РїСЂР°РІ РЅР° РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ" });
+      if (!(await canManageCompany(user, companyId))) return res.status(403).json({ message: "Нет прав на подтверждение" });
       const member = await storage.updateCompanyMember(req.params.memberId, {
         status: "active",
         approvedBy: user.id,
         joinedAt: new Date(),
       } as any);
-      if (!member) return res.status(404).json({ message: "Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°" });
+      if (!member) return res.status(404).json({ message: "Заявка не найдена" });
       await storage.updateUser(member.userId, { active: true, onboardingCompleted: true, workspaceMode: "company_member" } as any).catch(() => undefined);
       res.json(member);
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґС‚РІРµСЂРґРёС‚СЊ СЃРѕС‚СЂСѓРґРЅРёРєР°" });
+      res.status(500).json({ message: error?.message || "Не удалось подтвердить сотрудника" });
     }
   });
 
@@ -696,10 +696,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const companyId = String(req.params.companyId || "").trim();
       const userId = String(req.body?.userId || "").trim();
       const role = String(req.body?.role || "member").trim() || "member";
-      if (!userId) return res.status(400).json({ message: "РЈРєР°Р¶РёС‚Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ" });
-      if (!(await canManageCompany(user, companyId))) return res.status(403).json({ message: "РќРµС‚ РїСЂР°РІ РЅР° СѓРїСЂР°РІР»РµРЅРёРµ РєРѕРјРїР°РЅРёРµР№" });
+      if (!userId) return res.status(400).json({ message: "Укажите пользователя" });
+      if (!(await canManageCompany(user, companyId))) return res.status(403).json({ message: "Нет прав на управление компанией" });
       const targetUser = await storage.getUser(userId);
-      if (!targetUser) return res.status(404).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ" });
+      if (!targetUser) return res.status(404).json({ message: "Пользователь не найден" });
       const existing = await storage.getCompanyMembershipByUser(companyId, userId).catch(() => undefined);
       const member = existing
         ? await storage.updateCompanyMember(existing.id, { role, status: "active", approvedBy: user.id, joinedAt: new Date() } as any)
@@ -707,7 +707,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateUser(userId, { active: true, onboardingCompleted: true, workspaceMode: "company_member" } as any).catch(() => undefined);
       res.json(member);
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РІ РєРѕРјРїР°РЅРёСЋ" });
+      res.status(500).json({ message: error?.message || "Не удалось добавить пользователя в компанию" });
     }
   });
 
@@ -716,16 +716,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { username, password } = req.body;
       const inviteToken = String(req.body?.invite || req.query?.invite || "").trim();
-      
+
       if (!username || !password) {
-        return res.status(400).json({ message: "РЈРєР°Р¶РёС‚Рµ Р»РѕРіРёРЅ Рё РїР°СЂРѕР»СЊ" });
+        return res.status(400).json({ message: "Укажите логин и пароль" });
       }
-      
+
       if (process.env.NODE_ENV !== "production") {
         console.log(`[Auth] Login attempt for user: ${username}`);
       }
 
-      // Fallback Р°РґРјРёРЅ РґР»СЏ С‚РµСЃС‚Р° (РјРѕР¶РЅРѕ РѕС‚РєР»СЋС‡РёС‚СЊ ALLOW_FALLBACK_ADMIN=false)
+      // Fallback админ для теста (можно отключить ALLOW_FALLBACK_ADMIN=false)
       const allowFallbackAdmin = process.env.ALLOW_FALLBACK_ADMIN !== "false";
       const fallbackUsername = process.env.ADMIN_USERNAME || "admin";
       const fallbackPassword = process.env.ADMIN_PASSWORD || "admin123";
@@ -740,7 +740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           user: {
             id: "admin-fallback",
             username: fallbackUsername,
-            name: "РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ",
+            name: "Администратор",
             role: "admin",
             permissions: [
               "admin:panel",
@@ -771,47 +771,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         });
       }
-      
-      // Р’СЃРµ РїРѕР»СЊР·РѕРІР°С‚РµР»Рё РґРѕР»Р¶РЅС‹ СЃСѓС‰РµСЃС‚РІРѕРІР°С‚СЊ РІ Р‘Р” - РЅРёРєР°РєРёС… fallback Р°РєРєР°СѓРЅС‚РѕРІ
+
+      // Все пользователи должны существовать в БД - никаких fallback аккаунтов
       let user: any;
       try {
         user = await withDbTimeout(
           () => storage.getUserByUsername(username),
-          10000, // 10 СЃРµРєСѓРЅРґ РґР»СЏ РїРѕРёСЃРєР° РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+          10000, // 10 секунд для поиска пользователя
           null
         );
       } catch (dbError: any) {
         console.error("[Auth] Database error during login:", dbError);
-        return res.status(500).json({ 
-          message: "РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Р±Р°Р·Рµ РґР°РЅРЅС‹С…. РџСЂРѕРІРµСЂСЊС‚Рµ РЅР°СЃС‚СЂРѕР№РєРё DATABASE_URL РІ .env С„Р°Р№Р»Рµ." 
+        return res.status(500).json({
+          message: "Ошибка подключения к базе данных. Проверьте настройки DATABASE_URL в .env файле."
         });
       }
 
-      // Р¤Р»Р°Рі РґР»СЏ РѕС‚СЃР»РµР¶РёРІР°РЅРёСЏ, Р±С‹Р» Р»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ С‚РѕР»СЊРєРѕ С‡С‚Рѕ СЃРѕР·РґР°РЅ
+      // Флаг для отслеживания, был ли пользователь только что создан
       let adminJustCreated = false;
-      
-      // Р•СЃР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ
+
+      // Если пользователь не найден
       if (!user) {
-        // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ admin РІ Р‘Р”
-        // Р•СЃР»Рё РµРіРѕ РЅРµС‚ Рё СЌС‚Рѕ РїРѕРїС‹С‚РєР° РІС…РѕРґР° admin/admin123 - СЃРѕР·РґР°РµРј Р°РґРјРёРЅР°
+        // Проверяем, есть ли пользователь admin в БД
+        // Если его нет и это попытка входа admin/admin123 - создаем админа
         if (username === "admin" && password === "admin123") {
           try {
-            // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё РІРѕРѕР±С‰Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»Рё РІ Р‘Р”
+            // Проверяем, есть ли вообще пользователи в БД
             const allUsers = await withDbTimeout(
               () => storage.getUsers(),
               10000,
               []
             );
-            
-            // Р•СЃР»Рё Р‘Р” РїСѓСЃС‚Р°СЏ РёР»Рё Р°РґРјРёРЅР° РЅРµС‚ - СЃРѕР·РґР°РµРј Р°РґРјРёРЅР°
+
+            // Если БД пустая или админа нет - создаем админа
             const adminExists = allUsers.some((u: any) => u.username === "admin");
-            
+
             if (!adminExists) {
               console.log("[Auth] Admin user not found, creating admin user");
               const newAdmin = await storage.createUser({
                 username: "admin",
                 password: hashPassword("admin123"),
-                name: "РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ",
+                name: "Администратор",
                 email: "admin@streamstudio.local",
                 role: "admin",
                 permissions: [
@@ -840,44 +840,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ],
                 active: true,
               } as any);
-              
+
               console.log("[Auth] Admin user created successfully, ID:", newAdmin.id);
-              
-              // РСЃРїРѕР»СЊР·СѓРµРј С‚РѕР»СЊРєРѕ С‡С‚Рѕ СЃРѕР·РґР°РЅРЅРѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ - РїР°СЂРѕР»СЊ СѓР¶Рµ РїСЂР°РІРёР»СЊРЅС‹Р№
+
+              // Используем только что созданного пользователя - пароль уже правильный
               user = newAdmin;
-              adminJustCreated = true; // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј С„Р»Р°Рі
+              adminJustCreated = true; // Устанавливаем флаг
             } else {
-              // РђРґРјРёРЅ РґРѕР»Р¶РµРЅ Р±С‹Р» Р±С‹С‚СЊ РЅР°Р№РґРµРЅ, РЅРѕ РЅРµ РЅР°Р№РґРµРЅ - РІРѕР·РјРѕР¶РЅРѕ РїСЂРѕР±Р»РµРјР° СЃ Р‘Р”
-              // РџРѕРїСЂРѕР±СѓРµРј РїРµСЂРµР·Р°РіСЂСѓР·РёС‚СЊ РёР· Р‘Р”
+              // Админ должен был быть найден, но не найден - возможно проблема с БД
+              // Попробуем перезагрузить из БД
               console.log(`[Auth] Admin should exist, retrying fetch...`);
               user = await withDbTimeout(
                 () => storage.getUserByUsername("admin"),
                 10000,
                 null
               );
-              
+
               if (!user) {
                 console.log(`[Auth] Admin user should exist but not found: ${username}`);
-                return res.status(401).json({ message: "РќРµРІРµСЂРЅС‹Р№ Р»РѕРіРёРЅ РёР»Рё РїР°СЂРѕР»СЊ" });
+                return res.status(401).json({ message: "Неверный логин или пароль" });
               }
             }
           } catch (createError: any) {
             console.error("[Auth] Error checking/creating admin:", createError);
-            return res.status(401).json({ message: "РќРµРІРµСЂРЅС‹Р№ Р»РѕРіРёРЅ РёР»Рё РїР°СЂРѕР»СЊ" });
+            return res.status(401).json({ message: "Неверный логин или пароль" });
           }
         } else {
-          // РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ Рё СЌС‚Рѕ РЅРµ admin/admin123
+          // Пользователь не найден и это не admin/admin123
           console.log(`[Auth] User not found: ${username}`);
-          return res.status(401).json({ message: "РќРµРІРµСЂРЅС‹Р№ Р»РѕРіРёРЅ РёР»Рё РїР°СЂРѕР»СЊ" });
+          return res.status(401).json({ message: "Неверный логин или пароль" });
         }
       }
-      
-      // РџСЂРѕРІРµСЂСЏРµРј РїР°СЂРѕР»СЊ (С…РµС€ РёР»Рё legacy plain)
+
+      // Проверяем пароль (хеш или legacy plain)
       if (!adminJustCreated && user) {
         const check = verifyPassword(password, user.password);
         if (!check.ok) {
           console.log(`[Auth] Invalid password for user: ${username}`);
-          return res.status(401).json({ message: "РќРµРІРµСЂРЅС‹Р№ Р»РѕРіРёРЅ РёР»Рё РїР°СЂРѕР»СЊ" });
+          return res.status(401).json({ message: "Неверный логин или пароль" });
         }
         if (check.updateHash) {
           try {
@@ -888,7 +888,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (!user) {
         console.log(`[Auth] User is null after all checks: ${username}`);
-        return res.status(401).json({ message: "РќРµРІРµСЂРЅС‹Р№ Р»РѕРіРёРЅ РёР»Рё РїР°СЂРѕР»СЊ" });
+        return res.status(401).json({ message: "Неверный логин или пароль" });
       }
 
       if (user.active === false) {
@@ -965,7 +965,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("[Auth] Login error:", error);
       res.status(500).json({
-        message: error.message || "Р’РЅСѓС‚СЂРµРЅРЅСЏСЏ РѕС€РёР±РєР° СЃРµСЂРІРµСЂР°",
+        message: error.message || "Внутренняя ошибка сервера",
       });
     }
   });
@@ -985,7 +985,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const inviteToken = String(req.body?.invite || req.query?.invite || "").trim();
 
       if (!username || !password || !name) {
-        return res.status(400).json({ message: "Р—Р°РїРѕР»РЅРёС‚Рµ Р»РѕРіРёРЅ, РёРјСЏ Рё РїР°СЂРѕР»СЊ" });
+        return res.status(400).json({ message: "Заполните логин, имя и пароль" });
       }
 
       let existing: any;
@@ -997,13 +997,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const isConn = /timeout|econnrefused|connection|password|auth/i.test(msg);
         return res.status(500).json({
           message: isConn
-            ? "РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Р±Р°Р·Рµ РґР°РЅРЅС‹С…. РџСЂРѕРІРµСЂСЊС‚Рµ, С‡С‚Рѕ PostgreSQL Р·Р°РїСѓС‰РµРЅ Рё РІ .env СѓРєР°Р·Р°РЅ РІРµСЂРЅС‹Р№ DATABASE_URL (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
-            : (dbError.message || "РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Р±Р°Р·Рµ РґР°РЅРЅС‹С…."),
+            ? "Ошибка подключения к базе данных. Проверьте, что PostgreSQL запущен и в .env указан верный DATABASE_URL (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
+            : (dbError.message || "Ошибка подключения к базе данных."),
         });
       }
 
       if (existing) {
-        return res.status(400).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЃ С‚Р°РєРёРј Р»РѕРіРёРЅРѕРј СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚" });
+        return res.status(400).json({ message: "Пользователь с таким логином уже существует" });
       }
 
       if (email && String(email).trim()) {
@@ -1011,7 +1011,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const allUsers = await storage.getAllUsers().catch(() => []);
         const emailOwner = (allUsers as any[]).find((user) => String(user.email || "").trim().toLowerCase() === normalizedEmail);
         if (emailOwner) {
-          return res.status(400).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЃ С‚Р°РєРѕР№ РїРѕС‡С‚РѕР№ СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚. РћРґРЅРѕС„Р°РјРёР»СЊС†С‹ РґРѕРїСѓСЃС‚РёРјС‹, РЅРѕ Р»РѕРіРёРЅ Рё РїРѕС‡С‚Р° РґРѕР»Р¶РЅС‹ Р±С‹С‚СЊ СѓРЅРёРєР°Р»СЊРЅС‹РјРё." });
+          return res.status(400).json({ message: "Пользователь с такой почтой уже существует. Однофамильцы допустимы, но логин и почта должны быть уникальными." });
         }
       }
 
@@ -1020,7 +1020,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         invite = await storage.getCompanyInviteByToken(inviteToken).catch(() => null);
         const inviteExpired = Boolean(invite?.expiresAt && new Date(invite.expiresAt).getTime() <= Date.now());
         if (!invite || invite.status !== "active" || inviteExpired) {
-          return res.status(400).json({ message: "РџСЂРёРіР»Р°С€РµРЅРёРµ РЅРµ Р°РєС‚РёРІРЅРѕ РёР»Рё СЃСЂРѕРє РёСЃС‚С‘Рє" });
+          return res.status(400).json({ message: "Приглашение не активно или срок истёк" });
         }
       }
 
@@ -1051,17 +1051,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       req.session.userId = newUser.id;
 
-      // РЈРІРµРґРѕРјР»РµРЅРёРµ РІСЃРµРј Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°Рј Рѕ РЅРѕРІРѕР№ Р·Р°СЏРІРєРµ
+      // Уведомление всем администраторам о новой заявке
       try {
         const users = await storage.getUsers();
         const admins = users.filter((u: any) => u.role === "admin");
         const message = invite
-          ? `${newUser.name} (${newUser.username}) Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°Р»СЃСЏ РїРѕ РїСЂРёРіР»Р°С€РµРЅРёСЋ Рё РґРѕР±Р°РІР»РµРЅ РІ РєРѕРјРїР°РЅРёСЋ.`
-          : `${newUser.name} (${newUser.username}) С…РѕС‡РµС‚ РїСЂРёСЃРѕРµРґРёРЅРёС‚СЊСЃСЏ. РџРѕРґС‚РІРµСЂРґРёС‚Рµ РІ Р°РґРјРёРЅ-РїР°РЅРµР»Рё.`;
+          ? `${newUser.name} (${newUser.username}) зарегистрировался по приглашению и добавлен в компанию.`
+          : `${newUser.name} (${newUser.username}) хочет присоединиться. Подтвердите в админ-панели.`;
         for (const admin of admins) {
           await storage.createNotification({
             userId: admin.id,
-            title: "РќРѕРІР°СЏ Р·Р°СЏРІРєР° РЅР° СЂРµРіРёСЃС‚СЂР°С†РёСЋ",
+            title: "Новая заявка на регистрацию",
             message,
             type: "info",
           });
@@ -1072,8 +1072,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({
         message: invite
-          ? "РђРєРєР°СѓРЅС‚ СЃРѕР·РґР°РЅ, РІС‹ РґРѕР±Р°РІР»РµРЅС‹ РІ РєРѕРјРїР°РЅРёСЋ."
-          : "РђРєРєР°СѓРЅС‚ СЃРѕР·РґР°РЅ. Р’С‹Р±РµСЂРёС‚Рµ Р»РёС‡РЅС‹Р№ СЂРµР¶РёРј, СЃРѕР·РґР°Р№С‚Рµ РєРѕРјРїР°РЅРёСЋ РёР»Рё РІСЃС‚СѓРїРёС‚Рµ РїРѕ РїСЂРёРіР»Р°С€РµРЅРёСЋ.",
+          ? "Аккаунт создан, вы добавлены в компанию."
+          : "Аккаунт создан. Выберите личный режим, создайте компанию или вступите по приглашению.",
         user: { id: newUser.id, username: newUser.username, name: newUser.name, role: newUser.role, permissions: newUser.permissions, active: newUser.active, onboardingCompleted: newUser.onboardingCompleted, workspaceMode: newUser.workspaceMode },
       });
     } catch (error: any) {
@@ -1081,18 +1081,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const msg = (error.message || "").toLowerCase();
       const code = error?.code;
       if (code === "23505" || /unique|duplicate key|already exists/i.test(msg)) {
-        return res.status(400).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЃ С‚Р°РєРёРј Р»РѕРіРёРЅРѕРј СѓР¶Рµ СЃСѓС‰РµСЃС‚РІСѓРµС‚" });
+        return res.status(400).json({ message: "Пользователь с таким логином уже существует" });
       }
       if (/relation.*does not exist|table.*does not exist|column.*does not exist/i.test(msg)) {
         return res.status(500).json({
-          message: "РЎС…РµРјР° Р±Р°Р·С‹ РґР°РЅРЅС‹С… СѓСЃС‚Р°СЂРµР»Р°. РќР° СЃРµСЂРІРµСЂРµ РІС‹РїРѕР»РЅРёС‚Рµ: npm run db:push (РёР»Рё npx drizzle-kit push), Р·Р°С‚РµРј РїРµСЂРµР·Р°РїСѓСЃС‚РёС‚Рµ РїСЂРёР»РѕР¶РµРЅРёРµ.",
+          message: "Схема базы данных устарела. На сервере выполните: npm run db:push (или npx drizzle-kit push), затем перезапустите приложение.",
         });
       }
       const isConn = /timeout|econnrefused|connection|password|auth|database/i.test(msg);
       res.status(500).json({
         message: isConn
-          ? "РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Р±Р°Р·Рµ РґР°РЅРЅС‹С…. РџСЂРѕРІРµСЂСЊС‚Рµ PostgreSQL Рё DATABASE_URL РІ .env (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
-          : (error.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ"),
+          ? "Ошибка подключения к базе данных. Проверьте PostgreSQL и DATABASE_URL в .env (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
+          : (error.message || "Не удалось создать пользователя"),
       });
     }
   });
@@ -1132,7 +1132,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         tasks.map(task => storage.getTaskHistory(task.id).catch(() => []))
       ).then(results => results.flat());
 
-      // РћСЃРЅРѕРІРЅС‹Рµ РјРµС‚СЂРёРєРё
+      // Основные метрики
       const totalTasks = tasks.length;
       const completedTasks = tasks.filter(t => t.status === 'done').length;
       const inProgressTasks = tasks.filter(t => t.status === 'in_progress').length;
@@ -1141,7 +1141,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return new Date(t.dueDate) < new Date() && t.status !== 'done';
       }).length;
 
-      // РЎСЂРµРґРЅРµРµ РІСЂРµРјСЏ РІС‹РїРѕР»РЅРµРЅРёСЏ (РІ С‡Р°СЃР°С…)
+      // Среднее время выполнения (в часах)
       const completedTasksWithHistory = tasks.filter(t => t.status === 'done');
       let totalHours = 0;
       let count = 0;
@@ -1156,11 +1156,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const averageCompletionTime = count > 0 ? totalHours / count : 0;
 
       const statusLabels: Record<string, string> = {
-        todo: "Рљ РІС‹РїРѕР»РЅРµРЅРёСЋ",
-        in_progress: "Р’ СЂР°Р±РѕС‚Рµ",
-        done: "Р“РѕС‚РѕРІРѕ",
-        not_ready: "Р‘СЌРєР»РѕРі",
-        review: "РќР° РїСЂРѕРІРµСЂРєРµ",
+        todo: "К выполнению",
+        in_progress: "В работе",
+        done: "Готово",
+        not_ready: "Бэклог",
+        review: "На проверке",
       };
       const statusCounts: Record<string, number> = {};
       tasks.forEach(task => {
@@ -1169,11 +1169,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       const tasksByStatus = Object.entries(statusCounts).map(([status, count]) => ({
         status,
-        label: statusLabels[status] || (status.length > 12 ? "РљРѕР»РѕРЅРєР°" : status),
+        label: statusLabels[status] || (status.length > 12 ? "Колонка" : status),
         count,
       }));
 
-      // Р—Р°РґР°С‡Рё РїРѕ РїСЂРёРѕСЂРёС‚РµС‚Р°Рј
+      // Задачи по приоритетам
       const priorityCounts: Record<string, number> = {};
       tasks.forEach(task => {
         const priority = task.priority || 'none';
@@ -1184,7 +1184,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count,
       }));
 
-      // Р—Р°РґР°С‡Рё РїРѕ РёСЃРїРѕР»РЅРёС‚РµР»СЏРј
+      // Задачи по исполнителям
       const assigneeCounts: Record<string, { count: number; name: string }> = {};
       tasks.forEach(task => {
         if (task.assigneeId) {
@@ -1192,7 +1192,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!assigneeCounts[task.assigneeId]) {
             assigneeCounts[task.assigneeId] = {
               count: 0,
-              name: user?.name || 'РќРµРёР·РІРµСЃС‚РЅРѕ',
+              name: user?.name || 'Неизвестно',
             };
           }
           assigneeCounts[task.assigneeId].count++;
@@ -1204,7 +1204,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         count: data.count,
       })).sort((a, b) => b.count - a.count);
 
-      // РќРµРґР°РІРЅСЏСЏ Р°РєС‚РёРІРЅРѕСЃС‚СЊ
+      // Недавняя активность
       const recentActivity = taskHistory
         .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
         .slice(0, 10)
@@ -1214,13 +1214,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return {
             id: history.id,
             action: history.action || 'updated',
-            userName: user?.name || 'РќРµРёР·РІРµСЃС‚РЅРѕ',
-            taskTitle: task?.title || 'Р—Р°РґР°С‡Р° СѓРґР°Р»РµРЅР°',
+            userName: user?.name || 'Неизвестно',
+            taskTitle: task?.title || 'Задача удалена',
             timestamp: history.createdAt || new Date().toISOString(),
           };
         });
 
-      // Р›СѓС‡С€РёРµ РёСЃРїРѕР»РЅРёС‚РµР»Рё (РїРѕ РІС‹РїРѕР»РЅРµРЅРЅС‹Рј Р·Р°РґР°С‡Р°Рј: status === 'done' РёР»Рё РїРѕСЃР»РµРґРЅСЏСЏ РєРѕР»РѕРЅРєР° YouGile)
+      // Лучшие исполнители (по выполненным задачам: status === 'done' или последняя колонка YouGile)
       const performerCounts: Record<string, { count: number; name: string; avatar?: string }> = {};
       completedTasksWithHistory.forEach(task => {
         if (task.assigneeId) {
@@ -1228,7 +1228,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!performerCounts[task.assigneeId]) {
             performerCounts[task.assigneeId] = {
               count: 0,
-              name: user?.name || "РќРµРёР·РІРµСЃС‚РЅРѕ",
+              name: user?.name || "Неизвестно",
               avatar: user?.avatar,
             };
           }
@@ -1245,7 +1245,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .sort((a, b) => b.completedTasks - a.completedTasks)
         .slice(0, 5);
 
-      // Р—Р°РґР°С‡Рё С‚СЂРµР±СѓСЋС‰РёРµ РІРЅРёРјР°РЅРёСЏ
+      // Задачи требующие внимания
       const needsAttention = tasks
         .filter(t => {
           if (t.status === 'done') return false;
@@ -1266,7 +1266,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return {
             id: task.id,
             title: task.title,
-            assigneeName: user?.name || 'РќРµ РЅР°Р·РЅР°С‡РµРЅРѕ',
+            assigneeName: user?.name || 'Не назначено',
             dueDate: task.dueDate || new Date().toISOString(),
             priority: task.priority || 'medium',
           };
@@ -1291,16 +1291,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  /** РљС‚Рѕ РјРѕР¶РµС‚ СЃРјРѕС‚СЂРµС‚СЊ РўРµСЂРјРёРЅР°Р» (СЂРѕР»Рё). Р”Р»СЏ СЃР°Р№РґР±Р°СЂР° Рё РїСЂРѕРІРµСЂРєРё РґРѕСЃС‚СѓРїР°. */
+  /** Кто может смотреть Терминал (роли). Для сайдбара и проверки доступа. */
   app.get("/api/terminal/access", (_req, res) => {
     res.json({ allowedRoles: getTerminalAllowedRoles() });
   });
 
-  /** РќР°СЃС‚СЂРѕР№РєР° РґРѕСЃС‚СѓРїР° Рє РўРµСЂРјРёРЅР°Р»Сѓ (С‚РѕР»СЊРєРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ). */
+  /** Настройка доступа к Терминалу (только администратор). */
   app.post("/api/terminal/access", async (req, res) => {
     const user = req.user as { role?: string } | undefined;
     if (user?.role !== "admin") {
-      return res.status(403).json({ message: "РўРѕР»СЊРєРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ РјРѕР¶РµС‚ РјРµРЅСЏС‚СЊ РґРѕСЃС‚СѓРї Рє РўРµСЂРјРёРЅР°Р»Сѓ" });
+      return res.status(403).json({ message: "Только администратор может менять доступ к Терминалу" });
     }
     const roles = Array.isArray(req.body?.allowedRoles) ? req.body.allowedRoles : [];
     const normalized = roles.filter((r: unknown) => typeof r === "string" && (r as string).trim());
@@ -1308,15 +1308,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ allowedRoles: getTerminalAllowedRoles() });
   });
 
-  /** Р›РѕРіРё СЃРµСЂРІРµСЂР° вЂ” РґР»СЏ СЂРѕР»РµР№ РёР· В«Р”РѕСЃС‚СѓРї Рє РўРµСЂРјРёРЅР°Р»СѓВ» (РќР°СЃС‚СЂРѕР№РєРё). */
+  /** Логи сервера — для ролей из «Доступ к Терминалу» (Настройки). */
   app.get("/api/terminal/logs", async (req, res) => {
     const user = req.user as { id?: string; role?: string } | undefined;
     if (!user?.id) {
-      return res.status(403).json({ message: "Р’РѕР№РґРёС‚Рµ РІ СЃРёСЃС‚РµРјСѓ РґР»СЏ РїСЂРѕСЃРјРѕС‚СЂР° Р»РѕРіРѕРІ" });
+      return res.status(403).json({ message: "Войдите в систему для просмотра логов" });
     }
     if (!canViewTerminal(user.role)) {
       return res.status(403).json({
-        message: "Р”РѕСЃС‚СѓРї Рє РўРµСЂРјРёРЅР°Р»Сѓ РґР»СЏ РІР°С€РµР№ СЂРѕР»Рё РѕС‚РєР»СЋС‡С‘РЅ. РћР±СЂР°С‚РёС‚РµСЃСЊ Рє Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂСѓ РёР»Рё РёР·РјРµРЅРёС‚Рµ РЅР°СЃС‚СЂРѕР№РєСѓ РІ РќР°СЃС‚СЂРѕР№РєР°С… в†’ Р”РѕСЃС‚СѓРї Рє РўРµСЂРјРёРЅР°Р»Сѓ.",
+        message: "Доступ к Терминалу для вашей роли отключён. Обратитесь к администратору или измените настройку в Настройках → Доступ к Терминалу.",
       });
     }
     const limit = req.query.limit != null ? Math.min(100, Math.max(1, Number(req.query.limit))) : 15;
@@ -1328,7 +1328,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/events", async (req, res) => {
     if (!(await hasWorkspaceAccess(req.user))) return res.json([]);
     const { userId, start, end } = req.query;
-    
+
     const events = await withDbTimeout(async () => {
       if (userId) {
         return await storage.getEventsByUser(userId as string);
@@ -1337,9 +1337,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         return await storage.getEvents();
       }
-    }, 3000, []); // 3 СЃРµРєСѓРЅРґС‹ РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ РѕС‚РІРµС‚Р°
-    
-    // РћР±РѕРіР°С‰Р°РµРј СЃРѕР±С‹С‚РёСЏ СѓС‡Р°СЃС‚РЅРёРєР°РјРё СЃ РёРјРµРЅР°РјРё
+    }, 3000, []); // 3 секунды для быстрого ответа
+
+    // Обогащаем события участниками с именами
     try {
       const users = await storage.getUsers();
       const eventsWithParticipants = await Promise.all(events.map(async (event: any) => {
@@ -1366,23 +1366,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         endTime: body.endTime instanceof Date ? body.endTime : new Date(body.endTime),
       };
       const eventData = insertEventSchema.parse(normalized);
-      
+
       console.log("[Events] Saving to database...");
-      // Р‘РµР· withDbTimeout: С‡С‚РѕР±С‹ РІРёРґРµС‚СЊ СЂРµР°Р»СЊРЅСѓСЋ РѕС€РёР±РєСѓ Р‘Р” (С‚Р°Р№РјР°СѓС‚, РїРѕРґРєР»СЋС‡РµРЅРёРµ, РѕРіСЂР°РЅРёС‡РµРЅРёСЏ)
+      // Без withDbTimeout: чтобы видеть реальную ошибку БД (таймаут, подключение, ограничения)
       const event = await storage.createEvent(eventData);
-      
+
       if (!event) {
         return res.status(500).json({
-          message: "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ СЃРѕР±С‹С‚РёРµ (Р‘Р” РІРµСЂРЅСѓР»Р° РїСѓСЃС‚РѕР№ СЂРµР·СѓР»СЊС‚Р°С‚)",
+          message: "Не удалось создать событие (БД вернула пустой результат)",
           error: "createEvent returned null",
         });
       }
-      
-      // РЈС‡Р°СЃС‚РЅРёРєРё: Р·Р°РїРёСЃР°С‚СЊ РІ event_participants Рё СѓРІРµРґРѕРјРёС‚СЊ
+
+      // Участники: записать в event_participants и уведомить
       const participantIds = req.body?.participants;
       if (Array.isArray(participantIds) && participantIds.length > 0) {
-        const title = "РџСЂРёРіР»Р°С€РµРЅРёРµ РЅР° СЃРѕР±С‹С‚РёРµ";
-        const message = `Р’Р°СЃ РїСЂРёРіР»Р°СЃРёР»Рё РЅР° СЃРѕР±С‹С‚РёРµ: ${event.title}. РџСЂРёРјРёС‚Рµ РёР»Рё РѕС‚РєР»РѕРЅРёС‚Рµ РІ РєР°Р»РµРЅРґР°СЂРµ.`;
+        const title = "Приглашение на событие";
+        const message = `Вас пригласили на событие: ${event.title}. Примите или отклоните в календаре.`;
         for (const uid of participantIds) {
           if (uid && typeof uid === "string") {
             try {
@@ -1399,23 +1399,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       }
-      
+
       console.log("[Events] Event created successfully:", event.id);
       res.json(event);
     } catch (error: any) {
       const errMsg = error?.message ?? String(error);
       console.error("[Events] Error creating event:", errMsg);
       if (error?.stack) console.error(error.stack);
-      // Р Р°Р·Р»РёС‡Р°РµРј РѕС€РёР±РєРё РІР°Р»РёРґР°С†РёРё (400) Рё РѕС€РёР±РєРё Р‘Р” (500)
+      // Различаем ошибки валидации (400) и ошибки БД (500)
       const isValidation = errMsg.includes("Invalid") || error?.name === "ZodError";
       const isTimeout = /timeout|ETIMEDOUT|timed out/i.test(errMsg);
       const isConnection = /connect|ECONNREFUSED|ECONNRESET/i.test(errMsg);
       const status = isValidation ? 400 : (isTimeout || isConnection ? 503 : 500);
       const message = isConnection
-        ? "Р‘Р°Р·Р° РґР°РЅРЅС‹С… РЅРµРґРѕСЃС‚СѓРїРЅР°. РџСЂРѕРІРµСЂСЊС‚Рµ DATABASE_URL Рё С‡С‚Рѕ PostgreSQL Р·Р°РїСѓС‰РµРЅ."
+        ? "База данных недоступна. Проверьте DATABASE_URL и что PostgreSQL запущен."
         : isTimeout
-          ? "Р‘Р°Р·Р° РґР°РЅРЅС‹С… РЅРµ РѕС‚РІРµС‚РёР»Р° РІРѕРІСЂРµРјСЏ. РџСЂРѕРІРµСЂСЊС‚Рµ РЅР°РіСЂСѓР·РєСѓ Рё СЃРµС‚СЊ."
-          : errMsg || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ СЃРѕР±С‹С‚РёРµ";
+          ? "База данных не ответила вовремя. Проверьте нагрузку и сеть."
+          : errMsg || "Не удалось создать событие";
       res.status(status).json({ message, error: errMsg });
     }
   });
@@ -1432,15 +1432,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!event) {
         return res.status(404).json({ message: "Event not found" });
       }
-      // РћР±РЅРѕРІРёС‚СЊ СЃРїРёСЃРѕРє СѓС‡Р°СЃС‚РЅРёРєРѕРІ: СѓРґР°Р»РёС‚СЊ СЃС‚Р°СЂС‹С…, РґРѕР±Р°РІРёС‚СЊ РЅРѕРІС‹С…
+      // Обновить список участников: удалить старых, добавить новых
       const participantIds = req.body?.participants;
       if (Array.isArray(participantIds)) {
         const existing = await storage.getEventParticipants(id);
         for (const p of existing) {
           await storage.deleteEventParticipant(id, p.userId);
         }
-        const title = "РџСЂРёРіР»Р°С€РµРЅРёРµ РЅР° СЃРѕР±С‹С‚РёРµ";
-        const message = `Р’Р°СЃ РїСЂРёРіР»Р°СЃРёР»Рё РЅР° СЃРѕР±С‹С‚РёРµ: ${event.title}. РџСЂРёРјРёС‚Рµ РёР»Рё РѕС‚РєР»РѕРЅРёС‚Рµ РІ РєР°Р»РµРЅРґР°СЂРµ.`;
+        const title = "Приглашение на событие";
+        const message = `Вас пригласили на событие: ${event.title}. Примите или отклоните в календаре.`;
         for (const uid of participantIds) {
           if (uid && typeof uid === "string") {
             try {
@@ -1509,11 +1509,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const labelPrinterConfig = () => ({
-    host: String(process.env.LABEL_PRINTER_HOST || "10.90.121.115").trim(),
+    host: String(process.env.LABEL_PRINTER_HOST || "10.90.109.120").trim(),
     port: Number(process.env.LABEL_PRINTER_PORT || 9100),
-    widthMm: Number(process.env.LABEL_WIDTH_MM || 58),
-    heightMm: Number(process.env.LABEL_HEIGHT_MM || 30),
+    widthMm: Number(process.env.LABEL_WIDTH_MM || 40),
+    heightMm: Number(process.env.LABEL_HEIGHT_MM || 20),
     gapMm: Number(process.env.LABEL_GAP_MM || 2),
+    dpi: Number(process.env.LABEL_PRINTER_DPI || 300),
   });
 
   const cleanTsplText = (value: unknown, maxLength = 42) =>
@@ -1524,13 +1525,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .trim()
       .slice(0, maxLength);
 
-  const buildEquipmentLabelTspl = (items: any[]) => {
+  const cleanTsplBarcode = (value: unknown, fallback: unknown) => {
+    const cleaned = String(value ?? "")
+      .replace(/[^A-Za-z0-9_.-]+/g, "")
+      .slice(0, 64);
+    return cleaned || String(fallback ?? "STREAMDESK").replace(/[^A-Za-z0-9_.-]+/g, "").slice(0, 64) || "STREAMDESK";
+  };
+
+  const buildInventoryLabelTspl = (items: Array<{ value: unknown; fallback?: unknown }>) => {
     const config = labelPrinterConfig();
+    const dotsPerMm = config.dpi / 25.4;
+    const dot = (mm: number) => Math.round(mm * dotsPerMm);
+    const widthDots = dot(config.widthMm);
+    const centerX = Math.round(widthDots / 2);
+
     return items.map((item) => {
-      const barcode = cleanTsplText(item.barcode || item.inventoryNumber || item.serialNumber || item.id, 64);
-      const title = cleanTsplText(item.name || "Equipment", 34);
-      const model = cleanTsplText(item.model || item.type || "", 34);
-      const inventory = cleanTsplText(item.inventoryNumber || barcode, 40);
+      const barcode = cleanTsplBarcode(item.value, item.fallback);
+      const inventory = cleanTsplText(item.value || barcode, 32).replace(/[^\x20-\x7E]+/g, "").trim() || barcode;
+      const barcodeX = dot(3.0);
+      const barcodeY = dot(2.6);
+      const barcodeHeight = dot(10.2);
+      const eraseWidth = dot(13.4);
+      const eraseHeight = dot(4.3);
+      const eraseX = centerX - Math.round(eraseWidth / 2);
+      const eraseY = barcodeY + Math.round(barcodeHeight / 2) - Math.round(eraseHeight / 2);
+      const brandX = centerX - dot(4.1);
+      const brandY = eraseY + dot(0.55);
+      const inventoryX = Math.max(dot(1.4), centerX - Math.round(inventory.length * dot(0.86) / 2));
 
       return [
         `SIZE ${config.widthMm} mm,${config.heightMm} mm`,
@@ -1538,35 +1559,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
         "DIRECTION 1",
         "REFERENCE 0,0",
         "CODEPAGE UTF-8",
+        "SPEED 4",
+        "DENSITY 10",
+        "SET TEAR ON",
+        "SET CUTTER OFF",
         "CLS",
-        `TEXT 24,18,"0",0,8,8,"${title}"`,
-        model ? `TEXT 24,48,"0",0,7,7,"${model}"` : "",
-        `BARCODE 24,78,"128",72,1,0,2,2,"${barcode}"`,
-        `TEXT 24,164,"0",0,7,7,"${inventory}"`,
+        `BARCODE ${barcodeX},${barcodeY},"128",${barcodeHeight},0,0,2,4,"${barcode}"`,
+        `ERASE ${eraseX},${eraseY},${eraseWidth},${eraseHeight}`,
+        `TEXT ${brandX},${brandY},"0",0,2,2,"ОТИС"`,
+        `TEXT ${inventoryX},${dot(15.4)},"0",0,1,1,"${inventory}"`,
         "PRINT 1,1",
         "",
       ].filter(Boolean).join("\r\n");
     }).join("\r\n");
   };
 
-  const sendToLabelPrinter = (payload: string) => new Promise<void>((resolve, reject) => {
+  const buildEquipmentLabelTspl = (items: any[]) =>
+    buildInventoryLabelTspl(items.map((item) => ({
+      value: item.inventoryNumber || item.barcode || item.serialNumber || item.id,
+      fallback: item.id,
+    })));
+
+  const buildLabelPrinterCalibrationTspl = () => {
+    const config = labelPrinterConfig();
+    return [
+      `SIZE ${config.widthMm} mm,${config.heightMm} mm`,
+      `GAP ${config.gapMm} mm,0 mm`,
+      "DIRECTION 1",
+      "REFERENCE 0,0",
+      "GAPDETECT",
+      "FORMFEED",
+      "",
+    ].join("\r\n");
+  };
+
+  const sendToLabelPrinter = (payload: string | Buffer) => new Promise<void>((resolve, reject) => {
     const config = labelPrinterConfig();
     const socket = new net.Socket();
+    const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
+    let settled = false;
+    const done = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      error ? reject(error) : resolve();
+    };
     const timer = setTimeout(() => {
       socket.destroy();
-      reject(new Error(`Не удалось подключиться к принтеру ${config.host}:${config.port} за 5 секунд`));
+      done(new Error(`Не удалось подключиться к принтеру ${config.host}:${config.port} за 5 секунд`));
     }, 5000);
 
-    socket.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
+    socket.once("error", (error) => done(error));
     socket.connect(config.port, config.host, () => {
-      socket.write(Buffer.from(payload, "utf8"), () => socket.end());
-    });
-    socket.once("close", () => {
-      clearTimeout(timer);
-      resolve();
+      socket.write(buffer, () => {
+        socket.end(() => done());
+      });
     });
   });
 
@@ -1574,15 +1622,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/equipment", async (req, res) => {
     if (!(await hasWorkspaceAccess(req.user))) return res.json([]);
     const { status } = req.query;
-    
+
     const equipment = await withDbTimeout(async () => {
       if (status) {
         return await storage.getEquipmentByStatus(status as string);
       } else {
         return await storage.getEquipment();
       }
-    }, 3000, []); // 3 СЃРµРєСѓРЅРґС‹ РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ РѕС‚РІРµС‚Р°
-    
+    }, 3000, []); // 3 секунды для быстрого ответа
+
     const list = Array.isArray(equipment) ? equipment : [];
     res.json(status ? list : list.filter((item: any) => item.status !== "archived"));
   });
@@ -1614,10 +1662,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const payload = buildEquipmentLabelTspl(items);
       await sendToLabelPrinter(payload);
       const config = labelPrinterConfig();
+      console.log(`[LabelPrinter] sent ${items.length} native inventory label(s), ${Buffer.byteLength(payload, "utf8")} bytes to ${config.host}:${config.port}`);
       res.json({
         success: true,
         count: items.length,
         printer: `${config.host}:${config.port}`,
+        bytes: Buffer.byteLength(payload, "utf8"),
+        mode: "native-tspl",
       });
     } catch (error: any) {
       console.error("[LabelPrinter] print failed:", error?.message || error);
@@ -1627,17 +1678,124 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/equipment/labels/print-bitmaps", async (req, res) => {
+    try {
+      if (!(await hasWorkspaceAccess(req.user))) {
+        return res.status(403).json({ message: "Нет доступа к складу" });
+      }
+
+      const labels = Array.isArray(req.body?.labels) ? req.body.labels : [];
+      if (labels.length === 0) {
+        return res.status(400).json({ message: "Нет этикеток для печати" });
+      }
+      if (labels.length > 100) {
+        return res.status(400).json({ message: "За один раз можно напечатать до 100 этикеток" });
+      }
+
+      const config = labelPrinterConfig();
+      const payloadParts: Buffer[] = [];
+      let totalBitmapBytes = 0;
+      const bitmapRatios: string[] = [];
+
+      for (const label of labels) {
+        const widthBytes = Number(label?.widthBytes || 0);
+        const heightDots = Number(label?.heightDots || 0);
+        const xDots = Math.max(0, Math.min(2000, Math.round(Number(label?.xDots || 0))));
+        const yDots = Math.max(0, Math.min(2000, Math.round(Number(label?.yDots || 0))));
+        const bitmapBase64 = String(label?.bitmapBase64 || "");
+        if (!Number.isFinite(widthBytes) || widthBytes <= 0 || widthBytes > 256) {
+          return res.status(400).json({ message: "Некорректная ширина этикетки" });
+        }
+        if (!Number.isFinite(heightDots) || heightDots <= 0 || heightDots > 1200) {
+          return res.status(400).json({ message: "Некорректная высота этикетки" });
+        }
+
+        const bitmap = Buffer.from(bitmapBase64, "base64");
+        if (bitmap.length !== widthBytes * heightDots) {
+          return res.status(400).json({ message: "Некорректный bitmap этикетки" });
+        }
+
+        let setBits = 0;
+        for (const byte of bitmap) {
+          let bits = byte;
+          while (bits) {
+            bits &= bits - 1;
+            setBits += 1;
+          }
+        }
+        bitmapRatios.push((setBits / (bitmap.length * 8)).toFixed(3));
+        totalBitmapBytes += bitmap.length;
+
+        const header = [
+          `SIZE ${config.widthMm} mm,${config.heightMm} mm`,
+          `GAP ${config.gapMm} mm,0 mm`,
+          "DIRECTION 1",
+          "REFERENCE 0,0",
+          "SPEED 4",
+          "DENSITY 10",
+          "SET TEAR ON",
+          "SET CUTTER OFF",
+          "CLS",
+          `BITMAP ${xDots},${yDots},${widthBytes},${heightDots},0,`,
+        ].join("\r\n");
+
+        payloadParts.push(Buffer.from(header, "ascii"));
+        payloadParts.push(bitmap);
+        payloadParts.push(Buffer.from("\r\nPRINT 1,1\r\n", "ascii"));
+      }
+
+      const payload = Buffer.concat(payloadParts);
+      await sendToLabelPrinter(payload);
+      console.log(`[LabelPrinter] sent ${labels.length} bitmap label(s), ${totalBitmapBytes} bitmap bytes to ${config.host}:${config.port}; setBitRatios=${bitmapRatios.join(",")}`);
+      res.json({
+        success: true,
+        count: labels.length,
+        printer: `${config.host}:${config.port}`,
+        bytes: payload.length,
+        mode: "bitmap-tspl",
+      });
+    } catch (error: any) {
+      console.error("[LabelPrinter] bitmap print failed:", error?.message || error);
+      res.status(500).json({
+        message: error?.message || "Не удалось отправить PNG-этикетку на принтер",
+      });
+    }
+  });
+
+  app.post("/api/equipment/labels/calibrate", async (req, res) => {
+    try {
+      if (!(await hasWorkspaceAccess(req.user))) {
+        return res.status(403).json({ message: "Нет доступа к складу" });
+      }
+
+      const payload = buildLabelPrinterCalibrationTspl();
+      await sendToLabelPrinter(payload);
+      const config = labelPrinterConfig();
+      console.log(`[LabelPrinter] calibration sent, ${Buffer.byteLength(payload, "ascii")} bytes to ${config.host}:${config.port}`);
+      res.json({
+        success: true,
+        printer: `${config.host}:${config.port}`,
+        bytes: Buffer.byteLength(payload, "ascii"),
+      });
+    } catch (error: any) {
+      console.error("[LabelPrinter] calibration failed:", error?.message || error);
+      res.status(500).json({
+        message: error?.message || "Не удалось откалибровать принтер",
+      });
+    }
+  });
+
   app.post("/api/equipment", async (req, res) => {
     try {
       if (!(await hasWorkspaceAccess(req.user))) {
-        return res.status(403).json({ message: "РЎРЅР°С‡Р°Р»Р° СЃРѕР·РґР°Р№С‚Рµ РєРѕРјРїР°РЅРёСЋ РёР»Рё РІСЃС‚СѓРїРёС‚Рµ РїРѕ РїСЂРёРіР»Р°С€РµРЅРёСЋ" });
+        return res.status(403).json({ message: "Сначала создайте компанию или вступите по приглашению" });
       }
       console.log("[Equipment] Creating equipment...");
       const body = req.body || {};
-      // РџСЂРёРІРѕРґРёРј РїСѓСЃС‚С‹Рµ СЃС‚СЂРѕРєРё Рє null РґР»СЏ РѕРїС†РёРѕРЅР°Р»СЊРЅС‹С… РїРѕР»РµР№, С‡С‚РѕР±С‹ СЃС…РµРјР° РЅРµ РїР°РґР°Р»Р°
+      // Приводим пустые строки к undefined для опциональных полей, чтобы схема не падала.
       const name = body.name && String(body.name).trim();
       if (!name) {
-        return res.status(400).json({ message: "РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ" });
+        return res.status(400).json({ message: "Укажите название оборудования" });
       }
       const currentUser = req.user as any;
       const companyIds = await getUserCompanyIds(currentUser);
@@ -1670,11 +1828,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       const equipmentData = insertEquipmentSchema.parse(sanitized);
-      
+
       if (equipmentData.barcode) {
         console.log("[Equipment] Barcode creation attempted:", equipmentData.barcode);
       }
-      
+
       console.log("[Equipment] Saving to database...");
       const equipment = await storage.createEquipment(equipmentData);
       console.log("[Equipment] Equipment created successfully:", equipment.id);
@@ -1685,8 +1843,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error?.stack) console.error(error.stack);
       const isDbError = /timeout|econnrefused|connection|ECONNREFUSED|password|auth/i.test(msg);
       const userMessage = isDbError
-        ? "РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Р±Р°Р·Рµ РґР°РЅРЅС‹С…. РџСЂРѕРІРµСЂСЊС‚Рµ, С‡С‚Рѕ PostgreSQL Р·Р°РїСѓС‰РµРЅ Рё DATABASE_URL РІ .env СѓРєР°Р·Р°РЅ РІРµСЂРЅРѕ (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
-        : (msg || "РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ РѕР±РѕСЂСѓРґРѕРІР°РЅРёРµ");
+        ? "Ошибка подключения к базе данных. Проверьте, что PostgreSQL запущен и DATABASE_URL в .env указан верно (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
+        : (msg || "Не удалось добавить оборудование");
       res.status(isDbError ? 500 : 400).json({ message: userMessage, error: msg });
     }
   });
@@ -1694,14 +1852,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/equipment/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      
+
       // Only admins can update/promote barcodes (Cr-codes)
       if (req.body.barcode) {
         // In production, check user session/role here
         // For now, allow but log for security
         console.log("Barcode update/promotion attempted:", req.body.barcode);
       }
-      
+
       const equipment = await storage.updateEquipment(id, req.body);
       if (!equipment) {
         return res.status(404).json({ message: "Equipment not found" });
@@ -1714,10 +1872,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/equipment/:id", async (req, res) => {
     try {
-      if (!(await hasWorkspaceAccess(req.user))) return res.status(403).json({ message: "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СЃРєР»Р°РґСѓ" });
+      if (!(await hasWorkspaceAccess(req.user))) return res.status(403).json({ message: "Нет доступа к складу" });
       const { id } = req.params;
       const item = await storage.getEquipmentById(id).catch(() => undefined);
-      if (!item) return res.status(404).json({ message: "РћР±РѕСЂСѓРґРѕРІР°РЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ" });
+      if (!item) return res.status(404).json({ message: "Оборудование не найдено" });
       const specs = item.specifications && typeof item.specifications === "object" ? item.specifications as any : {};
       const permissions = Array.isArray((req.user as any)?.permissions) ? (req.user as any).permissions : [];
       const userCompanyIds = await getUserCompanyIds(req.user);
@@ -1728,7 +1886,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         (specs.createdByUserId && specs.createdByUserId === (req.user as any)?.id) ||
         (specs.companyId && await canManageCompany(req.user, String(specs.companyId))) ||
         (!specs.companyId && userCompanyIds.length > 0);
-      if (!canDelete) return res.status(403).json({ message: "РќРµС‚ РїСЂР°РІ РЅР° СѓРґР°Р»РµРЅРёРµ РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ" });
+      if (!canDelete) return res.status(403).json({ message: "Нет прав на удаление оборудования" });
       try {
         const deleted = await storage.deleteEquipment(id);
         if (deleted) return res.json({ success: true, mode: "deleted" });
@@ -1737,7 +1895,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const archived = await storage.updateEquipment(id, {
         status: "archived",
-        location: "РђСЂС…РёРІ",
+        location: "Архив",
         specifications: {
           ...specs,
           archivedAt: new Date().toISOString(),
@@ -1747,7 +1905,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true, mode: "archived", equipment: archived });
     } catch (error: any) {
       console.error("[Equipment] delete failed:", error?.message || error);
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ РѕР±РѕСЂСѓРґРѕРІР°РЅРёРµ" });
+      res.status(500).json({ message: error?.message || "Не удалось удалить оборудование" });
     }
   });
 
@@ -1853,12 +2011,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const currentUser = req.user as any;
       const { companyId } = req.params;
       if (!(await canManageCompany(currentUser, companyId))) {
-        return res.status(403).json({ message: "РќРµС‚ РїСЂР°РІ РЅР° СЃРєР°С‡РёРІР°РЅРёРµ Р°РіРµРЅС‚Р°" });
+        return res.status(403).json({ message: "Нет прав на скачивание агента" });
       }
       const osName = String(req.query.os || "windows").toLowerCase();
       const deviceType = ["server", "computer", "vmix"].includes(String(req.query.type)) ? String(req.query.type) : "computer";
       if (osName !== "windows") {
-        return res.status(400).json({ message: "РџРѕРєР° РґРѕСЃС‚СѓРїРµРЅ Windows agent" });
+        return res.status(400).json({ message: "Пока доступен Windows agent" });
       }
       const workspaceKey = await ensureCompanyWorkspaceKey(companyId);
       const agentKey = `agent_${companyId.slice(0, 8)}_${deviceType}_${crypto.randomBytes(8).toString("hex")}`;
@@ -1948,7 +2106,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       res.send(batScript);
     } catch (error: any) {
       console.error("[Agent] download failed:", error?.message || error);
-      res.status(500).json({ message: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґРіРѕС‚РѕРІРёС‚СЊ С„Р°Р№Р» Р°РіРµРЅС‚Р°" });
+      res.status(500).json({ message: "Не удалось подготовить файл агента" });
     }
   });
 
@@ -2056,7 +2214,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         status: "available",
         location: String(payload.location || company.name || "StreamDesk Agent"),
         specifications: equipmentSpecs,
-        notes: "РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРё СЃРёРЅС…СЂРѕРЅРёР·РёСЂРѕРІР°РЅРѕ Р°РіРµРЅС‚РѕРј StreamDesk.",
+        notes: "Автоматически синхронизировано агентом StreamDesk.",
       } as any;
       if (existingEquipment) {
         await storage.updateEquipment(existingEquipment.id, equipmentData).catch(() => undefined);
@@ -2111,7 +2269,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       });
     } catch (error) {
       console.error("Error pinging IP:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         ip: req.body.ip,
         isOnline: false,
         error: "Failed to ping host"
@@ -2123,7 +2281,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   app.get("/api/streams", async (req, res) => {
     if (!(await hasWorkspaceAccess(req.user))) return res.json([]);
     const { active, userId } = req.query;
-    
+
     const streams = await withDbTimeout(async () => {
       if (active === "true") {
         return await storage.getActiveStreams();
@@ -2132,8 +2290,8 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       } else {
         return await storage.getStreams();
       }
-    }, 3000, []); // 3 СЃРµРєСѓРЅРґС‹ РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ РѕС‚РІРµС‚Р°
-    
+    }, 3000, []); // 3 секунды для быстрого ответа
+
     res.json(streams);
   });
 
@@ -2166,7 +2324,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       // Mock YouTube API response - in real app would use YouTube Data API
       const youtubeStats = {
         viewers: Math.floor(Math.random() * 2000) + 500,
-        duration: "1С‡ 25Рј",
+        duration: "1ч 25м",
         status: "live",
         bitrate: "6000 kbps",
         fps: 60,
@@ -2182,7 +2340,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       // Mock VK API response - in real app would use VK API
       const vkStats = {
         viewers: Math.floor(Math.random() * 1500) + 300,
-        duration: "1С‡ 25Рј", 
+        duration: "1ч 25м",
         status: "live",
         bitrate: "5800 kbps",
         fps: 60,
@@ -2202,7 +2360,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const mockEvents = [
         {
           id: "1",
-          title: "РЈС‚СЂРµРЅРЅРёР№ СЌС„РёСЂ",
+          title: "Утренний эфир",
           startTime: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
           endTime: new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),
           status: "scheduled" as const,
@@ -2210,8 +2368,8 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           channel: "main",
         },
         {
-          id: "2", 
-          title: "Р’РµС‡РµСЂРЅРёР№ СЃС‚СЂРёРј",
+          id: "2",
+          title: "Вечерний стрим",
           startTime: new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString(),
           endTime: new Date(now.getTime() + 11 * 60 * 60 * 1000).toISOString(),
           status: "scheduled" as const,
@@ -2220,7 +2378,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         },
         {
           id: "3",
-          title: "РќРѕС‡РЅРѕР№ РїРѕРІС‚РѕСЂ",
+          title: "Ночной повтор",
           startTime: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
           status: "scheduled" as const,
           preset: "replay",
@@ -2235,15 +2393,15 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         nextEvent: mockEvents[0],
       });
     } catch (error) {
-      res.status(500).json({ 
+      res.status(500).json({
         connected: false,
         events: [],
-        message: "Failed to fetch vMix scheduler data" 
+        message: "Failed to fetch vMix scheduler data"
       });
     }
   });
 
-  // ChatGPT - СЂР°Р±РѕС‚Р° СЃ Р»РѕРєР°Р»СЊРЅС‹РјРё LLM РјРѕРґРµР»СЏРјРё
+  // ChatGPT - работа с локальными LLM моделями
   app.post("/api/chat/completions", async (req, res) => {
     try {
       const { model, messages, endpoint } = req.body;
@@ -2252,7 +2410,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         return res.status(400).json({ message: "Missing required parameters" });
       }
 
-      // РџСЂРѕРІРµСЂСЏРµРј РґРѕСЃС‚СѓРїРЅРѕСЃС‚СЊ Р»РѕРєР°Р»СЊРЅРѕР№ РјРѕРґРµР»Рё
+      // Проверяем доступность локальной модели
       try {
         const healthCheck = await fetch(endpoint.replace('/v1/chat/completions', '/health'), {
           method: 'GET',
@@ -2264,12 +2422,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         }
       } catch (error: any) {
         return res.status(503).json({
-          message: "Р›РѕРєР°Р»СЊРЅР°СЏ РјРѕРґРµР»СЊ РЅРµРґРѕСЃС‚СѓРїРЅР°. РЈР±РµРґРёС‚РµСЃСЊ, С‡С‚Рѕ РјРѕРґРµР»СЊ Р·Р°РїСѓС‰РµРЅР°.",
+          message: "Локальная модель недоступна. Убедитесь, что модель запущена.",
           error: error.message,
         });
       }
 
-      // РћС‚РїСЂР°РІРєР° Р·Р°РїСЂРѕСЃР° Рє Р»РѕРєР°Р»СЊРЅРѕР№ РјРѕРґРµР»Рё
+      // Отправка запроса к локальной модели
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -2288,9 +2446,9 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       }
 
       const data = await response.json();
-      
+
       res.json({
-        content: data.choices?.[0]?.message?.content || "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РѕС‚РІРµС‚ РѕС‚ РјРѕРґРµР»Рё",
+        content: data.choices?.[0]?.message?.content || "Не удалось получить ответ от модели",
         model: data.model || model,
       });
     } catch (error: any) {
@@ -2301,7 +2459,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // ChatGPT Sessions - РїРѕР»СѓС‡РµРЅРёРµ СЃРїРёСЃРєР° С‡Р°С‚РѕРІ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+  // ChatGPT Sessions - получение списка чатов пользователя
   app.get("/api/chat/sessions", async (req, res) => {
     try {
       const { userId } = req.query;
@@ -2319,19 +2477,19 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const isDb = /timeout|econnrefused|connection|password|auth|database/i.test(msg);
       res.status(500).json({
         message: isDb
-          ? "РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Р±Р°Р·Рµ РґР°РЅРЅС‹С…. РџСЂРѕРІРµСЂСЊС‚Рµ PostgreSQL Рё DATABASE_URL РІ .env (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
-          : "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє С‡Р°С‚РѕРІ",
+          ? "Ошибка подключения к базе данных. Проверьте PostgreSQL и DATABASE_URL в .env (postgresql://USER:PASSWORD@HOST:PORT/DATABASE)."
+          : "Не удалось загрузить список чатов",
         error: error.message,
       });
     }
   });
 
-  // ChatGPT Sessions - СЃРѕР·РґР°РЅРёРµ РЅРѕРІРѕРіРѕ С‡Р°С‚Р°
+  // ChatGPT Sessions - создание нового чата
   app.post("/api/chat/sessions", async (req, res) => {
     try {
       const { userId, title, modelId } = req.body;
       console.log(`[ChatGPT] Creating session - userId: ${userId}, title: ${title}, modelId: ${modelId}`);
-      
+
       if (!userId) {
         console.error("[ChatGPT] Missing userId in request");
         return res.status(400).json({ message: "UserId is required" });
@@ -2341,7 +2499,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         return res.status(400).json({ message: "Title is required" });
       }
 
-      // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЃСѓС‰РµСЃС‚РІСѓРµС‚ (РІ stub-СЂРµР¶РёРјРµ СЂР°Р·СЂРµС€Р°РµРј Р»СЋР±РѕР№ userId РґР»СЏ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё СЃ localStorage РїРѕСЃР»Рµ РїРµСЂРµР·Р°РїСѓСЃРєР°)
+      // Проверяем, что пользователь существует (в stub-режиме разрешаем любой userId для совместимости с localStorage после перезапуска)
       const user = await storage.getUser(userId);
       if (!user && !isStubStorage) {
         console.error(`[ChatGPT] User not found: ${userId}`);
@@ -2358,14 +2516,14 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       res.json(session);
     } catch (error: any) {
       console.error("Failed to create chat session:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         message: "Failed to create chat session",
-        error: error.message 
+        error: error.message
       });
     }
   });
 
-  // ChatGPT Sessions - СѓРґР°Р»РµРЅРёРµ С‡Р°С‚Р°
+  // ChatGPT Sessions - удаление чата
   app.delete("/api/chat/sessions/:id", async (req, res) => {
     try {
       const { userId } = req.query;
@@ -2375,7 +2533,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
 
       const { id } = req.params;
       const session = await storage.getChatSessionById(id);
-      
+
       if (!session || session.userId !== userId) {
         return res.status(404).json({ message: "Chat session not found" });
       }
@@ -2388,7 +2546,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // ChatGPT Messages - РїРѕР»СѓС‡РµРЅРёРµ СЃРѕРѕР±С‰РµРЅРёР№ С‡Р°С‚Р°
+  // ChatGPT Messages - получение сообщений чата
   app.get("/api/chat/sessions/:id/messages", async (req, res) => {
     try {
       const { userId } = req.query;
@@ -2398,12 +2556,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
 
       const { id } = req.params;
       const session = await storage.getChatSessionById(id);
-      
+
       if (!session) {
         return res.status(404).json({ message: "Chat session not found" });
       }
 
-      // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РёРјРµРµС‚ РґРѕСЃС‚СѓРї Рє СЌС‚РѕРјСѓ С‡Р°С‚Сѓ
+      // Проверяем, что пользователь имеет доступ к этому чату
       if (session.userId !== userId) {
         console.warn(`[ChatGPT] User ${userId} tried to access session ${id} owned by ${session.userId}`);
         return res.status(403).json({ message: "Access denied" });
@@ -2417,7 +2575,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // ChatGPT Messages - СЃРѕР·РґР°РЅРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ
+  // ChatGPT Messages - создание сообщения
   app.post("/api/chat/sessions/:id/messages", async (req, res) => {
     try {
       const { userId } = req.body;
@@ -2427,12 +2585,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
 
       const { id } = req.params;
       const session = await storage.getChatSessionById(id);
-      
+
       if (!session) {
         return res.status(404).json({ message: "Chat session not found" });
       }
 
-      // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РёРјРµРµС‚ РґРѕСЃС‚СѓРї Рє СЌС‚РѕРјСѓ С‡Р°С‚Сѓ
+      // Проверяем, что пользователь имеет доступ к этому чату
       if (session.userId !== userId) {
         console.warn(`[ChatGPT] User ${userId} tried to post to session ${id} owned by ${session.userId}`);
         return res.status(403).json({ message: "Access denied" });
@@ -2457,7 +2615,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // ChatGPT Upload - Р·Р°РіСЂСѓР·РєР° С„Р°Р№Р»РѕРІ РґР»СЏ С‡Р°С‚РѕРІ
+  // ChatGPT Upload - загрузка файлов для чатов
   app.post("/api/chat/upload", chatUpload.single("file"), async (req, res) => {
     try {
       const { userId, sessionId } = req.body;
@@ -2482,13 +2640,13 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
 
       let transcription: string | undefined;
 
-      // Р•СЃР»Рё СЌС‚Рѕ Р°СѓРґРёРѕ С„Р°Р№Р», С‚СЂР°РЅСЃРєСЂРёР±РёСЂСѓРµРј С‡РµСЂРµР· Whisper X (РёР»Рё fallback РЅР° whisper.cpp)
+      // Если это аудио файл, транскрибируем через Whisper X (или fallback на whisper.cpp)
       if (req.file.mimetype.startsWith("audio/") || req.file.mimetype.startsWith("video/")) {
         try {
           transcription = await transcribeAudioWithWhisper(req.file.path);
         } catch (error: any) {
           console.error("Failed to transcribe audio:", error);
-          // РќРµ РїСЂРµСЂС‹РІР°РµРј Р·Р°РіСЂСѓР·РєСѓ, РїСЂРѕСЃС‚Рѕ РЅРµ РґРѕР±Р°РІР»СЏРµРј С‚СЂР°РЅСЃРєСЂРёРїС†РёСЋ
+          // Не прерываем загрузку, просто не добавляем транскрипцию
         }
       }
 
@@ -2506,12 +2664,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // РРјРїРѕСЂС‚РёСЂСѓРµРј СЃРµСЂРІРёСЃС‹ РґР»СЏ С‚СЂР°РЅСЃРєСЂРёР±Р°С†РёРё (РіРµРЅРµСЂР°С‚РѕСЂ РґРѕРєСѓРјРµРЅС‚РѕРІ РёРјРїРѕСЂС‚РёСЂСѓРµС‚СЃСЏ РґРёРЅР°РјРёС‡РµСЃРєРё РїСЂРё РЅРµРѕР±С…РѕРґРёРјРѕСЃС‚Рё)
+  // Импортируем сервисы для транскрибации (генератор документов импортируется динамически при необходимости)
   const { whisperXClient } = await import("./services/whisper-x-client.js");
 
-  // Р¤СѓРЅРєС†РёСЏ РґР»СЏ С‚СЂР°РЅСЃРєСЂРёРїС†РёРё Р°СѓРґРёРѕ С‡РµСЂРµР· whisper.cpp (fallback РґР»СЏ Р»РѕРєР°Р»СЊРЅРѕР№ С‚СЂР°РЅСЃРєСЂРёР±Р°С†РёРё)
+  // Функция для транскрипции аудио через whisper.cpp (fallback для локальной транскрибации)
   async function transcribeAudioWithWhisper(audioPath: string): Promise<string> {
-    // РЎРЅР°С‡Р°Р»Р° РїСЂРѕР±СѓРµРј РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ СѓРґР°Р»РµРЅРЅС‹Р№ Whisper X API (РµСЃР»Рё РЅР°СЃС‚СЂРѕРµРЅ)
+    // Сначала пробуем использовать удаленный Whisper X API (если настроен)
     try {
       if (whisperXClient.isConfigured()) {
         const result = await whisperXClient.transcribe(audioPath, {
@@ -2522,25 +2680,25 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       }
     } catch (error: any) {
       console.warn("[Transcription] Whisper X failed, trying local whisper.cpp:", error.message);
-      
-      // Fallback РЅР° Р»РѕРєР°Р»СЊРЅС‹Р№ whisper.cpp РµСЃР»Рё СѓРґР°Р»РµРЅРЅС‹Р№ API РЅРµРґРѕСЃС‚СѓРїРµРЅ
+
+      // Fallback на локальный whisper.cpp если удаленный API недоступен
       const { spawn } = await import("child_process");
       const whisperBasePath = process.env.WHISPER_CPP_PATH || "./whisper.cpp";
       const modelPath = process.env.WHISPER_MODEL_PATH || path.join(whisperBasePath, "models", "ggml-base.bin");
 
       return new Promise((resolve, reject) => {
-        // РћРїСЂРµРґРµР»СЏРµРј РїСѓС‚СЊ Рє РёСЃРїРѕР»РЅСЏРµРјРѕРјСѓ С„Р°Р№Р»Сѓ whisper.cpp
-        const whisperExecutable = process.platform === "win32" 
+        // Определяем путь к исполняемому файлу whisper.cpp
+        const whisperExecutable = process.platform === "win32"
           ? path.join(whisperBasePath, "main.exe")
           : path.join(whisperBasePath, "main");
 
-        // Р—Р°РїСѓСЃРєР°РµРј whisper.cpp РґР»СЏ С‚СЂР°РЅСЃРєСЂРёРїС†РёРё
+        // Запускаем whisper.cpp для транскрипции
         const whisper = spawn(whisperExecutable, [
           "-m", modelPath,
           "-f", audioPath,
-          "-l", "ru", // РЇР·С‹Рє: СЂСѓСЃСЃРєРёР№ (РјРѕР¶РЅРѕ РёР·РјРµРЅРёС‚СЊ)
-          "-t", "4", // РљРѕР»РёС‡РµСЃС‚РІРѕ РїРѕС‚РѕРєРѕРІ
-          "--no-timestamps", // Р‘РµР· РІСЂРµРјРµРЅРЅС‹С… РјРµС‚РѕРє
+          "-l", "ru", // Язык: русский (можно изменить)
+          "-t", "4", // Количество потоков
+          "--no-timestamps", // Без временных меток
         ], {
           cwd: process.cwd(),
         });
@@ -2558,25 +2716,25 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
 
         whisper.on("close", (code) => {
           if (code === 0) {
-            // РџР°СЂСЃРёРј РІС‹РІРѕРґ whisper.cpp
-            // Whisper.cpp РІС‹РІРѕРґРёС‚ С‚СЂР°РЅСЃРєСЂРёРїС†РёСЋ РІ stdout, РѕР±С‹С‡РЅРѕ РїРѕСЃР»Рµ СЃС‚СЂРѕРє СЃ РІСЂРµРјРµРЅРЅС‹РјРё РјРµС‚РєР°РјРё
+            // Парсим вывод whisper.cpp
+            // Whisper.cpp выводит транскрипцию в stdout, обычно после строк с временными метками
             const lines = output.split("\n")
               .filter(line => line.trim() && !line.includes("[") && !line.includes("]"))
               .map(line => line.trim())
               .filter(line => line.length > 0);
-            
-            // Р‘РµСЂРµРј РїРѕСЃР»РµРґРЅРёРµ СЃС‚СЂРѕРєРё, РєРѕС‚РѕСЂС‹Рµ РѕР±С‹С‡РЅРѕ СЃРѕРґРµСЂР¶Р°С‚ С‚СЂР°РЅСЃРєСЂРёРїС†РёСЋ
+
+            // Берем последние строки, которые обычно содержат транскрипцию
             const transcription = lines.slice(-5).join(" ").trim();
-            resolve(transcription || "РўСЂР°РЅСЃРєСЂРёРїС†РёСЏ РЅРµ РїРѕР»СѓС‡РµРЅР°");
+            resolve(transcription || "Транскрипция не получена");
           } else {
-            // Р•СЃР»Рё whisper.cpp РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РїСЂРѕРёР·РѕС€Р»Р° РѕС€РёР±РєР°
+            // Если whisper.cpp не найден или произошла ошибка
             console.warn("Whisper.cpp error:", errorOutput);
             reject(new Error(`Whisper.cpp failed with code ${code}: ${errorOutput}`));
           }
         });
 
         whisper.on("error", (error) => {
-          // Р•СЃР»Рё whisper.cpp РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅ
+          // Если whisper.cpp не установлен
           console.warn("Whisper.cpp not found or error:", error.message);
           reject(new Error(`Whisper.cpp not available: ${error.message}`));
         });
@@ -2584,7 +2742,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   }
 
-  // vMix API - РїРѕРґРєР»СЋС‡РµРЅРёРµ Рё СЃС‚Р°С‚СѓСЃ
+  // vMix API - подключение и статус
   app.post("/api/vmix/connect", async (req, res) => {
     try {
       const { host, port } = req.body;
@@ -2595,15 +2753,15 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
 
       const vmixUrl = `http://${host}:${port}/api`;
 
-      // РџСЂРѕРІРµСЂРєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє vMix
+      // Проверка подключения к vMix
       const response = await fetch(`${vmixUrl}?Function=GetVersion`);
-      
+
       if (!response.ok) {
         throw new Error("Failed to connect to vMix");
       }
 
       const data = await response.text();
-      
+
       res.json({
         connected: true,
         host,
@@ -2619,54 +2777,54 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // vMix API - РїРѕР»СѓС‡РµРЅРёРµ СЃС‚Р°С‚СѓСЃР°
+  // vMix API - получение статуса
   app.get("/api/vmix/status", async (req, res) => {
     try {
       const host = req.query.host as string || "localhost";
       const port = req.query.port as string || "8088";
       const vmixUrl = `http://${host}:${port}/api`;
 
-      // РџРѕР»СѓС‡РµРЅРёРµ РёРЅС„РѕСЂРјР°С†РёРё Рѕ vMix СЃ С‚Р°Р№РјР°СѓС‚РѕРј Рё РѕР±СЂР°Р±РѕС‚РєРѕР№ РѕС€РёР±РѕРє
+      // Получение информации о vMix с таймаутом и обработкой ошибок
       let versionResponse, xmlResponse;
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 СЃРµРєСѓРЅРґС‹ С‚Р°Р№РјР°СѓС‚
-        
+        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 секунды таймаут
+
         [versionResponse, xmlResponse] = await Promise.all([
           fetch(`${vmixUrl}?Function=GetVersion`, { signal: controller.signal as any }),
           fetch(`${vmixUrl}`, { signal: controller.signal as any }),
         ]);
-        
+
         clearTimeout(timeoutId);
       } catch (fetchError: any) {
-        // vMix РЅРµРґРѕСЃС‚СѓРїРµРЅ - РІРѕР·РІСЂР°С‰Р°РµРј СЃС‚Р°С‚СѓСЃ "РЅРµ РїРѕРґРєР»СЋС‡РµРЅ" Р±РµР· РѕС€РёР±РєРё
+        // vMix недоступен - возвращаем статус "не подключен" без ошибки
         return res.json({
           connected: false,
-          message: "vMix РЅРµРґРѕСЃС‚СѓРїРµРЅ. РџСЂРѕРІРµСЂСЊС‚Рµ, С‡С‚Рѕ vMix Р·Р°РїСѓС‰РµРЅ Рё РґРѕСЃС‚СѓРїРµРЅ РїРѕ СѓРєР°Р·Р°РЅРЅРѕРјСѓ Р°РґСЂРµСЃСѓ.",
+          message: "vMix недоступен. Проверьте, что vMix запущен и доступен по указанному адресу.",
         });
       }
 
       if (!versionResponse.ok || !xmlResponse.ok) {
         return res.json({
           connected: false,
-          message: "vMix РЅРµ РѕС‚РІРµС‡Р°РµС‚",
+          message: "vMix не отвечает",
         });
       }
 
       const xmlText = await xmlResponse.text();
-      
-      // РџР°СЂСЃРёРЅРі XML РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ РІС…РѕРґРѕРІ Рё СЃС‚Р°С‚СѓСЃР°
+
+      // Парсинг XML для получения входов и статуса
       const inputsMatch = xmlText.match(/<inputs count="(\d+)"/);
       const inputsCount = inputsMatch ? parseInt(inputsMatch[1]) : 0;
-      
+
       const previewMatch = xmlText.match(/preview="(\d+)"/);
       const programMatch = xmlText.match(/active="(\d+)"/);
       const recordingMatch = xmlText.match(/recording="(True|False)"/);
       const streamingMatch = xmlText.match(/streaming="(True|False)"/);
 
       const inputs: Array<{ number: number; title: string; state: string }> = [];
-      
-      // РџР°СЂСЃРёРЅРі РІС…РѕРґРѕРІ РёР· XML
+
+      // Парсинг входов из XML
       const inputRegex = /<input key="([^"]+)" number="(\d+)" title="([^"]+)"/g;
       let match;
       while ((match = inputRegex.exec(xmlText)) !== null && inputs.length < 20) {
@@ -2688,16 +2846,16 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         streaming: streamingMatch?.[1] === "True",
       });
     } catch (error: any) {
-      // vMix РЅРµРґРѕСЃС‚СѓРїРµРЅ - СЌС‚Рѕ РЅРѕСЂРјР°Р»СЊРЅРѕ, РЅРµ РєСЂР°С€РёРј РїСЂРёР»РѕР¶РµРЅРёРµ
-      console.warn("vMix status: РЅРµРґРѕСЃС‚СѓРїРµРЅ (СЌС‚Рѕ РЅРѕСЂРјР°Р»СЊРЅРѕ, РµСЃР»Рё vMix РЅРµ Р·Р°РїСѓС‰РµРЅ)");
-      res.json({ 
+      // vMix недоступен - это нормально, не крашим приложение
+      console.warn("vMix status: недоступен (это нормально, если vMix не запущен)");
+      res.json({
         connected: false,
-        message: "vMix РЅРµРґРѕСЃС‚СѓРїРµРЅ"
+        message: "vMix недоступен"
       });
     }
   });
 
-  // vMix API вЂ” С‚Р°Р№РјРєРѕРґ (СЂРµР¶РёСЃСЃС‘СЂ Р·Р°РґР°С‘С‚ РІ vMix; С‡РёС‚Р°РµРј РёР· XML СЃРѕСЃС‚РѕСЏРЅРёСЏ)
+  // vMix API — таймкод (режиссёр задаёт в vMix; читаем из XML состояния)
   app.get("/api/vmix/timecode", async (req, res) => {
     try {
       const host = (req.query.host as string) || "localhost";
@@ -2707,21 +2865,21 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       setTimeout(() => controller.abort(), 3000);
       const xmlResponse = await fetch(vmixUrl, { signal: controller.signal as any });
       if (!xmlResponse.ok) {
-        return res.json({ timecode: null, source: "vmix", error: "vMix РЅРµ РѕС‚РІРµС‡Р°РµС‚" });
+        return res.json({ timecode: null, source: "vmix", error: "vMix не отвечает" });
       }
       const xmlText = await xmlResponse.text();
-      // vMix XML РјРѕР¶РµС‚ СЃРѕРґРµСЂР¶Р°С‚СЊ РІСЂРµРјСЏ Р·Р°РїРёСЃРё/С‚Р°Р№РјРєРѕРґ РІ СЂР°Р·РЅС‹С… С‚РµРіР°С…
+      // vMix XML может содержать время записи/таймкод в разных тегах
       const tcMatch = xmlText.match(/<timecode[^>]*>([^<]+)<\/timecode>/i)
         || xmlText.match(/recordingTimecode="([^"]+)"/)
         || xmlText.match(/timecode="([^"]+)"/);
       const timecode = tcMatch ? tcMatch[1].trim() : null;
       res.json({ timecode, source: "vmix" });
     } catch (e: any) {
-      res.json({ timecode: null, source: "vmix", error: e?.message || "vMix РЅРµРґРѕСЃС‚СѓРїРµРЅ" });
+      res.json({ timecode: null, source: "vmix", error: e?.message || "vMix недоступен" });
     }
   });
 
-  // vMix API - РІС‹РїРѕР»РЅРµРЅРёРµ РєРѕРјР°РЅРґС‹
+  // vMix API - выполнение команды
   app.post("/api/vmix/command", async (req, res) => {
     try {
       const { command, host, port, input } = req.body;
@@ -2734,7 +2892,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const vmixPort = port || 8088;
       const vmixUrl = `http://${vmixHost}:${vmixPort}/api`;
 
-      // Р¤РѕСЂРјРёСЂРѕРІР°РЅРёРµ URL РґР»СЏ РєРѕРјР°РЅРґС‹
+      // Формирование URL для команды
       let commandUrl = `${vmixUrl}?Function=${command}`;
       if (input !== undefined) {
         commandUrl += `&Input=${input}`;
@@ -2760,12 +2918,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // vMix API - РїРѕР»СѓС‡РµРЅРёРµ СЂР°СЃРїРёСЃР°РЅРёСЏ
+  // vMix API - получение расписания
   app.get("/api/vmix/scheduler", async (req, res) => {
     try {
       const events = await storage.getVmixSchedulerEvents();
-      
-      // РџСЂРµРѕР±СЂР°Р·СѓРµРј РІ С„РѕСЂРјР°С‚ РґР»СЏ С„СЂРѕРЅС‚РµРЅРґР°
+
+      // Преобразуем в формат для фронтенда
       const formattedEvents = events.map(event => ({
         id: event.id,
         title: event.title,
@@ -2790,7 +2948,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // vMix API - СЃРѕР·РґР°РЅРёРµ СЃРѕР±С‹С‚РёСЏ
+  // vMix API - создание события
   app.get("/api/agents/:agentKey/vmix-scheduler/due", async (req, res) => {
     try {
       const agentKey = String(req.params.agentKey || "").trim();
@@ -2908,7 +3066,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // vMix API - РѕР±РЅРѕРІР»РµРЅРёРµ СЃРѕР±С‹С‚РёСЏ
+  // vMix API - обновление события
   app.put("/api/vmix/scheduler/events/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -2926,7 +3084,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       if (errorMessage !== undefined) updateData.errorMessage = errorMessage;
 
       const updatedEvent = await storage.updateVmixSchedulerEvent(id, updateData);
-      
+
       if (!updatedEvent) {
         return res.status(404).json({ message: "Event not found" });
       }
@@ -2952,12 +3110,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // vMix API - СѓРґР°Р»РµРЅРёРµ СЃРѕР±С‹С‚РёСЏ
+  // vMix API - удаление события
   app.delete("/api/vmix/scheduler/events/:id", async (req, res) => {
     try {
       const { id } = req.params;
       const deleted = await storage.deleteVmixSchedulerEvent(id);
-      
+
       if (!deleted) {
         return res.status(404).json({ message: "Event not found" });
       }
@@ -2971,23 +3129,23 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // Rooms (Р°СѓРґРёС‚РѕСЂРёРё/РєР°Р±РёРЅРµС‚С‹ РґР»СЏ РєР°СЂС‚: СЂРµРґР°РєС‚РёСЂСѓРµРјС‹Рµ РІРјРµСЃС‚РёРјРѕСЃС‚СЊ Рё СѓСЂРѕРІРµРЅСЊ РґРѕСЃС‚СѓРїР°)
+  // Rooms (аудитории/кабинеты для карт: редактируемые вместимость и уровень доступа)
   type RoomRow = { id: string; name: string; type: string; capacity: number; accessLevel: string; floorId: string };
   const defaultRoomsList: RoomRow[] = [
-    { id: "100", name: "100", type: "РљР°Р±РёРЅРµС‚", capacity: 4, accessLevel: "green", floorId: "floor-1" },
-    { id: "101", name: "101", type: "РљР°Р±РёРЅРµС‚", capacity: 6, accessLevel: "green", floorId: "floor-1" },
-    { id: "102", name: "102", type: "РџРµСЂРµРіРѕРІРѕСЂРЅР°СЏ", capacity: 8, accessLevel: "green", floorId: "floor-1" },
-    { id: "103", name: "103", type: "РџРµСЂРµРіРѕРІРѕСЂРЅР°СЏ", capacity: 10, accessLevel: "green", floorId: "floor-1" },
-    { id: "107", name: "107", type: "Р‘РѕР»СЊС€Р°СЏ Р»РµРєС†РёРѕРЅРЅР°СЏ В«РЎРµРІРµСЂВ»", capacity: 150, accessLevel: "red", floorId: "floor-1" },
-    { id: "109", name: "109", type: "Р›РµРєС†РёРѕРЅРЅР°СЏ", capacity: 80, accessLevel: "yellow", floorId: "floor-1" },
-    { id: "110", name: "110", type: "РђСѓРґРёС‚РѕСЂРёСЏ", capacity: 40, accessLevel: "yellow", floorId: "floor-1" },
-    { id: "111", name: "111", type: "РљР°Р±РёРЅРµС‚", capacity: 2, accessLevel: "red", floorId: "floor-1" },
-    { id: "112", name: "112", type: "РЎС‚СѓРґРёСЏ", capacity: 15, accessLevel: "yellow", floorId: "floor-1" },
-    { id: "200", name: "200", type: "Р›РµРєС†РёРѕРЅРЅР°СЏ", capacity: 100, accessLevel: "yellow", floorId: "floor-2" },
-    { id: "201", name: "201", type: "РљР°Р±РёРЅРµС‚", capacity: 4, accessLevel: "green", floorId: "floor-2" },
-    { id: "202", name: "202", type: "РџРµСЂРµРіРѕРІРѕСЂРЅР°СЏ", capacity: 12, accessLevel: "green", floorId: "floor-2" },
-    { id: "300", name: "300", type: "РљРѕРЅС„РµСЂРµРЅС†-Р·Р°Р»", capacity: 200, accessLevel: "red", floorId: "floor-3" },
-    { id: "301", name: "301", type: "РљР°Р±РёРЅРµС‚", capacity: 4, accessLevel: "green", floorId: "floor-3" },
+    { id: "100", name: "100", type: "Кабинет", capacity: 4, accessLevel: "green", floorId: "floor-1" },
+    { id: "101", name: "101", type: "Кабинет", capacity: 6, accessLevel: "green", floorId: "floor-1" },
+    { id: "102", name: "102", type: "Переговорная", capacity: 8, accessLevel: "green", floorId: "floor-1" },
+    { id: "103", name: "103", type: "Переговорная", capacity: 10, accessLevel: "green", floorId: "floor-1" },
+    { id: "107", name: "107", type: "Большая лекционная «Север»", capacity: 150, accessLevel: "red", floorId: "floor-1" },
+    { id: "109", name: "109", type: "Лекционная", capacity: 80, accessLevel: "yellow", floorId: "floor-1" },
+    { id: "110", name: "110", type: "Аудитория", capacity: 40, accessLevel: "yellow", floorId: "floor-1" },
+    { id: "111", name: "111", type: "Кабинет", capacity: 2, accessLevel: "red", floorId: "floor-1" },
+    { id: "112", name: "112", type: "Студия", capacity: 15, accessLevel: "yellow", floorId: "floor-1" },
+    { id: "200", name: "200", type: "Лекционная", capacity: 100, accessLevel: "yellow", floorId: "floor-2" },
+    { id: "201", name: "201", type: "Кабинет", capacity: 4, accessLevel: "green", floorId: "floor-2" },
+    { id: "202", name: "202", type: "Переговорная", capacity: 12, accessLevel: "green", floorId: "floor-2" },
+    { id: "300", name: "300", type: "Конференц-зал", capacity: 200, accessLevel: "red", floorId: "floor-3" },
+    { id: "301", name: "301", type: "Кабинет", capacity: 4, accessLevel: "green", floorId: "floor-3" },
   ];
   let roomsStore: RoomRow[] = defaultRoomsList.map((r) => ({ ...r }));
   app.get("/api/rooms", async (_req, res) => {
@@ -3013,11 +3171,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   // Notifications
   app.get("/api/notifications/:userId", async (req, res) => {
     const { userId } = req.params;
-    // РСЃРїРѕР»СЊР·СѓРµРј withDbTimeout РґР»СЏ Р±С‹СЃС‚СЂРѕР№ РѕР±СЂР°Р±РѕС‚РєРё РѕС€РёР±РѕРє Р‘Р”
+    // Используем withDbTimeout для быстрой обработки ошибок БД
     const notifications = await withDbTimeout(
       () => storage.getNotificationsByUser(userId),
       3000,
-      [] // РџСѓСЃС‚РѕР№ РјР°СЃСЃРёРІ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+      [] // Пустой массив по умолчанию
     );
     res.json(notifications);
   });
@@ -3100,14 +3258,14 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   app.post("/api/equipment/:id/photos", upload.single('photo'), async (req, res) => {
     try {
       const { id } = req.params;
-      
+
       if (!req.file) {
         return res.status(400).json({ message: "No photo file provided" });
       }
 
       const photoUrl = `/uploads/${req.file.filename}`;
       const equipment = await storage.uploadEquipmentPhoto(id, photoUrl);
-      
+
       if (!equipment) {
         return res.status(404).json({ message: "Equipment not found" });
       }
@@ -3132,7 +3290,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         .toString()
         .trim()
         .replace(/(\.\.[/\\])/g, "")
-        .replace(/[^\p{L}0-9_\-/\\ .]/gu, "_") // С‚РѕС‡РєР° СЂР°Р·СЂРµС€РµРЅР° РґР»СЏ СЂР°СЃС€РёСЂРµРЅРёР№ С„Р°Р№Р»РѕРІ (.mp3 Рё С‚.Рґ.)
+        .replace(/[^\p{L}0-9_\-/\\ .]/gu, "_") // точка разрешена для расширений файлов (.mp3 и т.д.)
     );
     return path.join(TRANSCRIPTIONS_BASE_DIR, ...safeSegments);
   }
@@ -3165,7 +3323,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     try {
       const { name } = req.body;
       if (!name || typeof name !== "string") {
-        return res.status(400).json({ message: "РќР°Р·РІР°РЅРёРµ РїРѕРґРєР°СЃС‚Р° РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ" });
+        return res.status(400).json({ message: "Название подкаста обязательно" });
       }
 
       const dirPath = getSafeTranscriptionPath(name);
@@ -3174,7 +3332,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       res.json({ name });
     } catch (error) {
       console.error("Failed to create podcast:", error);
-      res.status(500).json({ message: "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РїРѕРґРєР°СЃС‚" });
+      res.status(500).json({ message: "Не удалось создать подкаст" });
     }
   });
 
@@ -3186,17 +3344,17 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const realPath = path.resolve(dirPath);
       const realBase = path.resolve(TRANSCRIPTIONS_BASE_DIR);
       if (!realPath.startsWith(realBase) || realPath === realBase) {
-        return res.status(400).json({ message: "РќРµРґРѕРїСѓСЃС‚РёРјРѕРµ РёРјСЏ РїРѕРґРєР°СЃС‚Р°" });
+        return res.status(400).json({ message: "Недопустимое имя подкаста" });
       }
       const stat = await fs.stat(realPath).catch(() => null);
       if (!stat || !stat.isDirectory()) {
-        return res.status(404).json({ message: "РџРѕРґРєР°СЃС‚ РЅРµ РЅР°Р№РґРµРЅ" });
+        return res.status(404).json({ message: "Подкаст не найден" });
       }
       await fs.rm(realPath, { recursive: true });
       res.json({ success: true });
     } catch (error: any) {
       console.error("Failed to delete podcast:", error);
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ РїРѕРґРєР°СЃС‚" });
+      res.status(500).json({ message: error?.message || "Не удалось удалить подкаст" });
     }
   });
 
@@ -3244,7 +3402,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const { parentPath = "", name } = req.body;
 
       if (!name || typeof name !== "string") {
-        return res.status(400).json({ message: "РќР°Р·РІР°РЅРёРµ РїР°РїРєРё РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ" });
+        return res.status(400).json({ message: "Название папки обязательно" });
       }
 
       const targetDir = getSafeTranscriptionPath(podcast, String(parentPath || ""), name);
@@ -3263,18 +3421,18 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const { podcast } = req.params;
       const { path: relativePath } = req.query;
       if (relativePath === undefined || relativePath === "") {
-        return res.status(400).json({ message: "РЈРєР°Р¶РёС‚Рµ path (С„Р°Р№Р» РёР»Рё РїР°РїРєСѓ)" });
+        return res.status(400).json({ message: "Укажите path (файл или папку)" });
       }
       const targetPath = getSafeTranscriptionPath(podcast, String(relativePath));
       const basePath = getSafeTranscriptionPath(podcast);
       const realTarget = path.resolve(targetPath);
       const realBase = path.resolve(basePath);
       if (!realTarget.startsWith(realBase)) {
-        return res.status(400).json({ message: "РќРµРґРѕРїСѓСЃС‚РёРјС‹Р№ РїСѓС‚СЊ" });
+        return res.status(400).json({ message: "Недопустимый путь" });
       }
       const stat = await fs.stat(realTarget).catch(() => null);
       if (!stat) {
-        return res.status(404).json({ message: "Р¤Р°Р№Р» РёР»Рё РїР°РїРєР° РЅРµ РЅР°Р№РґРµРЅС‹" });
+        return res.status(404).json({ message: "Файл или папка не найдены" });
       }
       if (stat.isDirectory()) {
         await fs.rm(realTarget, { recursive: true });
@@ -3284,11 +3442,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       res.json({ success: true });
     } catch (error: any) {
       console.error("Failed to delete transcription item:", error);
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ" });
+      res.status(500).json({ message: error?.message || "Не удалось удалить" });
     }
   });
 
-  // Upload file into podcast/folder (СЃРѕС…СЂР°РЅСЏРµРј РІРѕ РІСЂРµРјРµРЅРЅСѓСЋ РїР°РїРєСѓ, Р·Р°С‚РµРј РїРµСЂРµРЅРѕСЃРёРј вЂ” req.body РІ multer destination РјРѕР¶РµС‚ Р±С‹С‚СЊ РµС‰С‘ РїСѓСЃС‚)
+  // Upload file into podcast/folder (сохраняем во временную папку, затем переносим — req.body в multer destination может быть ещё пуст)
   const transcriptionUploadTempDir = path.join(process.cwd(), "uploads", "transcriptions", "_upload");
   const transcriptionUploadToTemp = multer({
     storage: multer.diskStorage({
@@ -3316,11 +3474,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
 
         if (!podcast) {
           if (req.file) await fs.unlink(req.file.path).catch(() => {});
-          return res.status(400).json({ message: "Р’С‹Р±РµСЂРёС‚Рµ РїРѕРґРєР°СЃС‚ (РїР°РїРєСѓ) РґР»СЏ Р·Р°РіСЂСѓР·РєРё" });
+          return res.status(400).json({ message: "Выберите подкаст (папку) для загрузки" });
         }
 
         if (!req.file) {
-          return res.status(400).json({ message: "Р¤Р°Р№Р» РЅРµ РІС‹Р±СЂР°РЅ" });
+          return res.status(400).json({ message: "Файл не выбран" });
         }
 
         const safePodcast = podcast.replace(/[^\p{L}0-9_\- ]/gu, "_");
@@ -3344,17 +3502,17 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       } catch (error: any) {
         if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
         console.error("Failed to upload transcription file:", error);
-        res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ С„Р°Р№Р»" });
+        res.status(500).json({ message: error?.message || "Не удалось загрузить файл" });
       }
     }
   );
 
-  // Health check РґР»СЏ AI С‚СЂР°РЅСЃРєСЂРёР±Р°С†РёРё
+  // Health check для AI транскрибации
   app.get("/api/ai-transcription/health", async (req, res) => {
     try {
       const { whisperXClient } = await import("./services/whisper-x-client.js");
       if (!whisperXClient.isConfigured()) {
-        return res.json({ available: false, message: "Whisper X API РЅРµ РЅР°СЃС‚СЂРѕРµРЅ" });
+        return res.json({ available: false, message: "Whisper X API не настроен" });
       }
       const isAvailable = await whisperXClient.healthCheck();
       res.json({ available: isAvailable });
@@ -3363,7 +3521,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // РќРѕРІС‹Р№ endpoint РґР»СЏ AI С‚СЂР°РЅСЃРєСЂРёР±Р°С†РёРё СЃ СЃРѕС…СЂР°РЅРµРЅРёРµРј РІ С‡Р°С‚
+  // Новый endpoint для AI транскрибации с сохранением в чат
   app.post(
     "/api/ai-transcription/transcribe",
     transcriptionUpload.single("file"),
@@ -3373,40 +3531,40 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           return res.status(400).json({ message: "File is required" });
         }
 
-        const { 
-          format = "txt", 
+        const {
+          format = "txt",
           language = "ru",
           numSpeakers,
           diarize = true,
-          chatSessionId, // ID С‡Р°С‚Р° РґР»СЏ СЃРѕС…СЂР°РЅРµРЅРёСЏ СЂРµР·СѓР»СЊС‚Р°С‚Р°
-          userId, // ID РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+          chatSessionId, // ID чата для сохранения результата
+          userId, // ID пользователя
         } = req.body;
         const outputFormat = format.toLowerCase();
-        
+
         const speakerCount = numSpeakers ? parseInt(numSpeakers, 10) : undefined;
 
-        const isAudioVideo = 
-          req.file.mimetype.startsWith("audio/") || 
+        const isAudioVideo =
+          req.file.mimetype.startsWith("audio/") ||
           req.file.mimetype.startsWith("video/");
 
         if (!isAudioVideo) {
-          return res.status(400).json({ 
-            message: "File must be an audio or video file" 
+          return res.status(400).json({
+            message: "File must be an audio or video file"
           });
         }
 
-        // РџСЂРѕРІРµСЂСЏРµРј РґРѕСЃС‚СѓРїРЅРѕСЃС‚СЊ Whisper X
+        // Проверяем доступность Whisper X
         const { whisperXClient } = await import("./services/whisper-x-client.js");
         if (!whisperXClient.isConfigured()) {
-          return res.status(503).json({ 
-            message: "Whisper X API РЅРµ РЅР°СЃС‚СЂРѕРµРЅ. РџСЂРѕРІРµСЂСЊС‚Рµ РїРµСЂРµРјРµРЅРЅС‹Рµ РѕРєСЂСѓР¶РµРЅРёСЏ.",
+          return res.status(503).json({
+            message: "Whisper X API не настроен. Проверьте переменные окружения.",
             available: false
           });
         }
 
         console.log(`[AI Transcription] Starting transcription for ${req.file.originalname}...`);
 
-        // РўСЂР°РЅСЃРєСЂРёР±РёСЂСѓРµРј С‡РµСЂРµР· Whisper X
+        // Транскрибируем через Whisper X
         const transcriptionResult = await whisperXClient.transcribe(req.file.path, {
           language: language === "auto" ? undefined : language,
           returnTimestamps: outputFormat !== "txt",
@@ -3416,20 +3574,20 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
 
         console.log(`[AI Transcription] Transcription completed, generating ${outputFormat.toUpperCase()}...`);
 
-        // РРјРїРѕСЂС‚РёСЂСѓРµРј РіРµРЅРµСЂР°С‚РѕСЂ РґРѕРєСѓРјРµРЅС‚РѕРІ (СЃ РѕР±СЂР°Р±РѕС‚РєРѕР№ РѕС€РёР±РѕРє)
+        // Импортируем генератор документов (с обработкой ошибок)
         let documentGenerator;
         try {
           const docGenModule = await import("./services/document-generator.js");
           documentGenerator = docGenModule.documentGenerator;
         } catch (error: any) {
-          return res.status(503).json({ 
-            message: "Р“РµРЅРµСЂР°С‚РѕСЂ РґРѕРєСѓРјРµРЅС‚РѕРІ РЅРµРґРѕСЃС‚СѓРїРµРЅ. РЈСЃС‚Р°РЅРѕРІРёС‚Рµ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё: npm install docx pdfkit",
+          return res.status(503).json({
+            message: "Генератор документов недоступен. Установите зависимости: npm install docx pdfkit",
             error: error.message,
             available: false
           });
         }
 
-        // Р“РµРЅРµСЂРёСЂСѓРµРј С„Р°Р№Р»
+        // Генерируем файл
         const outputDir = path.join(process.cwd(), "uploads", "transcriptions", "output");
         await fs.mkdir(outputDir, { recursive: true });
 
@@ -3451,10 +3609,10 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
             mimeType = "application/pdf";
             downloadFileName = `${originalName}-transcription.pdf`;
           } else {
-            // TXT С„РѕСЂРјР°С‚
+            // TXT формат
             outputPath = path.join(outputDir, `${originalName}-${timestamp}.txt`);
             let textContent = transcriptionResult.text;
-            
+
             if (transcriptionResult.segments && transcriptionResult.segments.length > 0) {
               const formatTime = (seconds: number): string => {
                 const mins = Math.floor(seconds / 60);
@@ -3469,15 +3627,15 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
                 })
                 .join("\n\n");
             }
-            
+
             await fs.writeFile(outputPath, textContent, "utf-8");
             mimeType = "text/plain";
             downloadFileName = `${originalName}-transcription.txt`;
           }
         } catch (genError: any) {
-          // Р•СЃР»Рё РѕС€РёР±РєР° СЃРІСЏР·Р°РЅР° СЃ РѕС‚СЃСѓС‚СЃС‚РІРёРµРј РїР°РєРµС‚РѕРІ, РІРѕР·РІСЂР°С‰Р°РµРј РїРѕРЅСЏС‚РЅРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ
+          // Если ошибка связана с отсутствием пакетов, возвращаем понятное сообщение
           if (genError.message && (genError.message.includes("docx") || genError.message.includes("pdfkit"))) {
-            return res.status(503).json({ 
+            return res.status(503).json({
               message: genError.message,
               available: false
             });
@@ -3491,11 +3649,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
 
         let chatMessageId: string | undefined;
 
-        // РЎРѕС…СЂР°РЅСЏРµРј СЂРµР·СѓР»СЊС‚Р°С‚ РІ С‡Р°С‚, РµСЃР»Рё СѓРєР°Р·Р°РЅ chatSessionId
+        // Сохраняем результат в чат, если указан chatSessionId
         if (chatSessionId && userId) {
           try {
-            const messageContent = `РўСЂР°РЅСЃРєСЂРёР±Р°С†РёСЏ Р·Р°РІРµСЂС€РµРЅР°:\n\nРЇР·С‹Рє: ${transcriptionResult.language || language}\nР¤РѕСЂРјР°С‚: ${outputFormat.toUpperCase()}\n${transcriptionResult.speakerCount ? `РЎРїРёРєРµСЂРѕРІ: ${transcriptionResult.speakerCount}\n` : ""}\nР¤Р°Р№Р»: ${downloadFileName}`;
-            
+            const messageContent = `Транскрибация завершена:\n\nЯзык: ${transcriptionResult.language || language}\nФормат: ${outputFormat.toUpperCase()}\n${transcriptionResult.speakerCount ? `Спикеров: ${transcriptionResult.speakerCount}\n` : ""}\nФайл: ${downloadFileName}`;
+
             const message = await storage.createChatMessage({
               sessionId: chatSessionId,
               role: "assistant",
@@ -3512,7 +3670,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
             chatMessageId = message.id;
           } catch (chatError: any) {
             console.warn("[AI Transcription] Failed to save to chat:", chatError);
-            // РќРµ РїСЂРµСЂС‹РІР°РµРј РїСЂРѕС†РµСЃСЃ, РїСЂРѕСЃС‚Рѕ РЅРµ СЃРѕС…СЂР°РЅСЏРµРј РІ С‡Р°С‚
+            // Не прерываем процесс, просто не сохраняем в чат
           }
         }
 
@@ -3533,15 +3691,15 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         });
       } catch (error: any) {
         console.error("[AI Transcription] Failed to transcribe:", error);
-        res.status(500).json({ 
+        res.status(500).json({
           message: "Failed to transcribe file",
-          error: error.message 
+          error: error.message
         });
       }
     }
   );
 
-  // РЎС‚Р°СЂС‹Р№ endpoint РґР»СЏ РѕР±СЂР°С‚РЅРѕР№ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё (deprecated)
+  // Старый endpoint для обратной совместимости (deprecated)
   app.post(
     "/api/transcriptions/transcribe",
     transcriptionUpload.single("file"),
@@ -3551,57 +3709,57 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           return res.status(400).json({ message: "File is required" });
         }
 
-        const { 
-          format = "txt", 
+        const {
+          format = "txt",
           language = "ru",
           numSpeakers,
-          diarize = true, // РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РІРєР»СЋС‡Р°РµРј РґРёР°СЂРёР·Р°С†РёСЋ
+          diarize = true, // По умолчанию включаем диаризацию
         } = req.body;
         const outputFormat = format.toLowerCase(); // "txt", "doc", "pdf"
-        
-        // РџР°СЂСЃРёРј РєРѕР»РёС‡РµСЃС‚РІРѕ СЃРїРёРєРµСЂРѕРІ
+
+        // Парсим количество спикеров
         const speakerCount = numSpeakers ? parseInt(numSpeakers, 10) : undefined;
 
-        // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ С„Р°Р№Р» СЏРІР»СЏРµС‚СЃСЏ Р°СѓРґРёРѕ РёР»Рё РІРёРґРµРѕ
-        const isAudioVideo = 
-          req.file.mimetype.startsWith("audio/") || 
+        // Проверяем, что файл является аудио или видео
+        const isAudioVideo =
+          req.file.mimetype.startsWith("audio/") ||
           req.file.mimetype.startsWith("video/");
 
         if (!isAudioVideo) {
-          return res.status(400).json({ 
-            message: "File must be an audio or video file" 
+          return res.status(400).json({
+            message: "File must be an audio or video file"
           });
         }
 
         console.log(`[Transcription] Starting transcription for ${req.file.originalname}...`);
 
-        // РРјРїРѕСЂС‚РёСЂСѓРµРј СЃРµСЂРІРёСЃС‹
+        // Импортируем сервисы
         const { whisperXClient } = await import("./services/whisper-x-client.js");
-        
-        // РРјРїРѕСЂС‚РёСЂСѓРµРј РіРµРЅРµСЂР°С‚РѕСЂ РґРѕРєСѓРјРµРЅС‚РѕРІ (СЃ РѕР±СЂР°Р±РѕС‚РєРѕР№ РѕС€РёР±РѕРє)
+
+        // Импортируем генератор документов (с обработкой ошибок)
         let documentGenerator;
         try {
           const docGenModule = await import("./services/document-generator.js");
           documentGenerator = docGenModule.documentGenerator;
         } catch (error: any) {
-          return res.status(503).json({ 
-            message: "Р“РµРЅРµСЂР°С‚РѕСЂ РґРѕРєСѓРјРµРЅС‚РѕРІ РЅРµРґРѕСЃС‚СѓРїРµРЅ. РЈСЃС‚Р°РЅРѕРІРёС‚Рµ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё: npm install docx pdfkit",
+          return res.status(503).json({
+            message: "Генератор документов недоступен. Установите зависимости: npm install docx pdfkit",
             error: error.message,
             available: false
           });
         }
 
-        // РўСЂР°РЅСЃРєСЂРёР±РёСЂСѓРµРј С‡РµСЂРµР· Whisper X СЃ РґРёР°СЂРёР·Р°С†РёРµР№ СЃРїРёРєРµСЂРѕРІ
+        // Транскрибируем через Whisper X с диаризацией спикеров
         const transcriptionResult = await whisperXClient.transcribe(req.file.path, {
           language: language === "auto" ? undefined : language,
-          returnTimestamps: outputFormat !== "txt", // Р’СЂРµРјРµРЅРЅС‹Рµ РјРµС‚РєРё РґР»СЏ DOC/PDF
+          returnTimestamps: outputFormat !== "txt", // Временные метки для DOC/PDF
           diarize: diarize === true || diarize === "true",
           numSpeakers: speakerCount && speakerCount > 0 ? speakerCount : undefined,
         });
 
         console.log(`[Transcription] Transcription completed, generating ${outputFormat.toUpperCase()}...`);
 
-        // Р“РµРЅРµСЂРёСЂСѓРµРј С„Р°Р№Р» РІ РЅСѓР¶РЅРѕРј С„РѕСЂРјР°С‚Рµ
+        // Генерируем файл в нужном формате
         const outputDir = path.join(process.cwd(), "uploads", "transcriptions", "output");
         await fs.mkdir(outputDir, { recursive: true });
 
@@ -3623,11 +3781,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
             mimeType = "application/pdf";
             downloadFileName = `${originalName}-transcription.pdf`;
           } else {
-            // TXT С„РѕСЂРјР°С‚
+            // TXT формат
             outputPath = path.join(outputDir, `${originalName}-${timestamp}.txt`);
             let textContent = transcriptionResult.text;
-            
-            // Р•СЃР»Рё РµСЃС‚СЊ СЃРµРіРјРµРЅС‚С‹, РґРѕР±Р°РІР»СЏРµРј РІСЂРµРјРµРЅРЅС‹Рµ РјРµС‚РєРё Рё СЃРїРёРєРµСЂРѕРІ
+
+            // Если есть сегменты, добавляем временные метки и спикеров
             if (transcriptionResult.segments && transcriptionResult.segments.length > 0) {
               const formatTime = (seconds: number): string => {
                 const mins = Math.floor(seconds / 60);
@@ -3642,15 +3800,15 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
                 })
                 .join("\n\n");
             }
-            
+
             await fs.writeFile(outputPath, textContent, "utf-8");
             mimeType = "text/plain";
             downloadFileName = `${originalName}-transcription.txt`;
           }
         } catch (genError: any) {
-          // Р•СЃР»Рё РѕС€РёР±РєР° СЃРІСЏР·Р°РЅР° СЃ РѕС‚СЃСѓС‚СЃС‚РІРёРµРј РїР°РєРµС‚РѕРІ, РІРѕР·РІСЂР°С‰Р°РµРј РїРѕРЅСЏС‚РЅРѕРµ СЃРѕРѕР±С‰РµРЅРёРµ
+          // Если ошибка связана с отсутствием пакетов, возвращаем понятное сообщение
           if (genError.message && (genError.message.includes("docx") || genError.message.includes("pdfkit"))) {
-            return res.status(503).json({ 
+            return res.status(503).json({
               message: genError.message,
               available: false
             });
@@ -3661,7 +3819,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         const relativePath = path.relative(process.cwd(), outputPath);
         const fileUrl = `/${relativePath.replace(/\\\\/g, "/")}`;
 
-        // РџРѕР»СѓС‡Р°РµРј СЂР°Р·РјРµСЂ С„Р°Р№Р»Р°
+        // Получаем размер файла
         const stats = await fs.stat(outputPath);
 
         res.json({
@@ -3679,9 +3837,9 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         });
       } catch (error: any) {
         console.error("[Transcription] Failed to transcribe:", error);
-        res.status(500).json({ 
+        res.status(500).json({
           message: "Failed to transcribe file",
-          error: error.message 
+          error: error.message
         });
       }
     }
@@ -3692,13 +3850,13 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     try {
       const { equipmentId } = req.query;
       let reservations;
-      
+
       if (equipmentId) {
         reservations = await storage.getEquipmentReservationsByEquipment(equipmentId as string);
       } else {
         reservations = await storage.getEquipmentReservations();
       }
-      
+
       res.json(reservations);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch equipment reservations" });
@@ -3708,21 +3866,21 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   app.post("/api/equipment-reservations", async (req, res) => {
     try {
       const reservationData = insertEquipmentReservationSchema.parse(req.body);
-      
+
       // Check for conflicts
       const conflicts = await storage.checkEquipmentConflicts(
         reservationData.equipmentId!,
         new Date(reservationData.startTime),
         new Date(reservationData.endTime)
       );
-      
+
       if (conflicts.length > 0) {
-        return res.status(409).json({ 
+        return res.status(409).json({
           message: "Equipment is already reserved for this time period",
-          conflicts 
+          conflicts
         });
       }
-      
+
       const reservation = await storage.createEquipmentReservation(reservationData);
       res.json(reservation);
     } catch (error) {
@@ -3758,14 +3916,14 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     try {
       const { id } = req.params;
       const system = await storage.getSystemById(id);
-      
+
       if (!system || !system.ipAddress) {
         return res.status(404).json({ message: "System not found or no IP address" });
       }
 
       const isOnline = await checkIP(system.ipAddress);
       const status = isOnline ? "online" : "offline";
-      
+
       const updatedSystem = await storage.pingSystem(id, status);
       res.json({ system: updatedSystem, status });
     } catch (error) {
@@ -3777,14 +3935,14 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   app.post("/api/auth/telegram", async (req, res) => {
     try {
       const telegramData = insertTelegramUserSchema.parse(req.body);
-      
+
       // Check if telegram user already exists
       let telegramUser = await storage.getTelegramUserByTelegramId(telegramData.telegramId);
-      
+
       if (!telegramUser) {
         telegramUser = await storage.createTelegramUser(telegramData);
       }
-      
+
       res.json(telegramUser);
     } catch (error) {
       res.status(400).json({ message: "Invalid telegram data" });
@@ -3795,11 +3953,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     try {
       const { telegramId, userId } = req.body;
       const telegramUser = await storage.linkTelegramUser(telegramId, userId);
-      
+
       if (!telegramUser) {
         return res.status(404).json({ message: "Telegram user not found" });
       }
-      
+
       res.json(telegramUser);
     } catch (error) {
       res.status(500).json({ message: "Failed to link telegram user" });
@@ -3882,9 +4040,9 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     try {
       const currentUser = req.user || null;
       const userPermissions = (currentUser?.permissions || []) as string[];
-      
+
       const { assigneeId, creatorId, status, yougileBoardId } = req.query;
-      
+
       let tasks = await withDbTimeout(async () => {
         if (yougileBoardId) {
           const boardId = yougileBoardId as string;
@@ -3900,11 +4058,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         } else {
           list = await storage.getTasks();
         }
-        // В«РњРѕРё Р·Р°РґР°С‡РёВ»: С‚РѕР»СЊРєРѕ Р»РѕРєР°Р»СЊРЅС‹Рµ Р·Р°РґР°С‡Рё (Р±РµР· РїСЂРёРІСЏР·РєРё Рє YouGile), С‡С‚РѕР±С‹ Р·Р°РґР°С‡Рё РёР· РґРѕСЃРѕРє YouGile РЅРµ РґСѓР±Р»РёСЂРѕРІР°Р»РёСЃСЊ
+        // «Мои задачи»: только локальные задачи (без привязки к YouGile), чтобы задачи из досок YouGile не дублировались
         return list.filter((t: any) => !t.yougileBoardId);
-      }, 3000, []); // 3 СЃРµРєСѓРЅРґС‹ РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ РѕС‚РІРµС‚Р°
-      
-      // Р¤РёР»СЊС‚СЂСѓРµРј Р·Р°РґР°С‡Рё РїРѕ РїСЂР°РІР°Рј РґРѕСЃС‚СѓРїР° (РґР»СЏ РґРѕСЃРєРё YouGile РЅРµ С„РёР»СЊС‚СЂСѓРµРј РїРѕ Р°РІС‚РѕСЂСѓ вЂ” РїРѕРєР°Р·С‹РІР°РµРј РІСЃРµ Р·Р°РґР°С‡Рё РґРѕСЃРєРё)
+      }, 3000, []); // 3 секунды для быстрого ответа
+
+      // Фильтруем задачи по правам доступа (для доски YouGile не фильтруем по автору — показываем все задачи доски)
       if (currentUser && tasks && !yougileBoardId) {
         if (currentUser.role !== 'admin' && !userPermissions.includes('tasks:view_all')) {
           const companyIds = await getUserCompanyIds(currentUser).catch(() => []);
@@ -3936,7 +4094,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       res.json(tasks || []);
     } catch (error: any) {
       console.error("[Tasks API] Error fetching tasks:", error);
-      // Р’РѕР·РІСЂР°С‰Р°РµРј РїСѓСЃС‚РѕР№ РјР°СЃСЃРёРІ РІРјРµСЃС‚Рѕ РѕС€РёР±РєРё, С‡С‚РѕР±С‹ UI РЅРµ РєСЂР°С€РёР»СЃСЏ
+      // Возвращаем пустой массив вместо ошибки, чтобы UI не крашился
       res.status(500).json([]);
     }
   });
@@ -3962,7 +4120,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       if (!body.creatorId && currentUser?.id) body.creatorId = currentUser.id;
       if (!body.creatorId) {
         return res.status(400).json({
-          message: "Р”Р»СЏ СЃРѕР·РґР°РЅРёСЏ Р·Р°РґР°С‡Рё РЅРµРѕР±С…РѕРґРёРјРѕ РІРѕР№С‚Рё РІ СЃРёСЃС‚РµРјСѓ",
+          message: "Для создания задачи необходимо войти в систему",
           error: "creatorId is required",
         });
       }
@@ -3985,16 +4143,16 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         if (companyIds[0]) body.companyId = companyIds[0];
       }
       const taskData = insertTaskSchema.parse(body);
-      
+
       console.log("[Tasks] Saving to database...");
-      // РЈР±РёСЂР°РµРј С‚Р°Р№РјР°СѓС‚ РґР»СЏ СЃРѕР·РґР°РЅРёСЏ Р·Р°РґР°С‡ - РїСѓСЃС‚СЊ СЂР°Р±РѕС‚Р°РµС‚ РЅРѕСЂРјР°Р»СЊРЅРѕ
+      // Убираем таймаут для создания задач - пусть работает нормально
       const task = await storage.createTask(taskData);
-      
+
       if (!task) {
         throw new Error("Failed to create task");
       }
-      
-      // Create history entry (РЅРµ Р±Р»РѕРєРёСЂСѓРµРј, РµСЃР»Рё РЅРµ РїРѕР»СѓС‡РёС‚СЃСЏ)
+
+      // Create history entry (не блокируем, если не получится)
       try {
         await storage.createTaskHistory({
           taskId: task.id,
@@ -4004,32 +4162,32 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         });
       } catch (historyError) {
         console.warn("[Tasks] Failed to create history entry:", historyError);
-        // РќРµ РїСЂРµСЂС‹РІР°РµРј СЃРѕР·РґР°РЅРёРµ Р·Р°РґР°С‡Рё, РµСЃР»Рё РёСЃС‚РѕСЂРёСЏ РЅРµ СЃРѕР·РґР°Р»Р°СЃСЊ
+        // Не прерываем создание задачи, если история не создалась
       }
-      
-      // РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРѕРµ СЃРѕР·РґР°РЅРёРµ СЃРѕР±С‹С‚РёСЏ РІ РєР°Р»РµРЅРґР°СЂРµ РґР»СЏ Р·Р°РґР°С‡Рё СЃ РґРµРґР»Р°Р№РЅРѕРј
+
+      // Автоматическое создание события в календаре для задачи с дедлайном
       if (task.dueDate) {
         try {
           const dueDate = new Date(task.dueDate);
           const startTime = new Date(dueDate);
-          startTime.setHours(9, 0, 0, 0); // РќР°С‡Р°Р»Рѕ РІ 9:00
+          startTime.setHours(9, 0, 0, 0); // Начало в 9:00
           const endTime = new Date(dueDate);
-          endTime.setHours(18, 0, 0, 0); // РљРѕРЅРµС† РІ 18:00
-          
-          // РџСЂРѕРІРµСЂСЏРµРј, РЅРµС‚ Р»Рё СѓР¶Рµ СЃРѕР±С‹С‚РёСЏ РґР»СЏ СЌС‚РѕР№ Р·Р°РґР°С‡Рё
+          endTime.setHours(18, 0, 0, 0); // Конец в 18:00
+
+          // Проверяем, нет ли уже события для этой задачи
           const existingEvents = await storage.getEvents();
-          const taskEventExists = existingEvents.some(e => 
-            e.title === `Р”РµРґР»Р°Р№РЅ: ${task.title}` && 
+          const taskEventExists = existingEvents.some(e =>
+            e.title === `Дедлайн: ${task.title}` &&
             new Date(e.startTime).toDateString() === dueDate.toDateString()
           );
-          
+
           if (!taskEventExists) {
             await storage.createEvent({
-              title: `Р”РµРґР»Р°Р№РЅ: ${task.title}`,
-              description: task.description || `Р—Р°РґР°С‡Р°: ${task.title}`,
+              title: `Дедлайн: ${task.title}`,
+              description: task.description || `Задача: ${task.title}`,
               startTime: startTime,
               endTime: endTime,
-              location: "РћС„РёСЃ",
+              location: "Офис",
               organizerId: taskData.creatorId,
               type: "meeting",
               status: "scheduled"
@@ -4038,17 +4196,17 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           }
         } catch (eventError) {
           console.warn("[Tasks] Failed to create calendar event:", eventError);
-          // РќРµ РїСЂРµСЂС‹РІР°РµРј СЃРѕР·РґР°РЅРёРµ Р·Р°РґР°С‡Рё, РµСЃР»Рё СЃРѕР±С‹С‚РёРµ РЅРµ СЃРѕР·РґР°Р»РѕСЃСЊ
+          // Не прерываем создание задачи, если событие не создалось
         }
       }
-      
-      // РЈРІРµРґРѕРјР»РµРЅРёРµ РёСЃРїРѕР»РЅРёС‚РµР»СЋ, РµСЃР»Рё Р·Р°РґР°С‡Р° РЅР°Р·РЅР°С‡РµРЅР°
+
+      // Уведомление исполнителю, если задача назначена
       if (task.assigneeId) {
         try {
           await storage.createNotification({
             userId: task.assigneeId,
-            title: "РќРѕРІР°СЏ Р·Р°РґР°С‡Р°",
-            message: `Р’Р°Рј РЅР°Р·РЅР°С‡РµРЅР° Р·Р°РґР°С‡Р°: ${task.title}`,
+            title: "Новая задача",
+            message: `Вам назначена задача: ${task.title}`,
             type: "info",
           });
         } catch (notifErr) {
@@ -4056,7 +4214,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         }
       }
 
-      // РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ СЃ YouGile: СЃРѕР·РґР°С‘Рј Р·Р°РґР°С‡Сѓ РІ С‚РѕР№ РєРѕР»РѕРЅРєРµ, РєРѕС‚РѕСЂСѓСЋ РІС‹Р±СЂР°Р» РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ (status = id РєРѕР»РѕРЅРєРё YouGile РґР»СЏ РґРѕСЃРѕРє)
+      // Синхронизация с YouGile: создаём задачу в той колонке, которую выбрал пользователь (status = id колонки YouGile для досок)
       if (task) {
         try {
           const { isYouGileConfigured, yougileEnqueueCreate, yougileGetColumns, getYouGileDefaultColumnId, getYouGileColumnMap } = await import("./yougile");
@@ -4108,11 +4266,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       if (error?.stack) console.error(error.stack);
       const isZod = error?.name === "ZodError" || errMsg.includes("Invalid");
       const message = isZod
-        ? "РџСЂРѕРІРµСЂСЊС‚Рµ РїРѕР»СЏ: РЅР°Р·РІР°РЅРёРµ РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ; СЃС‚Р°С‚СѓСЃ Рё РїСЂРёРѕСЂРёС‚РµС‚ вЂ” РёР· СЃРїРёСЃРєР°"
-        : (errMsg || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ Р·Р°РґР°С‡Сѓ");
-      res.status(400).json({ 
+        ? "Проверьте поля: название обязательно; статус и приоритет — из списка"
+        : (errMsg || "Не удалось создать задачу");
+      res.status(400).json({
         message,
-        error: errMsg 
+        error: errMsg
       });
     }
   });
@@ -4124,7 +4282,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       if (!oldTask) {
         return res.status(404).json({ message: "Task not found" });
       }
-      
+
       // Extract userId from request body before updating
       const { userId, ...updateData } = req.body;
       for (const key of ["dueDate", "startDate", "completedAt"] as const) {
@@ -4147,16 +4305,16 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           delete updateData.projectColumnId;
         }
       }
-      
+
       const task = await storage.updateTask(id, updateData);
-      
-      // РЈРІРµРґРѕРјР»РµРЅРёРµ РЅРѕРІРѕРјСѓ РёСЃРїРѕР»РЅРёС‚РµР»СЋ РїСЂРё СЃРјРµРЅРµ РЅР°Р·РЅР°С‡РµРЅРёСЏ
+
+      // Уведомление новому исполнителю при смене назначения
       if (updateData.assigneeId != null && updateData.assigneeId !== oldTask.assigneeId && task.assigneeId) {
         try {
           await storage.createNotification({
             userId: task.assigneeId,
-            title: "Р—Р°РґР°С‡Р° РЅР°Р·РЅР°С‡РµРЅР°",
-            message: `Р’Р°Рј РЅР°Р·РЅР°С‡РµРЅР° Р·Р°РґР°С‡Р°: ${task.title}`,
+            title: "Задача назначена",
+            message: `Вам назначена задача: ${task.title}`,
             type: "info",
           });
         } catch (notifErr) {
@@ -4179,8 +4337,8 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           // Don't fail the update if history creation fails
         }
       }
-      
-      // РћР±РЅРѕРІР»РµРЅРёРµ/СЃРѕР·РґР°РЅРёРµ СЃРѕР±С‹С‚РёСЏ РІ РєР°Р»РµРЅРґР°СЂРµ РґР»СЏ Р·Р°РґР°С‡Рё СЃ РґРµРґР»Р°Р№РЅРѕРј
+
+      // Обновление/создание события в календаре для задачи с дедлайном
       if (task?.dueDate) {
         try {
           const dueDate = new Date(task.dueDate);
@@ -4188,29 +4346,29 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           startTime.setHours(9, 0, 0, 0);
           const endTime = new Date(dueDate);
           endTime.setHours(18, 0, 0, 0);
-          
+
           const existingEvents = await storage.getEvents();
-          const taskEvent = existingEvents.find(e => 
-            e.title === `Р”РµРґР»Р°Р№РЅ: ${task.title}` || 
-            (e.title?.includes(`Р”РµРґР»Р°Р№РЅ: ${oldTask.title}`) && oldTask.title === task.title)
+          const taskEvent = existingEvents.find(e =>
+            e.title === `Дедлайн: ${task.title}` ||
+            (e.title?.includes(`Дедлайн: ${oldTask.title}`) && oldTask.title === task.title)
           );
-          
+
           if (taskEvent) {
-            // РћР±РЅРѕРІР»СЏРµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµРµ СЃРѕР±С‹С‚РёРµ
+            // Обновляем существующее событие
             await storage.updateEvent(taskEvent.id, {
               startTime: startTime,
               endTime: endTime,
-              title: `Р”РµРґР»Р°Р№РЅ: ${task.title}`,
-              description: task.description || `Р—Р°РґР°С‡Р°: ${task.title}`
+              title: `Дедлайн: ${task.title}`,
+              description: task.description || `Задача: ${task.title}`
             });
           } else {
-            // РЎРѕР·РґР°РµРј РЅРѕРІРѕРµ СЃРѕР±С‹С‚РёРµ
+            // Создаем новое событие
             await storage.createEvent({
-              title: `Р”РµРґР»Р°Р№РЅ: ${task.title}`,
-              description: task.description || `Р—Р°РґР°С‡Р°: ${task.title}`,
+              title: `Дедлайн: ${task.title}`,
+              description: task.description || `Задача: ${task.title}`,
               startTime: startTime,
               endTime: endTime,
-              location: "РћС„РёСЃ",
+              location: "Офис",
               organizerId: task.creatorId,
               type: "meeting",
               status: "scheduled"
@@ -4220,12 +4378,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           console.warn("[Tasks] Failed to update/create calendar event:", eventError);
         }
       } else if (oldTask?.dueDate && !task?.dueDate) {
-        // Р•СЃР»Рё РґРµРґР»Р°Р№РЅ СѓРґР°Р»РµРЅ, СѓРґР°Р»СЏРµРј СЃРѕР±С‹С‚РёРµ РёР· РєР°Р»РµРЅРґР°СЂСЏ
+        // Если дедлайн удален, удаляем событие из календаря
         try {
           const existingEvents = await storage.getEvents();
-          const taskEvent = existingEvents.find(e => 
-            e.title === `Р”РµРґР»Р°Р№РЅ: ${task.title}` || 
-            e.title === `Р”РµРґР»Р°Р№РЅ: ${oldTask.title}`
+          const taskEvent = existingEvents.find(e =>
+            e.title === `Дедлайн: ${task.title}` ||
+            e.title === `Дедлайн: ${oldTask.title}`
           );
           if (taskEvent) {
             await storage.deleteEvent(taskEvent.id);
@@ -4235,7 +4393,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         }
       }
 
-      // РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ СЃ YouGile: СЃС‚Р°РІРёРј РІ РѕС‡РµСЂРµРґСЊ (РїСЂРё Р»РёРјРёС‚Рµ API Р·Р°РїСЂРѕСЃС‹ РІС‹РїРѕР»РЅСЏС‚СЃСЏ РїРѕР·Р¶Рµ)
+      // Синхронизация с YouGile: ставим в очередь (при лимите API запросы выполнятся позже)
       if (oldTask && (oldTask as any).yougileTaskId) {
         try {
           const { isYouGileConfigured, yougileEnqueueUpdate, getYouGileColumnMap } = await import("./yougile");
@@ -4258,7 +4416,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           console.warn("[Tasks] YouGile sync on update failed:", ygErr?.message || ygErr);
         }
       }
-      
+
       res.json(task);
     } catch (error) {
       console.error("Error updating task:", error);
@@ -4323,8 +4481,8 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         try {
           await storage.createNotification({
             userId: task.assigneeId,
-            title: "РќРѕРІС‹Р№ РєРѕРјРјРµРЅС‚Р°СЂРёР№ Рє Р·Р°РґР°С‡Рµ",
-            message: `Р”РѕР±Р°РІР»РµРЅ РєРѕРјРјРµРЅС‚Р°СЂРёР№ Рє Р·Р°РґР°С‡Рµ: ${task.title}`,
+            title: "Новый комментарий к задаче",
+            message: `Добавлен комментарий к задаче: ${task.title}`,
             type: "info",
           });
         } catch (e) {
@@ -4364,16 +4522,16 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   // User Activity Logs (Admin only)
   app.get("/api/admin/user-logs", async (req, res) => {
     try {
-      // РџСЂРѕРІРµСЂРєР° Р°СѓС‚РµРЅС‚РёС„РёРєР°С†РёРё С‡РµСЂРµР· Р·Р°РіРѕР»РѕРІРєРё РёР»Рё СЃРµСЃСЃРёСЋ
-      // Р’ Р±СѓРґСѓС‰РµРј РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ middleware РґР»СЏ РїСЂРѕРІРµСЂРєРё С‚РѕРєРµРЅР°
-      // РџРѕРєР° СЂР°Р·СЂРµС€Р°РµРј РґРѕСЃС‚СѓРї (РІ РїСЂРѕРґР°РєС€РµРЅРµ РЅСѓР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РїСЂРѕРІРµСЂРєСѓ С‚РѕРєРµРЅР° Рё СЂРѕР»Рё admin)
+      // Проверка аутентификации через заголовки или сессию
+      // В будущем можно добавить middleware для проверки токена
+      // Пока разрешаем доступ (в продакшене нужно добавить проверку токена и роли admin)
 
       const { userId, startDate, endDate, eventType, entityType } = req.query;
-      
+
       let taskHistory: any[] = [];
       let analyticsEvents: any[] = [];
 
-      // РџРѕР»СѓС‡Р°РµРј РёСЃС‚РѕСЂРёСЋ Р·Р°РґР°С‡ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+      // Получаем историю задач пользователя
       if (userId) {
         const allTasks = await storage.getTasks();
         const userTasks = allTasks.filter(t => t.creatorId === userId || t.assigneeId === userId);
@@ -4382,7 +4540,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           taskHistory.push(...history.filter(h => h.userId === userId));
         }
       } else {
-        // Р•СЃР»Рё userId РЅРµ СѓРєР°Р·Р°РЅ, РїРѕР»СѓС‡Р°РµРј РІСЃРµ Р»РѕРіРё
+        // Если userId не указан, получаем все логи
         const allTasks = await storage.getTasks();
         for (const task of allTasks) {
           const history = await storage.getTaskHistory(task.id);
@@ -4390,32 +4548,32 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         }
       }
 
-      // РџРѕР»СѓС‡Р°РµРј Р°РЅР°Р»РёС‚РёС‡РµСЃРєРёРµ СЃРѕР±С‹С‚РёСЏ
+      // Получаем аналитические события
       const entityTypeFilter = entityType && entityType !== "all" ? entityType as string : undefined;
       analyticsEvents = await storage.getAnalyticsEvents(
-        entityTypeFilter || "user", 
-        startDate ? new Date(startDate as string) : undefined, 
+        entityTypeFilter || "user",
+        startDate ? new Date(startDate as string) : undefined,
         endDate ? new Date(endDate as string) : undefined
       );
-      
-      // Р¤РёР»СЊС‚СЂСѓРµРј РїРѕ userId, РµСЃР»Рё СѓРєР°Р·Р°РЅ
+
+      // Фильтруем по userId, если указан
       if (userId) {
         analyticsEvents = analyticsEvents.filter(e => e.data?.userId === userId);
       }
-      
-      // Р¤РёР»СЊС‚СЂСѓРµРј РїРѕ eventType, РµСЃР»Рё СѓРєР°Р·Р°РЅ
+
+      // Фильтруем по eventType, если указан
       if (eventType && eventType !== "all") {
         analyticsEvents = analyticsEvents.filter(e => e.eventType === eventType);
       }
 
-      // РћР±СЉРµРґРёРЅСЏРµРј Рё СЃРѕСЂС‚РёСЂСѓРµРј РїРѕ РґР°С‚Рµ
+      // Объединяем и сортируем по дате
       const allLogs = [
         ...taskHistory.map(h => ({
           id: h.id,
           type: "task_history",
           userId: h.userId,
           action: h.action,
-          description: `Р—Р°РґР°С‡Р°: ${h.action}`,
+          description: `Задача: ${h.action}`,
           data: { taskId: h.taskId, oldValue: h.oldValue, newValue: h.newValue },
           timestamp: h.createdAt
         })),
@@ -4540,10 +4698,10 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       .sort()
       .map(key => `${key}=${authData[key]}`)
       .join('\n');
-    
+
     const secretKey = crypto.createHash('sha256').update(botToken).digest();
     const hmac = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
-    
+
     return hmac === hash;
   }
 
@@ -4551,23 +4709,23 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     try {
       const telegramData = req.body;
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
-      
+
       // For development, skip verification if no bot token
       const isVerified = botToken ? verifyTelegramAuth(telegramData, botToken) : true;
-      
+
       if (!isVerified) {
         return res.status(401).json({ message: "Invalid Telegram auth data" });
       }
 
       const telegramId = String(telegramData.id);
-      
+
       // Check if user exists by telegram ID
       let user = await storage.getUserByTelegramId(telegramId);
-      
+
       if (!user) {
         // Check if telegram user record exists
         let telegramUser = await storage.getTelegramUserByTelegramId(telegramId);
-        
+
         if (!telegramUser) {
           // Create telegram user record
           telegramUser = await storage.createTelegramUser({
@@ -4608,15 +4766,15 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         await storage.updateUser(user.id, { lastLogin: new Date() });
       }
 
-      res.json({ 
-        user: { 
-          id: user.id, 
-          username: user.username, 
-          name: user.name, 
+      res.json({
+        user: {
+          id: user.id,
+          username: user.username,
+          name: user.name,
           role: user.role,
           avatar: user.avatar,
           permissions: user.permissions
-        } 
+        }
       });
     } catch (error) {
       console.error("Telegram auth error:", error);
@@ -4636,16 +4794,16 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   });
 
   // ============= TELEGRAM GATEWAY AUTH =============
-  // РҐСЂР°РЅРёР»РёС‰Рµ Р°РєС‚РёРІРЅС‹С… РєРѕРґРѕРІ Р°РІС‚РѕСЂРёР·Р°С†РёРё (РІ production Р»СѓС‡С€Рµ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ Redis)
+  // Хранилище активных кодов авторизации (в production лучше использовать Redis)
   const authCodes = new Map<string, {
     code: string;
-    telegramId: string; // РќРѕРјРµСЂ С‚РµР»РµС„РѕРЅР°
-    chatId: string; // РќРѕРјРµСЂ С‚РµР»РµС„РѕРЅР°
+    telegramId: string; // Номер телефона
+    chatId: string; // Номер телефона
     expiresAt: number;
     hash: string;
   }>();
 
-  // РћС‡РёСЃС‚РєР° РёСЃС‚РµРєС€РёС… РєРѕРґРѕРІ РєР°Р¶РґС‹Рµ 5 РјРёРЅСѓС‚
+  // Очистка истекших кодов каждые 5 минут
   setInterval(() => {
     const now = Date.now();
     for (const [key, value] of authCodes.entries()) {
@@ -4656,37 +4814,37 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   }, 5 * 60 * 1000);
 
   /**
-   * Р—Р°РїСЂРѕСЃ РєРѕРґР° Р°РІС‚РѕСЂРёР·Р°С†РёРё С‡РµСЂРµР· Telegram
-   * РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РѕС‚РїСЂР°РІР»СЏРµС‚ /start РёР»Рё /login Р±РѕС‚Сѓ, Р±РѕС‚ РѕС‚РїСЂР°РІР»СЏРµС‚ РєРѕРґ
-   * Р—Р°С‚РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РІРІРѕРґРёС‚ РєРѕРґ РЅР° СЃР°Р№С‚Рµ
+   * Запрос кода авторизации через Telegram
+   * Пользователь отправляет /start или /login боту, бот отправляет код
+   * Затем пользователь вводит код на сайте
    */
   app.post("/api/auth/telegram/request-code", async (req, res) => {
     try {
       const { telegramId, chatId } = req.body;
 
       if (!telegramId || !chatId) {
-        return res.status(400).json({ message: "Telegram ID Рё Chat ID РѕР±СЏР·Р°С‚РµР»СЊРЅС‹" });
+        return res.status(400).json({ message: "Telegram ID и Chat ID обязательны" });
       }
 
       if (!telegramBot.isConfigured()) {
-        return res.status(503).json({ 
-          message: "Telegram Р±РѕС‚ РЅРµ РЅР°СЃС‚СЂРѕРµРЅ. Р”РѕР±Р°РІСЊС‚Рµ TELEGRAM_BOT_TOKEN РІ .env" 
+        return res.status(503).json({
+          message: "Telegram бот не настроен. Добавьте TELEGRAM_BOT_TOKEN в .env"
         });
       }
 
-      // РџРѕР»СѓС‡Р°РµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РїРѕР»СЊР·РѕРІР°С‚РµР»Рµ
+      // Получаем информацию о пользователе
       const userInfo = await telegramBot.getUserInfo(chatId);
       if (!userInfo) {
-        return res.status(404).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ РІ Telegram" });
+        return res.status(404).json({ message: "Пользователь не найден в Telegram" });
       }
 
-      // Р“РµРЅРµСЂРёСЂСѓРµРј РєРѕРґ
+      // Генерируем код
       const code = telegramBot.generateAuthCode();
       const timestamp = Date.now();
-      const expiresAt = timestamp + 10 * 60 * 1000; // 10 РјРёРЅСѓС‚
+      const expiresAt = timestamp + 10 * 60 * 1000; // 10 минут
       const hash = telegramBot.createCodeHash(code, telegramId, timestamp);
 
-      // РЎРѕС…СЂР°РЅСЏРµРј РєРѕРґ
+      // Сохраняем код
       const codeKey = `${telegramId}:${timestamp}`;
       authCodes.set(codeKey, {
         code,
@@ -4700,99 +4858,99 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         hash,
       });
 
-      // РћС‚РїСЂР°РІР»СЏРµРј РєРѕРґ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ С‡РµСЂРµР· Р±РѕС‚Р°
-      const message = `рџ”ђ РљРѕРґ Р°РІС‚РѕСЂРёР·Р°С†РёРё РґР»СЏ StreamDesk:\n\n` +
+      // Отправляем код пользователю через бота
+      const message = `🔐 Код авторизации для StreamDesk:\n\n` +
         `\`${code}\`\n\n` +
-        `Р’РІРµРґРёС‚Рµ СЌС‚РѕС‚ РєРѕРґ РЅР° СЃР°Р№С‚Рµ РґР»СЏ РІС…РѕРґР°.\n` +
-        `РљРѕРґ РґРµР№СЃС‚РІРёС‚РµР»РµРЅ 10 РјРёРЅСѓС‚.`;
+        `Введите этот код на сайте для входа.\n` +
+        `Код действителен 10 минут.`;
 
       const sent = await telegramBot.sendMessage(chatId, message, {
         parse_mode: "Markdown",
       });
 
       if (!sent) {
-        return res.status(500).json({ message: "РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ РєРѕРґ С‡РµСЂРµР· Telegram" });
+        return res.status(500).json({ message: "Не удалось отправить код через Telegram" });
       }
 
-      // Р’РѕР·РІСЂР°С‰Р°РµРј С‚РѕР»СЊРєРѕ timestamp РґР»СЏ Р±РµР·РѕРїР°СЃРЅРѕСЃС‚Рё
+      // Возвращаем только timestamp для безопасности
       res.json({
         success: true,
         timestamp,
-        message: "РљРѕРґ РѕС‚РїСЂР°РІР»РµРЅ РІ Telegram",
+        message: "Код отправлен в Telegram",
       });
     } catch (error: any) {
       console.error("[Telegram Gateway] Error requesting code:", error);
-      res.status(500).json({ message: "РћС€РёР±РєР° РїСЂРё Р·Р°РїСЂРѕСЃРµ РєРѕРґР° Р°РІС‚РѕСЂРёР·Р°С†РёРё" });
+      res.status(500).json({ message: "Ошибка при запросе кода авторизации" });
     }
   });
 
   /**
-   * РџСЂРѕРІРµСЂРєР° РєРѕРґР° Р°РІС‚РѕСЂРёР·Р°С†РёРё
+   * Проверка кода авторизации
    */
   app.post("/api/auth/telegram/verify-code", async (req, res) => {
     try {
       const { code, phoneNumber, timestamp } = req.body;
 
       if (!code || !phoneNumber || !timestamp) {
-        return res.status(400).json({ message: "РљРѕРґ, РЅРѕРјРµСЂ С‚РµР»РµС„РѕРЅР° Рё timestamp РѕР±СЏР·Р°С‚РµР»СЊРЅС‹" });
+        return res.status(400).json({ message: "Код, номер телефона и timestamp обязательны" });
       }
 
-      // РС‰РµРј РєРѕРґ
+      // Ищем код
       const codeKey = `${phoneNumber}:${timestamp}`;
       const codeData = authCodes.get(codeKey);
 
       if (!codeData) {
-        return res.status(404).json({ message: "РљРѕРґ РЅРµ РЅР°Р№РґРµРЅ РёР»Рё РёСЃС‚РµРє" });
+        return res.status(404).json({ message: "Код не найден или истек" });
       }
 
-      // РџСЂРѕРІРµСЂСЏРµРј СЃСЂРѕРє РґРµР№СЃС‚РІРёСЏ
+      // Проверяем срок действия
       if (codeData.expiresAt < Date.now()) {
         authCodes.delete(codeKey);
-        return res.status(410).json({ message: "РљРѕРґ РёСЃС‚РµРє" });
+        return res.status(410).json({ message: "Код истек" });
       }
 
-      // РџСЂРѕРІРµСЂСЏРµРј РєРѕРґ
+      // Проверяем код
       if (codeData.code !== code) {
-        return res.status(401).json({ message: "РќРµРІРµСЂРЅС‹Р№ РєРѕРґ" });
+        return res.status(401).json({ message: "Неверный код" });
       }
 
-      // РЈРґР°Р»СЏРµРј РёСЃРїРѕР»СЊР·РѕРІР°РЅРЅС‹Р№ РєРѕРґ
+      // Удаляем использованный код
       authCodes.delete(codeKey);
 
-      // РџСЂРѕРІРµСЂСЏРµРј РёР»Рё СЃРѕР·РґР°РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РїРѕ РЅРѕРјРµСЂСѓ С‚РµР»РµС„РѕРЅР°
-      // РС‰РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РїРѕ С‚РµР»РµС„РѕРЅСѓ (РµСЃР»Рё РµСЃС‚СЊ РїРѕР»Рµ phone РІ СЃС…РµРјРµ)
+      // Проверяем или создаем пользователя по номеру телефона
+      // Ищем пользователя по телефону (если есть поле phone в схеме)
       let user = await storage.getUserByTelegramId(phoneNumber);
-      
-      // Р•СЃР»Рё РЅРµ РЅР°С€Р»Рё РїРѕ telegramId, РёС‰РµРј РїРѕ С‚РµР»РµС„РѕРЅСѓ
+
+      // Если не нашли по telegramId, ищем по телефону
       if (!user) {
         const allUsers = await storage.getUsers();
         user = allUsers.find((u: any) => u.phone === phoneNumber || u.telegramId === phoneNumber);
       }
 
       if (!user) {
-        // РЎРѕР·РґР°РµРј РЅРѕРІРѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
-        const name = `РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ ${phoneNumber.slice(-4)}`; // РџРѕСЃР»РµРґРЅРёРµ 4 С†РёС„СЂС‹ РЅРѕРјРµСЂР°
+        // Создаем нового пользователя
+        const name = `Пользователь ${phoneNumber.slice(-4)}`; // Последние 4 цифры номера
 
         user = await storage.createUser({
           username: `phone_${phoneNumber.replace(/\D/g, "")}`,
-          password: crypto.randomBytes(32).toString("hex"), // РЎР»СѓС‡Р°Р№РЅС‹Р№ РїР°СЂРѕР»СЊ
+          password: crypto.randomBytes(32).toString("hex"), // Случайный пароль
           name,
           phone: phoneNumber,
-          telegramId: phoneNumber, // РЎРѕС…СЂР°РЅСЏРµРј РЅРѕРјРµСЂ РєР°Рє telegramId РґР»СЏ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё
+          telegramId: phoneNumber, // Сохраняем номер как telegramId для совместимости
           role: "employee",
           active: true,
         });
 
-        // РЎРѕР·РґР°РµРј Р·Р°РїРёСЃСЊ telegram user
+        // Создаем запись telegram user
         await storage.createTelegramUser({
           telegramId: phoneNumber,
           authDate: new Date(),
         });
 
-        // РЎРІСЏР·С‹РІР°РµРј
+        // Связываем
         await storage.linkTelegramUser(phoneNumber, user.id);
       } else {
-        // РћР±РЅРѕРІР»СЏРµРј РїРѕСЃР»РµРґРЅРёР№ РІС…РѕРґ
+        // Обновляем последний вход
         await storage.updateUser(user.id, { lastLogin: new Date() });
       }
 
@@ -4808,14 +4966,14 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       });
     } catch (error: any) {
       console.error("[Telegram Gateway] Error verifying code:", error);
-      res.status(500).json({ message: "РћС€РёР±РєР° РїСЂРё РїСЂРѕРІРµСЂРєРµ РєРѕРґР°" });
+      res.status(500).json({ message: "Ошибка при проверке кода" });
     }
   });
 
   // ============= USERS MANAGEMENT =============
   app.get("/api/users", async (req, res) => {
     const currentUser = req.user as any;
-    if (!currentUser?.id) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
+    if (!currentUser?.id) return res.status(401).json({ message: "Требуется авторизация" });
     const permissions = Array.isArray(currentUser.permissions) ? currentUser.permissions : [];
     const allUsers = await withDbTimeout(() => storage.getUsers(), 3000, []);
     if (currentUser.role === "admin" && permissions.includes("platform:admin")) {
@@ -4856,7 +5014,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       })));
     } catch (error: any) {
       console.error("[Platform] users error:", error);
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№" });
+      res.status(500).json({ message: error?.message || "Не удалось загрузить пользователей" });
     }
   });
 
@@ -4865,12 +5023,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       if (!requirePlatformAdmin(req, res)) return;
       const { id } = req.params;
       const password = String(req.body?.password || "").trim();
-      if (password.length < 6) return res.status(400).json({ message: "РџР°СЂРѕР»СЊ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РјРёРЅРёРјСѓРј 6 СЃРёРјРІРѕР»РѕРІ" });
+      if (password.length < 6) return res.status(400).json({ message: "Пароль должен быть минимум 6 символов" });
       const user = await storage.updateUser(id, { password: hashPassword(password) } as any);
-      if (!user) return res.status(404).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ" });
+      if (!user) return res.status(404).json({ message: "Пользователь не найден" });
       res.json({ success: true, user: { ...user, password: undefined } });
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃР±СЂРѕСЃРёС‚СЊ РїР°СЂРѕР»СЊ" });
+      res.status(500).json({ message: error?.message || "Не удалось сбросить пароль" });
     }
   });
 
@@ -4880,10 +5038,10 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       if (!currentUser) return;
       const { id } = req.params;
       if (String(id) === String(currentUser.id)) {
-        return res.status(400).json({ message: "РќРµР»СЊР·СЏ СѓРґР°Р»РёС‚СЊ СЃРІРѕР№ Р°РєРєР°СѓРЅС‚ РІР»Р°РґРµР»СЊС†Р°" });
+        return res.status(400).json({ message: "Нельзя удалить свой аккаунт владельца" });
       }
       const target = await storage.getUser(id);
-      if (!target) return res.status(404).json({ message: "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ РЅР°Р№РґРµРЅ" });
+      if (!target) return res.status(404).json({ message: "Пользователь не найден" });
       const targetPermissions = Array.isArray((target as any).permissions) ? (target as any).permissions : [];
       if (target.role === "admin" && targetPermissions.includes("platform:admin")) {
         const allUsers = await storage.getAllUsers().catch(() => []);
@@ -4892,7 +5050,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           return user.active !== false && user.role === "admin" && permissions.includes("platform:admin");
         });
         if (activePlatformAdmins.length <= 1) {
-          return res.status(400).json({ message: "РќРµР»СЊР·СЏ СѓРґР°Р»РёС‚СЊ РїРѕСЃР»РµРґРЅРµРіРѕ РІР»Р°РґРµР»СЊС†Р° РїР»Р°С‚С„РѕСЂРјС‹" });
+          return res.status(400).json({ message: "Нельзя удалить последнего владельца платформы" });
         }
       }
       const memberships = await storage.getUserCompanyMemberships(id).catch(() => []);
@@ -4902,7 +5060,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       await storage.deleteUser(id);
       res.json({ success: true });
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ" });
+      res.status(500).json({ message: error?.message || "Не удалось удалить пользователя" });
     }
   });
 
@@ -4953,10 +5111,10 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     try {
       const { id } = req.params;
       const currentUser = req.user;
-      if (!currentUser) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
-      if (currentUser.id !== id) return res.status(403).json({ message: "РњРѕР¶РЅРѕ РёР·РјРµРЅРёС‚СЊ С‚РѕР»СЊРєРѕ СЃРІРѕР№ Р°РІР°С‚Р°СЂ" });
+      if (!currentUser) return res.status(401).json({ message: "Требуется авторизация" });
+      if (currentUser.id !== id) return res.status(403).json({ message: "Можно изменить только свой аватар" });
       if (!req.file) {
-        return res.status(400).json({ message: "Р¤Р°Р№Р» РЅРµ РІС‹Р±СЂР°РЅ" });
+        return res.status(400).json({ message: "Файл не выбран" });
       }
       const avatarUrl = "/uploads/avatars/" + req.file.filename;
       const user = await storage.updateUser(id, { avatar: avatarUrl });
@@ -4965,7 +5123,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       }
       res.json({ ...user, password: undefined, avatar: avatarUrl });
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ Р°РІР°С‚Р°СЂ" });
+      res.status(500).json({ message: error?.message || "Не удалось загрузить аватар" });
     }
   });
 
@@ -5047,7 +5205,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // РџСЂРёРІСЏР·РєР° РЅР°Р±РѕСЂР° РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ Рє РїСЂРѕРµРєС‚Сѓ (РєРѕСЂР·РёРЅР° в†’ РїСЂРѕРµРєС‚). РћР±СЏР·Р°С‚РµР»СЊРЅС‹: РґР°С‚Р° РІРѕР·РІСЂР°С‚Р°, СЃРѕС‚СЂСѓРґРЅРёРє.
+  // Привязка набора оборудования к проекту (корзина → проект). Обязательны: дата возврата, сотрудник.
   const projectEquipmentBundles: Array<{
     projectId: string;
     equipmentIds: string[];
@@ -5061,14 +5219,14 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const { projectId } = req.params;
       const { equipmentIds, returnDate, assignedByUserId, assignedByName } = req.body || {};
       if (!Array.isArray(equipmentIds) || equipmentIds.length === 0) {
-        return res.status(400).json({ message: "РЈРєР°Р¶РёС‚Рµ СЃРїРёСЃРѕРє РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ (equipmentIds)" });
+        return res.status(400).json({ message: "Укажите список оборудования (equipmentIds)" });
       }
       if (!returnDate || typeof returnDate !== "string") {
-        return res.status(400).json({ message: "РЈРєР°Р¶РёС‚Рµ РґР°С‚Сѓ РІРѕР·РІСЂР°С‚Р° РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ (returnDate)" });
+        return res.status(400).json({ message: "Укажите дату возврата оборудования (returnDate)" });
       }
       const project = await storage.getProjectById(projectId);
       if (!project && !isStubStorage) return res.status(404).json({ message: "Project not found" });
-      const name = typeof assignedByName === "string" && assignedByName.trim() ? assignedByName.trim() : "РќРµ СѓРєР°Р·Р°РЅ";
+      const name = typeof assignedByName === "string" && assignedByName.trim() ? assignedByName.trim() : "Не указан";
       projectEquipmentBundles.push({
         projectId,
         equipmentIds,
@@ -5077,7 +5235,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         assignedByUserId: assignedByUserId || undefined,
         assignedByName: name,
       });
-      res.json({ success: true, message: "РћР±РѕСЂСѓРґРѕРІР°РЅРёРµ РїСЂРёРІСЏР·Р°РЅРѕ Рє РїСЂРѕРµРєС‚Сѓ", count: equipmentIds.length });
+      res.json({ success: true, message: "Оборудование привязано к проекту", count: equipmentIds.length });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to attach equipment to project" });
     }
@@ -5092,7 +5250,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const { equipmentId, userId: requestUserId } = req.body || {};
       const currentUserId = (req as any).user?.id ?? requestUserId;
       if (!equipmentId || typeof equipmentId !== "string") {
-        return res.status(400).json({ message: "РЈРєР°Р¶РёС‚Рµ equipmentId" });
+        return res.status(400).json({ message: "Укажите equipmentId" });
       }
       let found = false;
       let bundleAssignedBy: string | undefined;
@@ -5105,7 +5263,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           const isAdmin = (req as any).user?.role === "admin" || (req as any).user?.role === "tech_director";
           const canReturn = isAdmin || (currentUserId && bundleAssignedBy === currentUserId);
           if (!canReturn) {
-            return res.status(403).json({ message: "Р’РµСЂРЅСѓС‚СЊ РѕР±РѕСЂСѓРґРѕРІР°РЅРёРµ РјРѕР¶РµС‚ С‚РѕР»СЊРєРѕ С‚РѕС‚, РєС‚Рѕ РѕС‚РїСЂР°РІРёР» РµРіРѕ РЅР° РїСЂРѕРµРєС‚, РёР»Рё Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ." });
+            return res.status(403).json({ message: "Вернуть оборудование может только тот, кто отправил его на проект, или администратор." });
           }
           b.equipmentIds.splice(idx, 1);
           if (b.equipmentIds.length === 0) projectEquipmentBundles.splice(i, 1);
@@ -5113,15 +5271,15 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         }
       }
       if (!found) {
-        return res.status(404).json({ message: "РћР±РѕСЂСѓРґРѕРІР°РЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ РЅР° РїСЂРѕРµРєС‚Рµ РёР»Рё СѓР¶Рµ РІРѕР·РІСЂР°С‰РµРЅРѕ. РћР±РЅРѕРІРёС‚Рµ СЃС‚СЂР°РЅРёС†Сѓ." });
+        return res.status(404).json({ message: "Оборудование не найдено на проекте или уже возвращено. Обновите страницу." });
       }
-      res.json({ success: true, message: "РћР±РѕСЂСѓРґРѕРІР°РЅРёРµ РІРѕР·РІСЂР°С‰РµРЅРѕ РЅР° СЃРєР»Р°Рґ" });
+      res.json({ success: true, message: "Оборудование возвращено на склад" });
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ РІРµСЂРЅСѓС‚СЊ" });
+      res.status(500).json({ message: e?.message || "Не удалось вернуть" });
     }
   });
 
-  // РЎРІРѕРґРєР°: РєР°РєРѕРµ РѕР±РѕСЂСѓРґРѕРІР°РЅРёРµ РЅР° РєР°РєРёС… РїСЂРѕРµРєС‚Р°С… (assignedByUserId вЂ” С‡С‚РѕР±С‹ РІРµСЂРЅСѓС‚СЊ РјРѕРі С‚РѕР»СЊРєРѕ С‚РѕС‚, РєС‚Рѕ РѕС‚РїСЂР°РІРёР»)
+  // Сводка: какое оборудование на каких проектах (assignedByUserId — чтобы вернуть мог только тот, кто отправил)
   app.get("/api/equipment-on-projects", async (_req, res) => {
     const flat: Array<{ equipmentId: string; projectId: string; projectName?: string; sentAt: string; returnDate: string; assignedByName: string; assignedByUserId?: string }> = [];
     const projectIds = [...new Set(projectEquipmentBundles.map((b) => b.projectId))];
@@ -5154,8 +5312,8 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     if (!currentUser?.id) return res.json([]);
     const projects = await withDbTimeout(
       () => storage.getProjects(),
-      3000, // 3 СЃРµРєСѓРЅРґС‹ РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ РѕС‚РІРµС‚Р°
-      [] // РџСѓСЃС‚РѕР№ РјР°СЃСЃРёРІ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
+      3000, // 3 секунды для быстрого ответа
+      [] // Пустой массив по умолчанию
     );
     const permissions = Array.isArray(currentUser.permissions) ? currentUser.permissions : [];
     if (currentUser.role === "admin" && permissions.includes("platform:admin")) {
@@ -5196,8 +5354,8 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const isDb = /timeout|econnrefused|connection|password|auth|database/i.test(msg);
       res.status(500).json({
         message: isDb
-          ? "РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Р±Р°Р·Рµ РґР°РЅРЅС‹С…. РџСЂРѕРІРµСЂСЊС‚Рµ PostgreSQL Рё DATABASE_URL РІ .env."
-          : (error.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РїСЂРѕРµРєС‚"),
+          ? "Ошибка подключения к базе данных. Проверьте PostgreSQL и DATABASE_URL в .env."
+          : (error.message || "Не удалось создать проект"),
       });
     }
   });
@@ -5214,11 +5372,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  /** РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ Р·Р°РґР°С‡Р°Рј РїСЂРѕРµРєС‚Р° (РґР»СЏ РґРѕСЃРєРё YouGile РёР»Рё РїРѕ projectId). statusNames вЂ” id РєРѕР»РѕРЅРєРё в†’ РЅР°Р·РІР°РЅРёРµ РґР»СЏ РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ. */
+  /** Статистика по задачам проекта (для доски YouGile или по projectId). statusNames — id колонки → название для отображения. */
   app.get("/api/projects/:id/task-stats", async (req, res) => {
     try {
       const project = await storage.getProjectById(req.params.id);
-      if (!project) return res.status(404).json({ message: "РџСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ" });
+      if (!project) return res.status(404).json({ message: "Проект не найден" });
       const proj = project as any;
       let tasks: any[] = [];
       if (proj.yougileBoardId) {
@@ -5270,26 +5428,26 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         users.forEach((u: any) => { if (u.id && userIds.includes(u.id)) userNames[u.id] = u.name || u.username || u.id; });
       }
       const categoryLabels: Record<string, string> = {
-        production: "РџСЂРѕРёР·РІРѕРґСЃС‚РІРѕ",
-        equipment: "РћР±РѕСЂСѓРґРѕРІР°РЅРёРµ",
-        stream: "РЎС‚СЂРёРј",
-        admin: "РђРґРјРёРЅРёСЃС‚СЂРёСЂРѕРІР°РЅРёРµ",
-        other: "Р”СЂСѓРіРѕРµ",
+        production: "Производство",
+        equipment: "Оборудование",
+        stream: "Стрим",
+        admin: "Администрирование",
+        other: "Другое",
       };
       res.json({ total, done, byStatus, statusNames, byUser, byRepository, byCategory, userNames, categoryLabels });
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РћС€РёР±РєР°" });
+      res.status(500).json({ message: e?.message || "Ошибка" });
     }
   });
 
-  /** РџСЂРёРІСЏР·Р°С‚СЊ РІРёРґРµРѕРїСЂРѕРµРєС‚ Рє РґРѕСЃРєРµ YouGile (РґРѕСЃРєР° РїРѕСЏРІРёС‚СЃСЏ РІ С‚Р°СЃРє-РјРµРЅРµРґР¶РµСЂРµ, РєРѕР»РѕРЅРєРё СЃРѕР·РґР°СЋС‚СЃСЏ РІ YouGile) */
+  /** Привязать видеопроект к доске YouGile (доска появится в таск-менеджере, колонки создаются в YouGile) */
   app.post("/api/projects/:id/link-yougile-board", async (req, res) => {
     try {
       const project = await storage.getProjectById(req.params.id);
-      if (!project) return res.status(404).json({ message: "РџСЂРѕРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ" });
+      if (!project) return res.status(404).json({ message: "Проект не найден" });
       const existing = (project as any).yougileBoardId;
       if (existing) {
-        return res.json({ yougileBoardId: existing, message: "Р”РѕСЃРєР° СѓР¶Рµ РїСЂРёРІСЏР·Р°РЅР°" });
+        return res.json({ yougileBoardId: existing, message: "Доска уже привязана" });
       }
       const {
         isYouGileConfigured,
@@ -5298,7 +5456,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         yougileCreateBoard,
       } = await import("./yougile");
       if (!isYouGileConfigured()) {
-        return res.status(400).json({ message: "YouGile РЅРµ РЅР°СЃС‚СЂРѕРµРЅ. РќР°СЃС‚СЂРѕР№С‚Рµ РІ РќР°СЃС‚СЂРѕР№РєР°С…." });
+        return res.status(400).json({ message: "YouGile не настроен. Настройте в Настройках." });
       }
       let ygProjects = await yougileGetProjects();
       if (!ygProjects.length) {
@@ -5306,11 +5464,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         ygProjects = [created];
       }
       const ygProjectId = ygProjects[0].id;
-      const board = await yougileCreateBoard(ygProjectId, project.name || "РџСЂРѕРµРєС‚");
+      const board = await yougileCreateBoard(ygProjectId, project.name || "Проект");
       await storage.updateProject(project.id, { yougileBoardId: board.id } as any);
-      res.json({ yougileBoardId: board.id, message: "Р”РѕСЃРєР° СЃРѕР·РґР°РЅР° РІ С‚Р°СЃРє-РјРµРЅРµРґР¶РµСЂРµ" });
+      res.json({ yougileBoardId: board.id, message: "Доска создана в таск-менеджере" });
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РґРѕСЃРєСѓ YouGile" });
+      res.status(500).json({ message: e?.message || "Не удалось создать доску YouGile" });
     }
   });
 
@@ -5339,24 +5497,24 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const { name, color } = req.body;
       const columnName = String(name || "").trim();
       if (!columnName) {
-        return res.status(400).json({ message: "Р’РІРµРґРёС‚Рµ РЅР°Р·РІР°РЅРёРµ СЃС‚РѕР»Р±С†Р°" });
+        return res.status(400).json({ message: "Введите название столбца" });
       }
       const project = await storage.getProjectById(projectId);
       if (!project) {
-        return res.status(404).json({ message: "Р”РѕСЃРєР° РЅРµ РЅР°Р№РґРµРЅР°" });
+        return res.status(404).json({ message: "Доска не найдена" });
       }
-      
-      // РџРѕР»СѓС‡Р°РµРј С‚РµРєСѓС‰РёРµ СЃС‚РѕР»Р±С†С‹ РґР»СЏ РѕРїСЂРµРґРµР»РµРЅРёСЏ СЃР»РµРґСѓСЋС‰РµРіРѕ order
+
+      // Получаем текущие столбцы для определения следующего order
       const existingColumns = await storage.getProjectColumns(projectId);
       const nextOrder = existingColumns.length;
-      
+
       const column = await storage.createProjectColumn({
         projectId,
         name: columnName,
         color: color || null,
         order: nextOrder,
       });
-      
+
       res.status(201).json(column);
     } catch (error: any) {
       console.error("Error creating project column:", error);
@@ -5364,8 +5522,8 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const isDb = /timeout|econnrefused|connection|password|auth|database/i.test(msg);
       res.status(500).json({
         message: isDb
-          ? "РћС€РёР±РєР° РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Р±Р°Р·Рµ РґР°РЅРЅС‹С…. РџСЂРѕРІРµСЂСЊС‚Рµ PostgreSQL Рё DATABASE_URL РІ .env."
-          : (error.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ СЃС‚РѕР»Р±РµС†"),
+          ? "Ошибка подключения к базе данных. Проверьте PostgreSQL и DATABASE_URL в .env."
+          : (error.message || "Не удалось создать столбец"),
       });
     }
   });
@@ -5375,7 +5533,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const updateData: any = {};
       if (req.body?.name !== undefined) {
         const name = String(req.body.name || "").trim();
-        if (!name) return res.status(400).json({ message: "Р’РІРµРґРёС‚Рµ РЅР°Р·РІР°РЅРёРµ СЃС‚РѕР»Р±С†Р°" });
+        if (!name) return res.status(400).json({ message: "Введите название столбца" });
         updateData.name = name;
       }
       if (req.body?.color !== undefined) updateData.color = req.body.color || null;
@@ -5403,11 +5561,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     try {
       const { projectId } = req.params;
       const { columnIds } = req.body;
-      
+
       if (!Array.isArray(columnIds)) {
         return res.status(400).json({ message: "columnIds must be an array" });
       }
-      
+
       await storage.reorderProjectColumns(projectId, columnIds);
       res.json({ success: true });
     } catch (error) {
@@ -5457,9 +5615,9 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   app.post("/api/repositories", async (req, res) => {
     try {
       const currentUser = req.user;
-      if (!currentUser) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
+      if (!currentUser) return res.status(401).json({ message: "Требуется авторизация" });
       if (currentUser.role !== 'admin') {
-        return res.status(403).json({ message: "РўРѕР»СЊРєРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ РјРѕР¶РµС‚ СЃРѕР·РґР°РІР°С‚СЊ СЂРµРїРѕР·РёС‚РѕСЂРёРё" });
+        return res.status(403).json({ message: "Только администратор может создавать репозитории" });
       }
       const repository = await storage.createRepository(req.body);
       res.status(201).json(repository);
@@ -5471,9 +5629,9 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   app.put("/api/repositories/:id", async (req, res) => {
     try {
       const currentUser = req.user;
-      if (!currentUser) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
+      if (!currentUser) return res.status(401).json({ message: "Требуется авторизация" });
       if (currentUser.role !== 'admin') {
-        return res.status(403).json({ message: "РўРѕР»СЊРєРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ РјРѕР¶РµС‚ СЂРµРґР°РєС‚РёСЂРѕРІР°С‚СЊ СЂРµРїРѕР·РёС‚РѕСЂРёРё" });
+        return res.status(403).json({ message: "Только администратор может редактировать репозитории" });
       }
       const repository = await storage.updateRepository(req.params.id, req.body);
       if (!repository) {
@@ -5488,9 +5646,9 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   app.delete("/api/repositories/:id", async (req, res) => {
     try {
       const currentUser = req.user;
-      if (!currentUser) return res.status(401).json({ message: "РўСЂРµР±СѓРµС‚СЃСЏ Р°РІС‚РѕСЂРёР·Р°С†РёСЏ" });
+      if (!currentUser) return res.status(401).json({ message: "Требуется авторизация" });
       if (currentUser.role !== 'admin') {
-        return res.status(403).json({ message: "РўРѕР»СЊРєРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ РјРѕР¶РµС‚ СѓРґР°Р»СЏС‚СЊ СЂРµРїРѕР·РёС‚РѕСЂРёРё" });
+        return res.status(403).json({ message: "Только администратор может удалять репозитории" });
       }
       await storage.deleteRepository(req.params.id);
       res.json({ success: true });
@@ -5499,7 +5657,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     }
   });
 
-  // вЂ”вЂ”вЂ” YouGile API (РґРІСѓСЃС‚РѕСЂРѕРЅРЅСЏСЏ СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ Р·Р°РґР°С‡, https://ru.yougile.com/api-v2#/) вЂ”вЂ”вЂ”
+  // ——— YouGile API (двусторонняя синхронизация задач, https://ru.yougile.com/api-v2#/) ———
   const {
     isYouGileConfigured,
     yougileGetAuthKey,
@@ -5516,25 +5674,25 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     setYouGileColumnMap,
   } = await import("./yougile");
 
-  /** РџРѕР»СѓС‡РёС‚СЊ API-РєР»СЋС‡ РїРѕ Р»РѕРіРёРЅСѓ Рё РїР°СЂРѕР»СЋ YouGile (companyId Р±РµСЂС‘С‚СЃСЏ РёР· YOUGILE_COMPANY_ID РІ .env) Рё СЃРѕС…СЂР°РЅРёС‚СЊ РІ С„Р°Р№Р» .yougile-key */
+  /** Получить API-ключ по логину и паролю YouGile (companyId берётся из YOUGILE_COMPANY_ID в .env) и сохранить в файл .yougile-key */
   app.post("/api/yougile/auth/key", async (req, res) => {
     try {
       const companyId = (process.env.YOUGILE_COMPANY_ID || "").trim();
       if (!companyId) {
-        return res.status(400).json({ message: "Р—Р°РґР°Р№С‚Рµ YOUGILE_COMPANY_ID РІ .env" });
+        return res.status(400).json({ message: "Задайте YOUGILE_COMPANY_ID в .env" });
       }
       const { login, password } = req.body || {};
       if (!login || !password) {
-        return res.status(400).json({ message: "РЈРєР°Р¶РёС‚Рµ login Рё password РІ С‚РµР»Рµ Р·Р°РїСЂРѕСЃР°" });
+        return res.status(400).json({ message: "Укажите login и password в теле запроса" });
       }
       const { key } = await yougileGetAuthKey(String(login), String(password), companyId);
       if (!key) {
-        return res.status(500).json({ message: "YouGile РЅРµ РІРµСЂРЅСѓР» РєР»СЋС‡" });
+        return res.status(500).json({ message: "YouGile не вернул ключ" });
       }
       setYouGileApiKey(key);
-      res.json({ success: true, message: "РљР»СЋС‡ СЃРѕС…СЂР°РЅС‘РЅ. YouGile РіРѕС‚РѕРІ Рє СЂР°Р±РѕС‚Рµ." });
+      res.json({ success: true, message: "Ключ сохранён. YouGile готов к работе." });
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ РєР»СЋС‡ YouGile" });
+      res.status(500).json({ message: e?.message || "Не удалось получить ключ YouGile" });
     }
   });
 
@@ -5550,7 +5708,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     res.json({ configured: isYouGileConfigured() });
   });
 
-  /** РџСЂРѕРµРєС‚С‹ YouGile вЂ” РёР· Р‘Р” (Р±РµР· Р·Р°РїСЂРѕСЃРѕРІ Рє API). РџСЂРё ?sync=1 вЂ” СЃРЅР°С‡Р°Р»Р° СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ РєСЌС€Р° РёР· YouGile, Р·Р°С‚РµРј РѕС‚РІРµС‚ РёР· Р‘Р”. */
+  /** Проекты YouGile — из БД (без запросов к API). При ?sync=1 — сначала синхронизация кэша из YouGile, затем ответ из БД. */
   app.get("/api/yougile/projects", async (req, res) => {
     try {
       if (!isYouGileConfigured()) return res.json([]);
@@ -5574,38 +5732,38 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const list = await storage.getYougileProjects();
       res.json(list.map((p: any) => ({ id: p.id, title: p.title ?? undefined })));
     } catch (e: any) {
-      if (!res.headersSent) res.status(500).json({ message: e?.message || "РћС€РёР±РєР° YouGile" });
+      if (!res.headersSent) res.status(500).json({ message: e?.message || "Ошибка YouGile" });
     }
   });
 
-  /** Р”РѕСЃРєРё YouGile вЂ” РёР· Р‘Р”. РџСЂРё ?sync=1 вЂ” РѕР±РЅРѕРІР»РµРЅРёРµ РєСЌС€Р° (СЃРј. GET /api/yougile/projects?sync=1). */
+  /** Доски YouGile — из БД. При ?sync=1 — обновление кэша (см. GET /api/yougile/projects?sync=1). */
   app.get("/api/yougile/boards", async (req, res) => {
     try {
-      if (!isYouGileConfigured()) return res.status(400).json({ message: "YouGile РЅРµ РЅР°СЃС‚СЂРѕРµРЅ" });
+      if (!isYouGileConfigured()) return res.status(400).json({ message: "YouGile не настроен" });
       const projectId = req.query.projectId as string | undefined;
       const list = await storage.getYougileBoards(projectId);
       res.json(list.map((b: any) => ({ id: b.id, title: b.title ?? undefined, projectId: b.projectId })));
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РћС€РёР±РєР° YouGile API" });
+      res.status(500).json({ message: e?.message || "Ошибка YouGile API" });
     }
   });
 
-  /** Р’СЃРµ РґРѕСЃРєРё YouGile вЂ” РёР· Р‘Р” (РґР»СЏ С‚Р°СЃРє-РјРµРЅРµРґР¶РµСЂР°). */
+  /** Все доски YouGile — из БД (для таск-менеджера). */
   app.get("/api/yougile/boards-all", async (req, res) => {
     try {
       if (!isYouGileConfigured()) return res.json([]);
       const list = await storage.getYougileBoards();
-      res.json(list.map((b: any) => ({ id: b.id, title: b.title || "Р‘РµР· РЅР°Р·РІР°РЅРёСЏ", projectId: b.projectId })));
+      res.json(list.map((b: any) => ({ id: b.id, title: b.title || "Без названия", projectId: b.projectId })));
     } catch (e: any) {
       res.json([]);
     }
   });
 
-  /** РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ: РґР»СЏ РєР°Р¶РґРѕР№ РґРѕСЃРєРё YouGile СЃРѕР·РґР°С‘С‚СЃСЏ Р»РѕРєР°Р»СЊРЅС‹Р№ РІРёРґРµРѕРїСЂРѕРµРєС‚, РµСЃР»Рё РµРіРѕ РµС‰С‘ РЅРµС‚ (С‡С‚РѕР±С‹ РїСЂРѕРµРєС‚С‹ РёР· YouGile СЃСЂР°Р·Сѓ РїРѕСЏРІР»СЏР»РёСЃСЊ РІ РІРёРґРµРѕРїСЂРѕРµРєС‚Р°С…). */
+  /** Синхронизация: для каждой доски YouGile создаётся локальный видеопроект, если его ещё нет (чтобы проекты из YouGile сразу появлялись в видеопроектах). */
   app.post("/api/yougile/sync-projects", async (req, res) => {
     try {
       if (!isYouGileConfigured()) {
-        return res.json({ synced: 0, message: "YouGile РЅРµ РЅР°СЃС‚СЂРѕРµРЅ" });
+        return res.json({ synced: 0, message: "YouGile не настроен" });
       }
       const existing = await storage.getProjects();
       const linkedBoardIds = new Set((existing as any[]).map((p: any) => p.yougileBoardId).filter(Boolean));
@@ -5616,7 +5774,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
         for (const b of boards) {
           if (linkedBoardIds.has(b.id)) continue;
           await storage.createProject({
-            name: (b.title || p.title || "РџСЂРѕРµРєС‚ YouGile").trim() || "РџСЂРѕРµРєС‚ YouGile",
+            name: (b.title || p.title || "Проект YouGile").trim() || "Проект YouGile",
             status: "planning",
             yougileBoardId: b.id,
           } as any);
@@ -5626,16 +5784,16 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       }
       res.json({ synced: created });
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РћС€РёР±РєР° СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё" });
+      res.status(500).json({ message: e?.message || "Ошибка синхронизации" });
     }
   });
 
-  /** РљРѕР»РѕРЅРєРё РґРѕСЃРєРё YouGile вЂ” РёР· Р‘Р”. РџСЂРё ?sync=1 вЂ” РїРѕРґС‚СЏРЅСѓС‚СЊ РєРѕР»РѕРЅРєРё СЌС‚РѕР№ РґРѕСЃРєРё РёР· API РІ Р‘Р” Рё РІРµСЂРЅСѓС‚СЊ. */
+  /** Колонки доски YouGile — из БД. При ?sync=1 — подтянуть колонки этой доски из API в БД и вернуть. */
   app.get("/api/yougile/columns", async (req, res) => {
     try {
-      if (!isYouGileConfigured()) return res.status(400).json({ message: "YouGile РЅРµ РЅР°СЃС‚СЂРѕРµРЅ" });
+      if (!isYouGileConfigured()) return res.status(400).json({ message: "YouGile не настроен" });
       const boardId = req.query.boardId as string;
-      if (!boardId) return res.status(400).json({ message: "boardId РѕР±СЏР·Р°С‚РµР»РµРЅ" });
+      if (!boardId) return res.status(400).json({ message: "boardId обязателен" });
       const forceSync = req.query.sync === "1" || req.query.sync === "true";
       if (forceSync) {
         const { clearYougileCache } = await import("./yougile");
@@ -5646,22 +5804,22 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const list = await storage.getYougileColumns(boardId);
       res.json(list.map((c: any) => ({ id: c.id, title: c.title ?? undefined, boardId: c.boardId, order: c.order ?? 0, color: c.color ?? undefined })));
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РћС€РёР±РєР° YouGile API" });
+      res.status(500).json({ message: e?.message || "Ошибка YouGile API" });
     }
   });
 
-  /** РЎС‚РёРєРµСЂС‹/С„РёР»СЊС‚СЂС‹ РґРѕСЃРєРё YouGile СЃ С‚РёРїРѕРј Рё РѕРїС†РёСЏРјРё: list (РІС‹РїР°РґР°СЋС‰РёР№ СЃРїРёСЃРѕРє), string (РІРІРѕРґ С‚РµРєСЃС‚Р°), user (РёСЃРїРѕР»РЅРёС‚РµР»СЊ). */
+  /** Стикеры/фильтры доски YouGile с типом и опциями: list (выпадающий список), string (ввод текста), user (исполнитель). */
   app.get("/api/yougile/stickers", async (req, res) => {
     try {
       const { yougileGetStringStickerStates, yougileGetStringStickerValues, isYouGileConfigured } = await import("./yougile");
-      if (!isYouGileConfigured()) return res.status(400).json({ message: "YouGile РЅРµ РЅР°СЃС‚СЂРѕРµРЅ" });
+      if (!isYouGileConfigured()) return res.status(400).json({ message: "YouGile не настроен" });
       const boardId = req.query.boardId as string;
-      if (!boardId) return res.status(400).json({ message: "boardId РѕР±СЏР·Р°С‚РµР»РµРЅ" });
+      if (!boardId) return res.status(400).json({ message: "boardId обязателен" });
       const list = await yougileGetStringStickerStates(boardId);
       const withOptions = await Promise.all(list.map(async (s: any) => {
         const title = ((s.title ?? s.id) || "").toString().trim();
         let type = (s.type || "").toString().toLowerCase();
-        if (!type && /РёСЃРїРѕР»РЅРёС‚РµР»СЊ|assignee|performer/i.test(title)) type = "user";
+        if (!type && /исполнитель|assignee|performer/i.test(title)) type = "user";
         let options = Array.isArray(s.options) ? s.options : undefined;
         if (!options && type !== "user" && s.id) {
           try {
@@ -5684,25 +5842,25 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       }));
       res.json(withOptions);
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РћС€РёР±РєР° YouGile API" });
+      res.status(500).json({ message: e?.message || "Ошибка YouGile API" });
     }
   });
 
-  /** РЎРѕР·РґР°С‚СЊ РєРѕР»РѕРЅРєСѓ РЅР° РґРѕСЃРєРµ YouGile (РґР»СЏ РІРёРґРµРѕРїСЂРѕРµРєС‚Р°: РґРѕР±Р°РІРёС‚СЊ РєРѕР»РѕРЅРєСѓ РІ С‚Р°СЃРє-РјРµРЅРµРґР¶РµСЂ) */
+  /** Создать колонку на доске YouGile (для видеопроекта: добавить колонку в таск-менеджер) */
   app.post("/api/yougile/columns", async (req, res) => {
     try {
       const { isYouGileConfigured, yougileCreateColumn } = await import("./yougile");
       if (!isYouGileConfigured()) {
-        return res.status(400).json({ message: "YouGile РЅРµ РЅР°СЃС‚СЂРѕРµРЅ" });
+        return res.status(400).json({ message: "YouGile не настроен" });
       }
       const { boardId, title, color } = req.body || {};
       if (!boardId || !title || typeof title !== "string" || !title.trim()) {
-        return res.status(400).json({ message: "РЈРєР°Р¶РёС‚Рµ boardId Рё title" });
+        return res.status(400).json({ message: "Укажите boardId и title" });
       }
       const column = await yougileCreateColumn(boardId, title.trim(), color);
       res.status(201).json(column);
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РћС€РёР±РєР° СЃРѕР·РґР°РЅРёСЏ РєРѕР»РѕРЅРєРё YouGile" });
+      res.status(500).json({ message: e?.message || "Ошибка создания колонки YouGile" });
     }
   });
 
@@ -5710,7 +5868,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     try {
       res.json(getYouGileColumnMap());
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РћС€РёР±РєР° С‡С‚РµРЅРёСЏ РјР°РїРїРёРЅРіР° РєРѕР»РѕРЅРѕРє" });
+      res.status(500).json({ message: e?.message || "Ошибка чтения маппинга колонок" });
     }
   });
 
@@ -5724,11 +5882,11 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       setYouGileColumnMap(normalized);
       res.json(normalized);
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РјР°РїРїРёРЅРі РєРѕР»РѕРЅРѕРє" });
+      res.status(500).json({ message: e?.message || "Не удалось сохранить маппинг колонок" });
     }
   });
 
-  /** РџСЂРµРѕР±СЂР°Р·СѓРµС‚ Р·Р°РґР°С‡Сѓ РёР· Р‘Р” РІ С„РѕСЂРјР°С‚ YouGile (РґР»СЏ РѕС‚РІРµС‚РѕРІ API). */
+  /** Преобразует задачу из БД в формат YouGile (для ответов API). */
   function mapDbTaskToYouGileTask(t: any, boardIdToProjectId?: Map<string, string>): Record<string, unknown> {
     const boardId = t.yougileBoardId ?? undefined;
     const projectId = boardId && boardIdToProjectId ? boardIdToProjectId.get(boardId) : undefined;
@@ -5751,23 +5909,23 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     try {
       const { yougileTaskId } = req.params;
       if (!isYouGileConfigured()) {
-        return res.status(400).json({ message: "YouGile РЅРµ РЅР°СЃС‚СЂРѕРµРЅ" });
+        return res.status(400).json({ message: "YouGile не настроен" });
       }
       const task = await storage.getTaskByYougileTaskId(yougileTaskId);
-      if (!task) return res.status(404).json({ message: "Р—Р°РґР°С‡Р° YouGile РЅРµ РЅР°Р№РґРµРЅР°" });
+      if (!task) return res.status(404).json({ message: "Задача YouGile не найдена" });
       const boards = await storage.getYougileBoards();
       const boardIdToProjectId = new Map(boards.map((b: any) => [b.id, b.projectId]));
       res.json(mapDbTaskToYouGileTask(task, boardIdToProjectId));
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РћС€РёР±РєР° YouGile API" });
+      res.status(500).json({ message: e?.message || "Ошибка YouGile API" });
     }
   });
 
-  /** РЎРїРёСЃРѕРє Р·Р°РґР°С‡ YouGile вЂ” РёР· Р‘Р” (Р±РµР· РѕР±СЂР°С‰РµРЅРёСЏ Рє API). РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ СЃ YouGile РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕ С‡РµСЂРµР· POST /api/yougile/sync. */
+  /** Список задач YouGile — из БД (без обращения к API). Синхронизация с YouGile выполняется отдельно через POST /api/yougile/sync. */
   app.get("/api/yougile/tasks", async (req, res) => {
     try {
       if (!isYouGileConfigured()) {
-        return res.status(400).json({ message: "YouGile РЅРµ РЅР°СЃС‚СЂРѕРµРЅ" });
+        return res.status(400).json({ message: "YouGile не настроен" });
       }
       const projectId = req.query.projectId as string | undefined;
       const boardId = req.query.boardId as string | undefined;
@@ -5813,15 +5971,15 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const list = tasks.map((t) => mapDbTaskToYouGileTask(t, boardIdToProjectId));
       res.json(list);
     } catch (e: any) {
-      res.status(500).json({ message: e?.message || "РћС€РёР±РєР° YouGile API" });
+      res.status(500).json({ message: e?.message || "Ошибка YouGile API" });
     }
   });
 
-  /** РЎРёРЅС…СЂРѕРЅРёР·Р°С†РёСЏ РёР· YouGile РІ Р‘Р” (РєСЌС€ РїСЂРѕРµРєС‚РѕРІ/РґРѕСЃРѕРє/РєРѕР»РѕРЅРѕРє/РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ + Р·Р°РґР°С‡Рё). Р‘РµР· boardId вЂ” РІСЃРµ РґРѕСЃРєРё; СЃ boardId вЂ” С‚РѕР»СЊРєРѕ СЌС‚Р° РґРѕСЃРєР°. */
+  /** Синхронизация из YouGile в БД (кэш проектов/досок/колонок/пользователей + задачи). Без boardId — все доски; с boardId — только эта доска. */
   app.post("/api/yougile/sync", async (req, res) => {
     try {
       if (!isYouGileConfigured()) {
-        return res.status(400).json({ message: "YouGile РЅРµ РЅР°СЃС‚СЂРѕРµРЅ. Р”РѕР±Р°РІСЊС‚Рµ YOUGILE_API_KEY РІ .env" });
+        return res.status(400).json({ message: "YouGile не настроен. Добавьте YOUGILE_API_KEY в .env" });
       }
       const { clearYougileCache } = await import("./yougile");
       clearYougileCache();
@@ -5843,7 +6001,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const currentUser = req.user;
       const creatorId = (currentUser?.id as string) || (await storage.getUsers()).find(u => u.role === "admin")?.id;
       if (!creatorId) {
-        return res.status(400).json({ message: "РќСѓР¶РЅР° Р°РІС‚РѕСЂРёР·Р°С†РёСЏ РґР»СЏ СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё" });
+        return res.status(400).json({ message: "Нужна авторизация для синхронизации" });
       }
       let allYgTasks: Array<{ id: string; title?: string; description?: string; columnId?: string; boardId?: string; deadline?: any }> = [];
       if (boardId || projectId || columnId) {
@@ -5907,7 +6065,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           ? ytSubtasks.map((s: any) => ({ id: s.id ?? `st-${Math.random().toString(36).slice(2)}`, title: typeof s === "string" ? s : (s.title ?? s.name ?? ""), completed: !!s.completed }))
           : undefined;
         const payload: any = {
-          title: yt.title || "Р‘РµР· РЅР°Р·РІР°РЅРёСЏ",
+          title: yt.title || "Без названия",
           description: yt.description ?? undefined,
           status,
           priority: "medium",
@@ -5929,12 +6087,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       }
       res.json({ success: true, created, updated, total: allYgTasks.length });
     } catch (e: any) {
-      const msg = e?.message != null ? String(e.message) : "РћС€РёР±РєР° СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё YouGile";
+      const msg = e?.message != null ? String(e.message) : "Ошибка синхронизации YouGile";
       if (!res.headersSent) res.status(500).json({ message: msg });
     }
   });
 
-  // HTTPS: РµСЃР»Рё Р·Р°РґР°РЅС‹ РїСѓС‚Рё Рє СЃРµСЂС‚РёС„РёРєР°С‚Р°Рј вЂ” С‚СЂР°С„РёРє С€РёС„СЂСѓРµС‚СЃСЏ (Р»РѕРіРёРЅ/РїР°СЂРѕР»СЊ РЅРµ РІРёРґРЅС‹ РІ Wireshark)
+  // HTTPS: если заданы пути к сертификатам — трафик шифруется (логин/пароль не видны в Wireshark)
   let server: Server;
   const certPath = process.env.SSL_CERT_PATH;
   const keyPath = process.env.SSL_KEY_PATH;
@@ -5943,15 +6101,15 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       const key = fs.readFileSync(keyPath, "utf8");
       const cert = fs.readFileSync(certPath, "utf8");
       server = createHttpsServer({ key, cert }, app);
-      console.log("[Security] HTTPS РІРєР»СЋС‡С‘РЅ вЂ” Р»РѕРіРёРЅ Рё РїР°СЂРѕР»СЊ РїРµСЂРµРґР°СЋС‚СЃСЏ РІ С€РёС„СЂРѕРІР°РЅРЅРѕРј РІРёРґРµ");
+      console.log("[Security] HTTPS включён — логин и пароль передаются в шифрованном виде");
     } catch (e: any) {
-      console.error("[Security] РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё SSL:", e?.message);
+      console.error("[Security] Ошибка загрузки SSL:", e?.message);
       server = createHttpServer(app);
     }
   } else {
     server = createHttpServer(app);
     if (process.env.NODE_ENV === "production") {
-      console.warn("[Security] Р—Р°РґР°Р№С‚Рµ SSL_CERT_PATH Рё SSL_KEY_PATH РІ .env РґР»СЏ Р·Р°С‰РёС‚С‹ РѕС‚ РїРµСЂРµС…РІР°С‚Р° Р»РѕРіРёРЅР°/РїР°СЂРѕР»СЏ.");
+      console.warn("[Security] Задайте SSL_CERT_PATH и SSL_KEY_PATH в .env для защиты от перехвата логина/пароля.");
     }
   }
 
@@ -5975,12 +6133,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           // Send system status updates (with timeout protection)
           const systems = await withDbTimeout(
             () => storage.getSystems(),
-            5000, // 5 СЃРµРєСѓРЅРґ С‚Р°Р№РјР°СѓС‚ РґР»СЏ WebSocket РѕР±РЅРѕРІР»РµРЅРёР№
+            5000, // 5 секунд таймаут для WebSocket обновлений
             []
           );
-          ws.send(JSON.stringify({ 
-            type: 'systems_update', 
-            data: systems 
+          ws.send(JSON.stringify({
+            type: 'systems_update',
+            data: systems
           }));
 
           // Send stream stats updates (with timeout protection)
@@ -5989,46 +6147,46 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
             5000,
             []
           );
-          ws.send(JSON.stringify({ 
-            type: 'streams_update', 
-            data: streams 
+          ws.send(JSON.stringify({
+            type: 'streams_update',
+            data: streams
           }));
 
-          // Send mock YouTube stats (РЅРµ С‚СЂРµР±СѓРµС‚ Р‘Р”, РІСЃРµРіРґР° СЂР°Р±РѕС‚Р°РµС‚)
+          // Send mock YouTube stats (не требует БД, всегда работает)
           const youtubeStats = {
             viewers: Math.floor(Math.random() * 2000) + 500,
             bitrate: Math.floor(Math.random() * 1000) + 5000,
             fps: 60
           };
-          ws.send(JSON.stringify({ 
-            type: 'youtube_stats', 
-            data: youtubeStats 
+          ws.send(JSON.stringify({
+            type: 'youtube_stats',
+            data: youtubeStats
           }));
 
-          // Send mock VK stats (РЅРµ С‚СЂРµР±СѓРµС‚ Р‘Р”, РІСЃРµРіРґР° СЂР°Р±РѕС‚Р°РµС‚)
+          // Send mock VK stats (не требует БД, всегда работает)
           const vkStats = {
             viewers: Math.floor(Math.random() * 1500) + 300,
             bitrate: Math.floor(Math.random() * 800) + 5000,
             fps: 60
           };
-          ws.send(JSON.stringify({ 
-            type: 'vk_stats', 
-            data: vkStats 
+          ws.send(JSON.stringify({
+            type: 'vk_stats',
+            data: vkStats
           }));
 
         } catch (error) {
-          // Р›РѕРіРёСЂСѓРµРј РѕС€РёР±РєСѓ, РЅРѕ РЅРµ РїСЂРµСЂС‹РІР°РµРј СЃРѕРµРґРёРЅРµРЅРёРµ
+          // Логируем ошибку, но не прерываем соединение
           console.warn('[WebSocket] Error sending update (continuing):', error);
-          // РћС‚РїСЂР°РІР»СЏРµРј РїСѓСЃС‚С‹Рµ РґР°РЅРЅС‹Рµ РІРјРµСЃС‚Рѕ РїР°РґРµРЅРёСЏ
+          // Отправляем пустые данные вместо падения
           try {
             if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ 
-                type: 'systems_update', 
-                data: [] 
+              ws.send(JSON.stringify({
+                type: 'systems_update',
+                data: []
               }));
-              ws.send(JSON.stringify({ 
-                type: 'streams_update', 
-                data: [] 
+              ws.send(JSON.stringify({
+                type: 'streams_update',
+                data: []
               }));
             }
           } catch (sendError) {
@@ -6048,7 +6206,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       clearInterval(interval);
     });
 
-    // Ping РґР»СЏ РїРѕРґРґРµСЂР¶Р°РЅРёСЏ СЃРѕРµРґРёРЅРµРЅРёСЏ
+    // Ping для поддержания соединения
     const pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
         try {
@@ -6060,7 +6218,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       } else {
         clearInterval(pingInterval);
       }
-    }, 30000); // Ping РєР°Р¶РґС‹Рµ 30 СЃРµРєСѓРЅРґ
+    }, 30000); // Ping каждые 30 секунд
 
     ws.on('close', () => {
       clearInterval(pingInterval);
@@ -6092,12 +6250,12 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   });
 
   function normalizeEstimateText(value: unknown) {
-    return String(value ?? "").toLowerCase().replace(/С‘/g, "Рµ").replace(/[^\p{L}0-9]+/gu, " ").trim();
+    return String(value ?? "").toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}0-9]+/gu, " ").trim();
   }
 
   function readEstimatePrice(item: any) {
     const spec = item?.specifications && typeof item.specifications === "object" ? item.specifications : {};
-    for (const key of ["estimatePrice", "estimate_price", "estimateUnitPrice", "unitPrice", "price", "cost", "С†РµРЅР°", "СЃС‚РѕРёРјРѕСЃС‚СЊ"]) {
+    for (const key of ["estimatePrice", "estimate_price", "estimateUnitPrice", "unitPrice", "price", "cost", "цена", "стоимость"]) {
       const raw = spec[key];
       const value = Number(String(raw ?? "").replace(/\s+/g, "").replace(",", ".").replace(/[^\d.]/g, ""));
       if (Number.isFinite(value) && value > 0) return { value, source: key };
@@ -6133,42 +6291,42 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
   }
 
   const estimatePriceGuide = [
-    { keys: ["rcf art 315", "Р°РєСѓСЃС‚РёС‡РµСЃРєР°СЏ СЃРёСЃС‚РµРјР°", "Р°РєСѓСЃС‚РёРєР°"], name: "РђРєС‚РёРІРЅР°СЏ Р°РєСѓСЃС‚РёС‡РµСЃРєР°СЏ СЃРёСЃС‚РµРјР° RCF ART 315 MK4", type: "audio", unitPrice: 1550 },
-    { keys: ["shure slxd14", "РёРЅСЃС‚СЂСѓРјРµРЅС‚Р°Р»СЊРЅР°СЏ СЂР°РґРёРѕСЃРёСЃС‚РµРјР°"], name: "РРЅСЃС‚СЂСѓРјРµРЅС‚Р°Р»СЊРЅР°СЏ С†РёС„СЂРѕРІР°СЏ СЂР°РґРёРѕСЃРёСЃС‚РµРјР° Shure SLXD14", type: "microphone", unitPrice: 2250 },
-    { keys: ["shure ulxd", "РІРѕРєР°Р»СЊРЅР°СЏ СЂР°РґРёРѕСЃРёСЃС‚РµРјР°"], name: "Р’РѕРєР°Р»СЊРЅР°СЏ С†РёС„СЂРѕРІР°СЏ СЂР°РґРёРѕСЃРёСЃС‚РµРјР° Shure ULXD24/Beta58", type: "microphone", unitPrice: 3060 },
-    { keys: ["behringer x32", "x32"], name: "Р¦РёС„СЂРѕРІРѕР№ РјРёРєС€РµСЂРЅС‹Р№ РїСѓР»СЊС‚ Behringer X32", type: "audio", unitPrice: 4550 },
-    { keys: ["behringer wing", "wing"], name: "Р¦РёС„СЂРѕРІРѕР№ РјРёРєС€РµСЂРЅС‹Р№ РїСѓР»СЊС‚ Behringer WING", type: "audio", unitPrice: 11150 },
-    { keys: ["midas dl251", "Р±Р»РѕРє РІС…РѕРґРѕРІ РІС‹С…РѕРґРѕРІ"], name: "48-РєР°РЅР°Р»СЊРЅС‹Р№ Р±Р»РѕРє РІС…РѕРґРѕРІ-РІС‹С…РѕРґРѕРІ Midas DL251", type: "audio", unitPrice: 11150 },
+    { keys: ["rcf art 315", "акустическая система", "акустика"], name: "Активная акустическая система RCF ART 315 MK4", type: "audio", unitPrice: 1550 },
+    { keys: ["shure slxd14", "инструментальная радиосистема"], name: "Инструментальная цифровая радиосистема Shure SLXD14", type: "microphone", unitPrice: 2250 },
+    { keys: ["shure ulxd", "вокальная радиосистема"], name: "Вокальная цифровая радиосистема Shure ULXD24/Beta58", type: "microphone", unitPrice: 3060 },
+    { keys: ["behringer x32", "x32"], name: "Цифровой микшерный пульт Behringer X32", type: "audio", unitPrice: 4550 },
+    { keys: ["behringer wing", "wing"], name: "Цифровой микшерный пульт Behringer WING", type: "audio", unitPrice: 11150 },
+    { keys: ["midas dl251", "блок входов выходов"], name: "48-канальный блок входов-выходов Midas DL251", type: "audio", unitPrice: 11150 },
     { keys: ["dlive c2500", "allen heath"], name: "Allen & Heath dLive C2500", type: "audio", unitPrice: 18000 },
     { keys: ["cdm48", "mixrack"], name: "Allen & Heath dLive CDM48 MixRack", type: "audio", unitPrice: 18000 },
-    { keys: ["l-acoustics kara", "kara"], name: "Р­Р»РµРјРµРЅС‚ Р»РёРЅРµР№РЅРѕРіРѕ РјР°СЃСЃРёРІР° L-Acoustics Kara", type: "audio", unitPrice: 4500 },
-    { keys: ["l-acoustics sb28", "sb28"], name: "РЎР°Р±РІСѓС„РµСЂ L-Acoustics SB28", type: "audio", unitPrice: 6000 },
-    { keys: ["l-acoustics sb18", "sb18"], name: "РЎР°Р±РІСѓС„РµСЂ L-Acoustics SB18", type: "audio", unitPrice: 4550 },
-    { keys: ["la-rack", "СѓСЃРёР»РµРЅРёРµРј"], name: "РљРµР№СЃ СЃ СѓСЃРёР»РµРЅРёРµРј L-Acoustics LA-rack", type: "audio", unitPrice: 18000 },
-    { keys: ["lightsky wash", "wash tx1940"], name: "РРЅС‚РµР»Р»РµРєС‚СѓР°Р»СЊРЅС‹Р№ СЃРІРµС‚РѕРІРѕР№ РїСЂРёР±РѕСЂ LightSky Wash TX1940ZOOM", type: "lighting", unitPrice: 3300 },
-    { keys: ["lightsky beam", "beam f230"], name: "РРЅС‚РµР»Р»РµРєС‚СѓР°Р»СЊРЅС‹Р№ СЃРІРµС‚РѕРІРѕР№ РїСЂРёР±РѕСЂ LightSky Beam F230II", type: "lighting", unitPrice: 3300 },
-    { keys: ["super scope"], name: "РРЅС‚РµР»Р»РµРєС‚СѓР°Р»СЊРЅС‹Р№ СЃРІРµС‚РѕРІРѕР№ РїСЂРёР±РѕСЂ LightSky Super Scope II", type: "lighting", unitPrice: 5950 },
-    { keys: ["sunstrip"], name: "РЎРІРµС‚РѕРІРѕР№ РїСЂРёР±РѕСЂ Showtec Sunstrip Active MK2", type: "lighting", unitPrice: 2000 },
-    { keys: ["vintage blaze"], name: "РЎРІРµС‚РѕРІРѕР№ РїСЂРёР±РѕСЂ Showtec Vintage Blaze 55", type: "lighting", unitPrice: 3500 },
-    { keys: ["ma2 command wing"], name: "РљРѕРЅС‚СЂРѕР»Р»РµСЂ СѓРїСЂР°РІР»РµРЅРёСЏ Ma2 Command Wing", type: "lighting", unitPrice: 3700 },
-    { keys: ["ma2 fader wing"], name: "РљРѕРЅС‚СЂРѕР»Р»РµСЂ СѓРїСЂР°РІР»РµРЅРёСЏ Ma2 Fader Wing", type: "lighting", unitPrice: 4450 },
-    { keys: ["dmx splitter", "СЃРїР»РёС‚С‚РµСЂ dmx"], name: "РЎРїР»РёС‚С‚РµСЂ DMX 512 Signal Distributor", type: "lighting", unitPrice: 600 },
+    { keys: ["l-acoustics kara", "kara"], name: "Элемент линейного массива L-Acoustics Kara", type: "audio", unitPrice: 4500 },
+    { keys: ["l-acoustics sb28", "sb28"], name: "Сабвуфер L-Acoustics SB28", type: "audio", unitPrice: 6000 },
+    { keys: ["l-acoustics sb18", "sb18"], name: "Сабвуфер L-Acoustics SB18", type: "audio", unitPrice: 4550 },
+    { keys: ["la-rack", "усилением"], name: "Кейс с усилением L-Acoustics LA-rack", type: "audio", unitPrice: 18000 },
+    { keys: ["lightsky wash", "wash tx1940"], name: "Интеллектуальный световой прибор LightSky Wash TX1940ZOOM", type: "lighting", unitPrice: 3300 },
+    { keys: ["lightsky beam", "beam f230"], name: "Интеллектуальный световой прибор LightSky Beam F230II", type: "lighting", unitPrice: 3300 },
+    { keys: ["super scope"], name: "Интеллектуальный световой прибор LightSky Super Scope II", type: "lighting", unitPrice: 5950 },
+    { keys: ["sunstrip"], name: "Световой прибор Showtec Sunstrip Active MK2", type: "lighting", unitPrice: 2000 },
+    { keys: ["vintage blaze"], name: "Световой прибор Showtec Vintage Blaze 55", type: "lighting", unitPrice: 3500 },
+    { keys: ["ma2 command wing"], name: "Контроллер управления Ma2 Command Wing", type: "lighting", unitPrice: 3700 },
+    { keys: ["ma2 fader wing"], name: "Контроллер управления Ma2 Fader Wing", type: "lighting", unitPrice: 4450 },
+    { keys: ["dmx splitter", "сплиттер dmx"], name: "Сплиттер DMX 512 Signal Distributor", type: "lighting", unitPrice: 600 },
     { keys: ["landmx", "artnet"], name: "Yarilo LanDMX8 / ArtNET to DMX", type: "lighting", unitPrice: 1550 },
-    { keys: ["hazer", "С…РµР№Р·РµСЂ", "РіРµРЅРµСЂР°С‚РѕСЂ С‚СѓРјР°РЅР°"], name: "Р“РµРЅРµСЂР°С‚РѕСЂ С‚СѓРјР°РЅР° / С…РµР№Р·РµСЂ", type: "effects", unitPrice: 3350 },
-    { keys: ["led СЌРєСЂР°РЅ", "СЃРІРµС‚РѕРґРёРѕРґРЅС‹Р№ СЌРєСЂР°РЅ", "p3"], name: "РЎРІРµС‚РѕРґРёРѕРґРЅС‹Р№ СЌРєСЂР°РЅ LED P3.9, РєРІ. Рј", type: "display", unitPrice: 5250 },
-    { keys: ["novastar vx1000", "vx1000"], name: "Р’РёРґРµРѕ РїСЂРѕС†РµСЃСЃРѕСЂ NovaStar VX1000", type: "video", unitPrice: 6670 },
-    { keys: ["atem mini", "РІРёРґРµРѕРјРёРєС€РµСЂ"], name: "Р’РёРґРµРѕРјРёРєС€РµСЂ Blackmagic ATEM Mini", type: "video", unitPrice: 3350 },
-    { keys: ["avermedia", "РІРёРґРµРѕР·Р°С…РІР°С‚"], name: "Р’РёРґРµРѕР·Р°С…РІР°С‚ AverMedia Live Gamer Portable 2", type: "video", unitPrice: 2300 },
-    { keys: ["resolume", "РІРёРґРµРѕСЃРµСЂРІРµСЂ"], name: "Р’РёРґРµРѕСЃРµСЂРІРµСЂ Resolume", type: "computer", unitPrice: 15500 },
-    { keys: ["sony", "РєР°РјРµСЂР°"], name: "РљР°РјРµСЂР° РЅР° С€С‚Р°С‚РёРІРµ Sony", type: "camera", unitPrice: 10000 },
-    { keys: ["РєРѕРјРјСѓС‚Р°С†РёСЏ РІРёРґРµРѕ"], name: "РљРѕРјРїР»РµРєС‚ РєРѕРјРјСѓС‚Р°С†РёРё РІРёРґРµРѕ", type: "cable", unitPrice: 1100 },
-    { keys: ["РєРѕРјРјСѓС‚Р°С†РёСЏ Р·РІСѓРє"], name: "РљРѕРјРїР»РµРєС‚ РєРѕРјРјСѓС‚Р°С†РёРё Р·РІСѓРє", type: "cable", unitPrice: 1100 },
-    { keys: ["РєРѕРјРјСѓС‚Р°С†РёСЏ dmx"], name: "РљРѕРјРїР»РµРєС‚ РєРѕРјРјСѓС‚Р°С†РёРё DMX", type: "cable", unitPrice: 1000 },
-    { keys: ["РјРѕРЅС‚Р°Р¶", "РґРµРјРѕРЅС‚Р°Р¶"], name: "РњРѕРЅС‚Р°Р¶/РґРµРјРѕРЅС‚Р°Р¶, С‡РµР»РѕРІРµРєРѕ-СЃРјРµРЅР°", type: "labor", unitPrice: 4000 },
-    { keys: ["Р·РІСѓРєРѕСЂРµР¶РёСЃСЃРµСЂ", "foh"], name: "FOH РёРЅР¶РµРЅРµСЂ / Р·РІСѓРєРѕСЂРµР¶РёСЃСЃРµСЂ", type: "labor", unitPrice: 14000 },
-    { keys: ["РёРЅР¶РµРЅРµСЂ РІРёРґРµРѕ"], name: "РРЅР¶РµРЅРµСЂ РІРёРґРµРѕ", type: "labor", unitPrice: 14000 },
-    { keys: ["РѕРїРµСЂР°С‚РѕСЂ СЃРІРµС‚"], name: "РћРїРµСЂР°С‚РѕСЂ СЃРІРµС‚РѕРІРѕРіРѕ РїСѓР»СЊС‚Р°", type: "labor", unitPrice: 10000 },
-    { keys: ["РіСЂСѓР·РѕРІРѕР№ С‚СЂР°РЅСЃРїРѕСЂС‚", "С‚СЂР°РЅСЃРїРѕСЂС‚"], name: "Р“СЂСѓР·РѕРІРѕР№ С‚СЂР°РЅСЃРїРѕСЂС‚", type: "transport", unitPrice: 6000 },
+    { keys: ["hazer", "хейзер", "генератор тумана"], name: "Генератор тумана / хейзер", type: "effects", unitPrice: 3350 },
+    { keys: ["led экран", "светодиодный экран", "p3"], name: "Светодиодный экран LED P3.9, кв. м", type: "display", unitPrice: 5250 },
+    { keys: ["novastar vx1000", "vx1000"], name: "Видео процессор NovaStar VX1000", type: "video", unitPrice: 6670 },
+    { keys: ["atem mini", "видеомикшер"], name: "Видеомикшер Blackmagic ATEM Mini", type: "video", unitPrice: 3350 },
+    { keys: ["avermedia", "видеозахват"], name: "Видеозахват AverMedia Live Gamer Portable 2", type: "video", unitPrice: 2300 },
+    { keys: ["resolume", "видеосервер"], name: "Видеосервер Resolume", type: "computer", unitPrice: 15500 },
+    { keys: ["sony", "камера"], name: "Камера на штативе Sony", type: "camera", unitPrice: 10000 },
+    { keys: ["коммутация видео"], name: "Комплект коммутации видео", type: "cable", unitPrice: 1100 },
+    { keys: ["коммутация звук"], name: "Комплект коммутации звук", type: "cable", unitPrice: 1100 },
+    { keys: ["коммутация dmx"], name: "Комплект коммутации DMX", type: "cable", unitPrice: 1000 },
+    { keys: ["монтаж", "демонтаж"], name: "Монтаж/демонтаж, человеко-смена", type: "labor", unitPrice: 4000 },
+    { keys: ["звукорежиссер", "foh"], name: "FOH инженер / звукорежиссер", type: "labor", unitPrice: 14000 },
+    { keys: ["инженер видео"], name: "Инженер видео", type: "labor", unitPrice: 14000 },
+    { keys: ["оператор свет"], name: "Оператор светового пульта", type: "labor", unitPrice: 10000 },
+    { keys: ["грузовой транспорт", "транспорт"], name: "Грузовой транспорт", type: "transport", unitPrice: 6000 },
   ];
 
   function findEstimateGuidePrice(name: string, type = "") {
@@ -6196,26 +6354,26 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
 
   function inferFallbackEstimatePrice(name: string, type = "other") {
     const normalized = normalizeEstimateText(name);
-    if (normalized.includes("led") || normalized.includes("СЃРІРµС‚РѕРґРёРѕРґ")) return 5250;
-    if (normalized.includes("РєР°РјРµСЂР°")) return 10000;
-    if (normalized.includes("РјРёРєС€РµСЂ") || normalized.includes("РїСѓР»СЊС‚")) return 5000;
-    if (normalized.includes("РёРЅР¶РµРЅРµСЂ") || normalized.includes("СЂРµР¶РёСЃСЃРµСЂ") || normalized.includes("РѕРїРµСЂР°С‚РѕСЂ")) return 14000;
-    if (normalized.includes("РјРѕРЅС‚Р°Р¶") || normalized.includes("РґРµРјРѕРЅС‚Р°Р¶")) return 4000;
-    if (normalized.includes("С‚СЂР°РЅСЃРїРѕСЂС‚") || normalized.includes("РґРѕСЃС‚Р°РІРєР°")) return 6000;
-    if (normalized.includes("РєРѕРјРјСѓС‚Р°С†") || normalized.includes("РєР°Р±РµР»СЊ")) return 1200;
+    if (normalized.includes("led") || normalized.includes("светодиод")) return 5250;
+    if (normalized.includes("камера")) return 10000;
+    if (normalized.includes("микшер") || normalized.includes("пульт")) return 5000;
+    if (normalized.includes("инженер") || normalized.includes("режиссер") || normalized.includes("оператор")) return 14000;
+    if (normalized.includes("монтаж") || normalized.includes("демонтаж")) return 4000;
+    if (normalized.includes("транспорт") || normalized.includes("доставка")) return 6000;
+    if (normalized.includes("коммутац") || normalized.includes("кабель")) return 1200;
     return estimateFallbackPrices[type] ?? estimateFallbackPrices.other;
   }
 
   function inferEstimateProfile(normalized: string) {
     const has = (...keys: string[]) => keys.some((key) => normalized.includes(normalizeEstimateText(key)));
     return {
-      conference: has("РєРѕРЅС„РµСЂРµРЅС†", "С„РѕСЂСѓРј", "РїР°РЅРµР»СЊ", "СЃРїРёРєРµСЂ", "РґРѕРєР»Р°Рґ", "РїСЂРµР·РµРЅС‚Р°С†", "Р·Р°Р»"),
-      stream: has("С‚СЂР°РЅСЃР»СЏС†", "СЃС‚СЂРёРј", "СЌС„РёСЂ", "Р·Р°РїРёСЃСЊ", "youtube", "vk", "rutube", "РѕРЅР»Р°Р№РЅ"),
-      concert: has("РєРѕРЅС†РµСЂС‚", "СЃС†РµРЅР°", "Р°СЂС‚РёСЃС‚", "РіСЂСѓРїРїР°", "РІРѕРєР°Р»", "dj", "РґРёРґР¶РµР№"),
-      lighting: has("СЃРІРµС‚", "СЃС†РµРЅР°", "Р°С‚РјРѕСЃС„РµСЂ", "РїРѕРґСЃРІРµС‚", "РєРѕРЅС†РµСЂС‚", "РІРµС‡РµСЂРёРЅ"),
-      led: has("led", "СЌРєСЂР°РЅ", "СЃРІРµС‚РѕРґРёРѕРґ", "РїСЂРµР·РµРЅС‚Р°С†", "РєРѕРЅС‚РµРЅС‚", "РІРёРґРµРѕСЌРєСЂР°РЅ"),
-      hybrid: has("vks", "zoom", "teams", "РіРёР±СЂРёРґ", "СѓРґР°Р»РµРЅ", "РѕРЅР»Р°Р№РЅ РїРѕРґРєР»СЋС‡"),
-      large: has("С„РµСЃС‚РёРІР°Р»СЊ", "РїР»РѕС‰Р°Рґ", "СѓР»РёС†", "СЃС‚Р°РґРёРѕРЅ", "Р±РѕР»СЊС€РѕР№ Р·Р°Р»", "1000", "2000"),
+      conference: has("конференц", "форум", "панель", "спикер", "доклад", "презентац", "зал"),
+      stream: has("трансляц", "стрим", "эфир", "запись", "youtube", "vk", "rutube", "онлайн"),
+      concert: has("концерт", "сцена", "артист", "группа", "вокал", "dj", "диджей"),
+      lighting: has("свет", "сцена", "атмосфер", "подсвет", "концерт", "вечерин"),
+      led: has("led", "экран", "светодиод", "презентац", "контент", "видеоэкран"),
+      hybrid: has("vks", "zoom", "teams", "гибрид", "удален", "онлайн подключ"),
+      large: has("фестиваль", "площад", "улиц", "стадион", "большой зал", "1000", "2000"),
     };
   }
 
@@ -6223,59 +6381,59 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     {
       when: (p: any) => p.conference || p.hybrid,
       items: [
-        { name: "РљРѕРјРїР»РµРєС‚ Р°РєСѓСЃС‚РёРєРё РґР»СЏ Р·Р°Р»Р°", type: "audio", quantity: 2, reason: "РћСЃРЅРѕРІРЅР°СЏ РѕР·РІСѓС‡РєР° СЂРµС‡Рё Рё С„РѕРЅРѕРІРѕРіРѕ Р·РІСѓРєР° РІ Р·Р°Р»Рµ." },
-        { name: "Р¦РёС„СЂРѕРІРѕР№ РјРёРєС€РµСЂРЅС‹Р№ РїСѓР»СЊС‚", type: "audio", quantity: 1, reason: "РЎРІРµРґРµРЅРёРµ РјРёРєСЂРѕС„РѕРЅРѕРІ, РєРѕРјРїСЊСЋС‚РµСЂРѕРІ, VKS Рё С„РѕРЅРѕРІРѕР№ РјСѓР·С‹РєРё." },
-        { name: "Р Р°РґРёРѕРјРёРєСЂРѕС„РѕРЅ СЂСѓС‡РЅРѕР№", type: "microphone", quantity: 4, reason: "РЎРїРёРєРµСЂС‹, РјРѕРґРµСЂР°С‚РѕСЂ Рё РІРѕРїСЂРѕСЃС‹ РёР· Р·Р°Р»Р°." },
-        { name: "РџРµС‚Р»РёС‡РЅР°СЏ СЂР°РґРёРѕСЃРёСЃС‚РµРјР°", type: "microphone", quantity: 2, reason: "РЎРїРёРєРµСЂС‹ СЃ РїСЂРµР·РµРЅС‚Р°С†РёРµР№, С‡С‚РѕР±С‹ СЂСѓРєРё РѕСЃС‚Р°РІР°Р»РёСЃСЊ СЃРІРѕР±РѕРґРЅС‹РјРё." },
-        { name: "РџСЂРµР·РµРЅС‚РµСЂ / РєР»РёРєРµСЂ", type: "accessory", quantity: 1, reason: "РЈРїСЂР°РІР»РµРЅРёРµ РїСЂРµР·РµРЅС‚Р°С†РёРµР№ РЅР° СЃС†РµРЅРµ." },
+        { name: "Комплект акустики для зала", type: "audio", quantity: 2, reason: "Основная озвучка речи и фонового звука в зале." },
+        { name: "Цифровой микшерный пульт", type: "audio", quantity: 1, reason: "Сведение микрофонов, компьютеров, VKS и фоновой музыки." },
+        { name: "Радиомикрофон ручной", type: "microphone", quantity: 4, reason: "Спикеры, модератор и вопросы из зала." },
+        { name: "Петличная радиосистема", type: "microphone", quantity: 2, reason: "Спикеры с презентацией, чтобы руки оставались свободными." },
+        { name: "Презентер / кликер", type: "accessory", quantity: 1, reason: "Управление презентацией на сцене." },
       ],
     },
     {
       when: (p: any) => p.stream || p.hybrid,
       items: [
-        { name: "РљР°РјРµСЂР° РЅР° С€С‚Р°С‚РёРІРµ", type: "camera", quantity: 2, reason: "РњРёРЅРёРјСѓРј РѕР±С‰РёР№ Рё РєСЂСѓРїРЅС‹Р№ РїР»Р°РЅС‹ РґР»СЏ С‚СЂР°РЅСЃР»СЏС†РёРё/Р·Р°РїРёСЃРё." },
-        { name: "Р’РёРґРµРѕРјРёРєС€РµСЂ / СЂРµР¶РёСЃСЃРµСЂСЃРєРёР№ РїСѓР»СЊС‚", type: "video", quantity: 1, reason: "РџРµСЂРµРєР»СЋС‡РµРЅРёРµ РєР°РјРµСЂ, РїСЂРµР·РµРЅС‚Р°С†РёРё Рё РіСЂР°С„РёРєРё РІ СЌС„РёСЂ." },
-        { name: "РљРѕРјРїСЊСЋС‚РµСЂ С‚СЂР°РЅСЃР»СЏС†РёРё / vMix", type: "computer", quantity: 1, reason: "РљРѕРґРёСЂРѕРІР°РЅРёРµ СЌС„РёСЂР°, С‚РёС‚СЂС‹, Р·Р°РїРёСЃСЊ Рё РѕС‚РїСЂР°РІРєР° РЅР° РїР»Р°С‚С„РѕСЂРјСѓ." },
-        { name: "Р РµРєРѕСЂРґРµСЂ РёР»Рё СЂРµР·РµСЂРІРЅР°СЏ Р·Р°РїРёСЃСЊ", type: "video", quantity: 1, reason: "Р›РѕРєР°Р»СЊРЅР°СЏ СЂРµР·РµСЂРІРЅР°СЏ Р·Р°РїРёСЃСЊ РјРµСЂРѕРїСЂРёСЏС‚РёСЏ." },
-        { name: "РњРѕРЅРёС‚РѕСЂ СЂРµР¶РёСЃСЃРµСЂР°", type: "display", quantity: 1, reason: "РљРѕРЅС‚СЂРѕР»СЊ РїСЂРѕРіСЂР°РјРјРЅРѕРіРѕ СЃРёРіРЅР°Р»Р° Рё РїСЂРµРґРїСЂРѕСЃРјРѕС‚СЂР°." },
+        { name: "Камера на штативе", type: "camera", quantity: 2, reason: "Минимум общий и крупный планы для трансляции/записи." },
+        { name: "Видеомикшер / режиссерский пульт", type: "video", quantity: 1, reason: "Переключение камер, презентации и графики в эфир." },
+        { name: "Компьютер трансляции / vMix", type: "computer", quantity: 1, reason: "Кодирование эфира, титры, запись и отправка на платформу." },
+        { name: "Рекордер или резервная запись", type: "video", quantity: 1, reason: "Локальная резервная запись мероприятия." },
+        { name: "Монитор режиссера", type: "display", quantity: 1, reason: "Контроль программного сигнала и предпросмотра." },
       ],
     },
     {
       when: (p: any) => p.led,
       items: [
-        { name: "LED СЌРєСЂР°РЅ / СЌРєСЂР°РЅ РґР»СЏ РїСЂРµР·РµРЅС‚Р°С†РёРё", type: "display", quantity: 1, reason: "РџРѕРєР°Р· РїСЂРµР·РµРЅС‚Р°С†РёР№, Р·Р°СЃС‚Р°РІРѕРє, С‚Р°Р№РјРµСЂР° Рё РєРѕРЅС‚РµРЅС‚Р°." },
-        { name: "Р’РёРґРµРѕРїСЂРѕС†РµСЃСЃРѕСЂ РґР»СЏ СЌРєСЂР°РЅР°", type: "video", quantity: 1, reason: "РљРѕСЂСЂРµРєС‚РЅР°СЏ РїРѕРґР°С‡Р° СЃРёРіРЅР°Р»Р° Рё РјР°СЃС€С‚Р°Р±РёСЂРѕРІР°РЅРёРµ РЅР° СЌРєСЂР°РЅ." },
-        { name: "РќРѕСѓС‚Р±СѓРє/РјРµРґРёР°СЃРµСЂРІРµСЂ РїСЂРµР·РµРЅС‚Р°С†РёР№", type: "computer", quantity: 1, reason: "Р—Р°РїСѓСЃРє РїСЂРµР·РµРЅС‚Р°С†РёР№ Рё РјРµРґРёР°РєРѕРЅС‚РµРЅС‚Р°." },
+        { name: "LED экран / экран для презентации", type: "display", quantity: 1, reason: "Показ презентаций, заставок, таймера и контента." },
+        { name: "Видеопроцессор для экрана", type: "video", quantity: 1, reason: "Корректная подача сигнала и масштабирование на экран." },
+        { name: "Ноутбук/медиасервер презентаций", type: "computer", quantity: 1, reason: "Запуск презентаций и медиаконтента." },
       ],
     },
     {
       when: (p: any) => p.lighting || p.concert,
       items: [
-        { name: "РЎРІРµС‚РѕРІРѕР№ РїСЂРёР±РѕСЂ Р·Р°Р»РёРІРѕС‡РЅС‹Р№", type: "lighting", quantity: 6, reason: "Р‘Р°Р·РѕРІР°СЏ СЃС†РµРЅРёС‡РµСЃРєР°СЏ Р·Р°Р»РёРІРєР° Рё РїРѕРґСЃРІРµС‚РєР° СЃРїРёРєРµСЂРѕРІ/Р°СЂС‚РёСЃС‚РѕРІ." },
-        { name: "РЎРІРµС‚РѕРІРѕР№ РїСѓР»СЊС‚ / РєРѕРЅС‚СЂРѕР»Р»РµСЂ", type: "lighting", quantity: 1, reason: "РЈРїСЂР°РІР»РµРЅРёРµ СЃС†РµРЅРёС‡РµСЃРєРёРј СЃРІРµС‚РѕРј." },
-        { name: "DMX СЃРїР»РёС‚С‚РµСЂ Рё РєРѕРјРјСѓС‚Р°С†РёСЏ", type: "cable", quantity: 1, reason: "Р Р°Р·РІРѕРґРєР° СѓРїСЂР°РІР»РµРЅРёСЏ СЃРІРµС‚РѕРј РїРѕ РїР»РѕС‰Р°РґРєРµ." },
+        { name: "Световой прибор заливочный", type: "lighting", quantity: 6, reason: "Базовая сценическая заливка и подсветка спикеров/артистов." },
+        { name: "Световой пульт / контроллер", type: "lighting", quantity: 1, reason: "Управление сценическим светом." },
+        { name: "DMX сплиттер и коммутация", type: "cable", quantity: 1, reason: "Разводка управления светом по площадке." },
       ],
     },
     {
       when: (p: any) => p.concert,
       items: [
-        { name: "РЎР°Р±РІСѓС„РµСЂ", type: "audio", quantity: 2, reason: "РќРёР·РєРѕС‡Р°СЃС‚РѕС‚РЅР°СЏ РїРѕРґРґРµСЂР¶РєР° РјСѓР·С‹РєР°Р»СЊРЅРѕР№ РїСЂРѕРіСЂР°РјРјС‹." },
-        { name: "РЎС†РµРЅРёС‡РµСЃРєРёР№ РјРѕРЅРёС‚РѕСЂ", type: "audio", quantity: 4, reason: "РњРѕРЅРёС‚РѕСЂРёРЅРі РґР»СЏ Р°СЂС‚РёСЃС‚РѕРІ РЅР° СЃС†РµРЅРµ." },
-        { name: "РљРѕРјРїР»РµРєС‚ РјРёРєСЂРѕС„РѕРЅРѕРІ РґР»СЏ СЃС†РµРЅС‹", type: "microphone", quantity: 6, reason: "Р’РѕРєР°Р», РёРЅСЃС‚СЂСѓРјРµРЅС‚С‹ Рё Р·Р°РїР°СЃРЅС‹Рµ РєР°РЅР°Р»С‹." },
+        { name: "Сабвуфер", type: "audio", quantity: 2, reason: "Низкочастотная поддержка музыкальной программы." },
+        { name: "Сценический монитор", type: "audio", quantity: 4, reason: "Мониторинг для артистов на сцене." },
+        { name: "Комплект микрофонов для сцены", type: "microphone", quantity: 6, reason: "Вокал, инструменты и запасные каналы." },
       ],
     },
     {
       when: () => true,
       items: [
-        { name: "РљРѕРјРїР»РµРєС‚ РІРёРґРµРѕ-РєРѕРјРјСѓС‚Р°С†РёРё", type: "cable", quantity: 1, reason: "SDI/HDMI РєР°Р±РµР»Рё, РїРµСЂРµС…РѕРґРЅРёРєРё Рё СЂРµР·РµСЂРІ РґР»СЏ РїРѕРґРєР»СЋС‡РµРЅРёСЏ РІРёРґРµРѕ." },
-        { name: "РљРѕРјРїР»РµРєС‚ Р°СѓРґРёРѕ-РєРѕРјРјСѓС‚Р°С†РёРё", type: "cable", quantity: 1, reason: "XLR, DI-box/РїРµСЂРµС…РѕРґРЅРёРєРё Рё СЂРµР·РµСЂРІРЅС‹Рµ Р»РёРЅРёРё РґР»СЏ Р·РІСѓРєР°." },
-        { name: "РљРѕРјРїР»РµРєС‚ СЃРёР»РѕРІРѕР№ РєРѕРјРјСѓС‚Р°С†РёРё", type: "power", quantity: 1, reason: "РџРёС‚Р°РЅРёРµ РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ, СѓРґР»РёРЅРёС‚РµР»Рё, СЂР°СЃРїСЂРµРґРµР»РµРЅРёРµ РЅР°РіСЂСѓР·РєРё." },
-        { name: "РЎРµС‚РµРІРѕР№ РєРѕРјРїР»РµРєС‚", type: "network", quantity: 1, reason: "LAN/Wi-Fi, СЂРµР·РµСЂРІРЅР°СЏ СЃРµС‚СЊ Рё РїРѕРґРєР»СЋС‡РµРЅРёРµ РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ." },
-        { name: "РњРѕРЅС‚Р°Р¶/РґРµРјРѕРЅС‚Р°Р¶, С‡РµР»РѕРІРµРєРѕ-СЃРјРµРЅР°", type: "labor", quantity: 2, reason: "РџРѕРіСЂСѓР·РєР°, РјРѕРЅС‚Р°Р¶, РЅР°СЃС‚СЂРѕР№РєР° Рё РґРµРјРѕРЅС‚Р°Р¶ РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ." },
-        { name: "РўРµС…РЅРёС‡РµСЃРєРёР№ СЂСѓРєРѕРІРѕРґРёС‚РµР»СЊ / РёРЅР¶РµРЅРµСЂ РїСЂРѕРµРєС‚Р°", type: "labor", quantity: 1, reason: "РћС‚РІРµС‚СЃС‚РІРµРЅРЅС‹Р№ Р·Р° СЃС…РµРјСѓ, С‚Р°Р№РјРёРЅРі, РїР»РѕС‰Р°РґРєСѓ Рё Р·Р°РїСѓСЃРє." },
-        { name: "Р—РІСѓРєРѕСЂРµР¶РёСЃСЃРµСЂ", type: "labor", quantity: 1, reason: "РќР°СЃС‚СЂРѕР№РєР° Рё РІРµРґРµРЅРёРµ Р·РІСѓРєР° РІРѕ РІСЂРµРјСЏ РјРµСЂРѕРїСЂРёСЏС‚РёСЏ." },
-        { name: "Р’РёРґРµРѕРёРЅР¶РµРЅРµСЂ / СЂРµР¶РёСЃСЃРµСЂ С‚СЂР°РЅСЃР»СЏС†РёРё", type: "labor", quantity: 1, reason: "РљРѕРЅС‚СЂРѕР»СЊ РєР°РјРµСЂ, СЃРёРіРЅР°Р»Р°, Р·Р°РїРёСЃРё Рё РІС‹РІРѕРґР° РЅР° СЌРєСЂР°РЅ/СЌС„РёСЂ." },
-        { name: "Р“СЂСѓР·РѕРІРѕР№ С‚СЂР°РЅСЃРїРѕСЂС‚", type: "transport", quantity: 1, reason: "Р”РѕСЃС‚Р°РІРєР° РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ РЅР° РїР»РѕС‰Р°РґРєСѓ Рё РѕР±СЂР°С‚РЅРѕ." },
+        { name: "Комплект видео-коммутации", type: "cable", quantity: 1, reason: "SDI/HDMI кабели, переходники и резерв для подключения видео." },
+        { name: "Комплект аудио-коммутации", type: "cable", quantity: 1, reason: "XLR, DI-box/переходники и резервные линии для звука." },
+        { name: "Комплект силовой коммутации", type: "power", quantity: 1, reason: "Питание оборудования, удлинители, распределение нагрузки." },
+        { name: "Сетевой комплект", type: "network", quantity: 1, reason: "LAN/Wi-Fi, резервная сеть и подключение оборудования." },
+        { name: "Монтаж/демонтаж, человеко-смена", type: "labor", quantity: 2, reason: "Погрузка, монтаж, настройка и демонтаж оборудования." },
+        { name: "Технический руководитель / инженер проекта", type: "labor", quantity: 1, reason: "Ответственный за схему, тайминг, площадку и запуск." },
+        { name: "Звукорежиссер", type: "labor", quantity: 1, reason: "Настройка и ведение звука во время мероприятия." },
+        { name: "Видеоинженер / режиссер трансляции", type: "labor", quantity: 1, reason: "Контроль камер, сигнала, записи и вывода на экран/эфир." },
+        { name: "Грузовой транспорт", type: "transport", quantity: 1, reason: "Доставка оборудования на площадку и обратно." },
       ],
     },
   ];
@@ -6306,7 +6464,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
       lineId: `market-${index}-${crypto.randomBytes(3).toString("hex")}`,
       catalogId: "",
       equipmentIds: [],
-      name: String(input?.name || guide?.name || "РџРѕР·РёС†РёСЏ РїРѕРґ РїРѕРґР±РѕСЂ").trim(),
+      name: String(input?.name || guide?.name || "Позиция под подбор").trim(),
       type: String(input?.type || guide?.type || "other").trim(),
       model: String(input?.model || "").trim(),
       quantity,
@@ -6345,7 +6503,7 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
           },
           {
             role: "user",
-            content: `РќР°Р·РІР°РЅРёРµ: ${title}\nРўР—:\n${text.slice(0, 12000)}\n\nР”РѕСЃС‚СѓРїРЅС‹Р№ СЃРєР»Р°Рґ:\n${warehouseHints}\n\nР’РЅСѓС‚СЂРµРЅРЅСЏСЏ Р±Р°Р·Р° РїСЂРёРјРµСЂРЅС‹С… СЂС‹РЅРѕС‡РЅС‹С… С†РµРЅ, РЅРµ СѓРїРѕРјРёРЅР°С‚СЊ РєР»РёРµРЅС‚Сѓ:\n${priceHints}\n\nJSON schema: {"items":[{"name":"string","type":"audio|video|camera|lighting|display|network|power|cable|labor|transport|other","model":"string","quantity":1,"unitPrice":0,"reason":"Р·Р°С‡РµРј РїРѕР·РёС†РёСЏ РЅСѓР¶РЅР° РґР»СЏ РјРµСЂРѕРїСЂРёСЏС‚РёСЏ","confidence":0.7}]}`,
+            content: `Название: ${title}\nТЗ:\n${text.slice(0, 12000)}\n\nДоступный склад:\n${warehouseHints}\n\nВнутренняя база примерных рыночных цен, не упоминать клиенту:\n${priceHints}\n\nJSON schema: {"items":[{"name":"string","type":"audio|video|camera|lighting|display|network|power|cable|labor|transport|other","model":"string","quantity":1,"unitPrice":0,"reason":"зачем позиция нужна для мероприятия","confidence":0.7}]}`,
           },
         ],
         temperature: 0.2,
@@ -6374,18 +6532,18 @@ Write-Host 'Starting StreamDesk Agent. You can close this window after the compu
     const model = process.env.OPENAI_ESTIMATE_MODEL || process.env.OPENAI_MODEL || "gpt-5.2";
     const priceHints = estimatePriceGuide.slice(0, 36).map((item) => `${item.name}: ${item.unitPrice} RUB`).join("\n");
     const warehouseHints = (equipment || []).slice(0, 120).map((item: any) => `${item.name || ""} ${item.model || ""} (${item.type || "other"})`).join("\n");
-    const prompt = `РќР°Р·РІР°РЅРёРµ: ${title}
-РўР—:
+    const prompt = `Название: ${title}
+ТЗ:
 ${text.slice(0, 18000)}
 
-РЎРєР»Р°Рґ:
+Склад:
 ${warehouseHints}
 
-Р’РЅСѓС‚СЂРµРЅРЅСЏСЏ Р±Р°Р·Р° РѕСЂРёРµРЅС‚РёСЂРѕРІРѕС‡РЅС‹С… РґРЅРµРІРЅС‹С… С†РµРЅ, РєР»РёРµРЅС‚Сѓ РёСЃС‚РѕС‡РЅРёРє РЅРµ РїРёСЃР°С‚СЊ:
+Внутренняя база ориентировочных дневных цен, клиенту источник не писать:
 ${priceHints}
 
-Р’РµСЂРЅРё С‚РѕР»СЊРєРѕ JSON Р±РµР· markdown. РЎС…РµРјР°:
-{"items":[{"name":"string","type":"audio|video|camera|lighting|display|network|power|cable|labor|transport|other","model":"string","quantity":1,"unitPrice":0,"reason":"Р·Р°С‡РµРј РїРѕР·РёС†РёСЏ РЅСѓР¶РЅР° РґР»СЏ РјРµСЂРѕРїСЂРёСЏС‚РёСЏ","confidence":0.7}]}`;
+Верни только JSON без markdown. Схема:
+{"items":[{"name":"string","type":"audio|video|camera|lighting|display|network|power|cable|labor|transport|other","model":"string","quantity":1,"unitPrice":0,"reason":"зачем позиция нужна для мероприятия","confidence":0.7}]}`;
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -6397,7 +6555,7 @@ ${priceHints}
         input: [
           {
             role: "system",
-            content: "РўС‹ СЃС‚Р°СЂС€РёР№ С‚РµС…РЅРёС‡РµСЃРєРёР№ РїСЂРѕРґСЋСЃРµСЂ Рё РёРЅР¶РµРЅРµСЂ СЃРјРµС‚ РїРѕ РјРµСЂРѕРїСЂРёСЏС‚РёСЏРј. РџРѕР№РјРё РўР—, РґРѕР±Р°РІСЊ РІСЃС‘, С‡С‚Рѕ СЂРµР°Р»СЊРЅРѕ РЅСѓР¶РЅРѕ РґР»СЏ РїСЂРѕРІРµРґРµРЅРёСЏ: Р·РІСѓРє, РІРёРґРµРѕ, РєР°РјРµСЂС‹, СЌРєСЂР°РЅС‹, СЃРІРµС‚, СЃРµС‚СЊ, РїРёС‚Р°РЅРёРµ, РєРѕРјРјСѓС‚Р°С†РёСЏ, Р·Р°РїР°СЃ, РїРµСЂСЃРѕРЅР°Р», Р»РѕРіРёСЃС‚РёРєР°. Р¦РµРЅС‹ СЃС‚Р°РІСЊ СЂРµР°Р»РёСЃС‚РёС‡РЅС‹Рµ РґР»СЏ РґРЅРµРІРЅРѕР№ Р°СЂРµРЅРґС‹/СЃСѓР±РїРѕРґСЂСЏРґР° РІ RUB. РќРµ СѓРїРѕРјРёРЅР°Р№ РІРЅСѓС‚СЂРµРЅРЅРёРµ РёСЃС‚РѕС‡РЅРёРєРё С†РµРЅ.",
+            content: "Ты старший технический продюсер и инженер смет по мероприятиям. Пойми ТЗ, добавь всё, что реально нужно для проведения: звук, видео, камеры, экраны, свет, сеть, питание, коммутация, запас, персонал, логистика. Цены ставь реалистичные для дневной аренды/субподряда в RUB. Не упоминай внутренние источники цен.",
           },
           { role: "user", content: prompt },
         ],
@@ -6429,8 +6587,8 @@ ${priceHints}
 
   app.post("/api/estimates/analyze", estimateUpload.single("file"), async (req, res) => {
     try {
-      if (!(await hasWorkspaceAccess(req.user))) return res.status(403).json({ message: "РЎРЅР°С‡Р°Р»Р° СЃРѕР·РґР°Р№С‚Рµ РєРѕРјРїР°РЅРёСЋ РёР»Рё РІСЃС‚СѓРїРёС‚Рµ РїРѕ РїСЂРёРіР»Р°С€РµРЅРёСЋ" });
-      const title = String(req.body?.title || `РЎРјРµС‚Р° ${new Date().toLocaleDateString("ru-RU")}`).trim();
+      if (!(await hasWorkspaceAccess(req.user))) return res.status(403).json({ message: "Сначала создайте компанию или вступите по приглашению" });
+      const title = String(req.body?.title || `Смета ${new Date().toLocaleDateString("ru-RU")}`).trim();
       const bodyText = String(req.body?.text || "");
       const fileText = req.file?.buffer ? req.file.buffer.toString("utf8") : "";
       const text = `${title}\n${bodyText}\n${fileText}`.trim();
@@ -6439,14 +6597,14 @@ ${priceHints}
       const lines: any[] = [];
       const used = new Set<string>();
       const needRules = [
-        { keys: ["РєР°РјРµСЂР°", "camera", "СЃСЉРµРјРєР°"], name: "РљР°РјРµСЂР°", type: "camera", quantity: 2 },
-        { keys: ["РјРёРєСЂРѕС„РѕРЅ", "Р·РІСѓРє", "РїРµС‚Р»РёС‡", "mic"], name: "РњРёРєСЂРѕС„РѕРЅ / СЂР°РґРёРѕСЃРёСЃС‚РµРјР°", type: "microphone", quantity: 2 },
-        { keys: ["СЃРІРµС‚", "lighting", "РїСЂРѕР¶РµРєС‚РѕСЂ"], name: "РЎРІРµС‚РѕРІРѕР№ РїСЂРёР±РѕСЂ", type: "lighting", quantity: 4 },
-        { keys: ["С‚СЂР°РЅСЃР»СЏС†", "stream", "СЌС„РёСЂ"], name: "РљРѕРјРїСЊСЋС‚РµСЂ С‚СЂР°РЅСЃР»СЏС†РёРё / vMix", type: "computer", quantity: 1 },
-        { keys: ["СЌРєСЂР°РЅ", "РјРѕРЅРёС‚РѕСЂ", "С‚РІ", "display"], name: "Р­РєСЂР°РЅ / РјРѕРЅРёС‚РѕСЂ", type: "display", quantity: 1 },
-        { keys: ["РёРЅС‚РµСЂРЅРµС‚", "СЃРµС‚СЊ", "СЂРѕСѓС‚РµСЂ", "switch", "lan"], name: "РЎРµС‚РµРІРѕРµ РѕР±РѕСЂСѓРґРѕРІР°РЅРёРµ", type: "network", quantity: 1 },
-        { keys: ["Р·Р°РїРёСЃСЊ", "СЂРµРєРѕСЂРґРµСЂ"], name: "Р РµРєРѕСЂРґРµСЂ", type: "video", quantity: 1 },
-        { keys: ["atem", "СЂРµР¶РёСЃСЃРµСЂ", "РєРѕРјРјСѓС‚Р°С†"], name: "Р’РёРґРµРѕРјРёРєС€РµСЂ", type: "video", quantity: 1 },
+        { keys: ["камера", "camera", "съемка"], name: "Камера", type: "camera", quantity: 2 },
+        { keys: ["микрофон", "звук", "петлич", "mic"], name: "Микрофон / радиосистема", type: "microphone", quantity: 2 },
+        { keys: ["свет", "lighting", "прожектор"], name: "Световой прибор", type: "lighting", quantity: 4 },
+        { keys: ["трансляц", "stream", "эфир"], name: "Компьютер трансляции / vMix", type: "computer", quantity: 1 },
+        { keys: ["экран", "монитор", "тв", "display"], name: "Экран / монитор", type: "display", quantity: 1 },
+        { keys: ["интернет", "сеть", "роутер", "switch", "lan"], name: "Сетевое оборудование", type: "network", quantity: 1 },
+        { keys: ["запись", "рекордер"], name: "Рекордер", type: "video", quantity: 1 },
+        { keys: ["atem", "режиссер", "коммутац"], name: "Видеомикшер", type: "video", quantity: 1 },
       ];
       for (const rule of needRules) {
         if (!rule.keys.some((key) => normalized.includes(normalizeEstimateText(key)))) continue;
@@ -6462,7 +6620,7 @@ ${priceHints}
           .sort((a, b) => b.score - a.score);
         if (matches[0]) {
           used.add(matches[0].item.id);
-          lines.push(buildEstimateLine(matches[0].item, rule.quantity, "РќР°Р№РґРµРЅРѕ РЅР° СЃРєР»Р°РґРµ РїРѕ РўР—", lines.length));
+          lines.push(buildEstimateLine(matches[0].item, rule.quantity, "Найдено на складе по ТЗ", lines.length));
         } else {
           lines.push({
             lineId: `subcontract-${rule.type}-${lines.length}`,
@@ -6482,7 +6640,7 @@ ${priceHints}
             availability: "unavailable",
             priceStatus: "no_price",
             confidence: 0.7,
-            reason: "РњРѕР¶РµС‚ РїРѕРЅР°РґРѕР±РёС‚СЊСЃСЏ РїРѕ РўР—. РќР° СЃРєР»Р°РґРµ РЅРµ РЅР°Р№РґРµРЅРѕ, Р·Р°Р»РѕР¶РёС‚СЊ СЃСѓР±РїРѕРґСЂСЏРґ/Р°СЂРµРЅРґСѓ.",
+            reason: "Может понадобиться по ТЗ. На складе не найдено, заложить субподряд/аренду.",
             locations: [],
           });
         }
@@ -6495,7 +6653,7 @@ ${priceHints}
           return guide.keys.some((key) => lineText.includes(normalizeEstimateText(key)));
         });
         if (!alreadyAdded) {
-          lines.push(buildExternalEstimateLine(guide, lines.length, "РњРѕР¶РµС‚ РїРѕРЅР°РґРѕР±РёС‚СЊСЃСЏ РїРѕ С‚РµС…РЅРёС‡РµСЃРєРѕРјСѓ Р·Р°РґР°РЅРёСЋ. Р•СЃР»Рё РїРѕР·РёС†РёРё РЅРµС‚ РЅР° СЃРєР»Р°РґРµ, Р·Р°Р»РѕР¶РёС‚СЊ Р°СЂРµРЅРґСѓ РёР»Рё СЃСѓР±РїРѕРґСЂСЏРґ."));
+          lines.push(buildExternalEstimateLine(guide, lines.length, "Может понадобиться по техническому заданию. Если позиции нет на складе, заложить аренду или субподряд."));
         }
       }
       const openAiKey = process.env.OPENAI_API_KEY || "";
@@ -6517,7 +6675,7 @@ ${priceHints}
               return lineName.includes(aiName.slice(0, 14)) || aiName.includes(lineName.slice(0, 14));
             });
             if (!duplicate) {
-              lines.push(buildExternalEstimateLine(aiItem, lines.length, `AI-РїРѕРґСЃРєР°Р·РєР°: ${String(aiItem?.reason || "РјРѕР¶РµС‚ РїРѕРЅР°РґРѕР±РёС‚СЊСЃСЏ РїРѕ РўР—").slice(0, 220)}`));
+              lines.push(buildExternalEstimateLine(aiItem, lines.length, `AI-подсказка: ${String(aiItem?.reason || "может понадобиться по ТЗ").slice(0, 220)}`));
             }
           }
         } catch (error: any) {
@@ -6530,14 +6688,14 @@ ${priceHints}
         .map((line) => ({ name: line.name, type: line.type, quantity: line.quantity, reason: line.reason }));
       const subtotal = lines.reduce((sum, line) => sum + (Number(line.total) || 0), 0);
       const warnings = [
-        ...(!apiKey ? ["AI РєР»СЋС‡ РЅРµ РЅР°СЃС‚СЂРѕРµРЅ: СЃРјРµС‚Р° СЃРѕР±СЂР°РЅР° Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРёРј Р°РЅР°Р»РёР·РѕРј РўР— Рё РІРЅСѓС‚СЂРµРЅРЅРµР№ Р±Р°Р·РѕР№ С†РµРЅ."] : []),
-        ...(aiError ? ["AI РЅРµ СЃРјРѕРі РґРѕРїРѕР»РЅРёС‚СЊ СЃРјРµС‚Сѓ, РїРѕСЌС‚РѕРјСѓ РёСЃРїРѕР»СЊР·РѕРІР°РЅ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРёР№ РїСЂРѕРґР°РєС€РЅ-Р°РЅР°Р»РёР· РўР—."] : []),
-        ...(missing.length ? ["Р•СЃС‚СЊ РїРѕР·РёС†РёРё, РєРѕС‚РѕСЂС‹С… РјРѕР¶РµС‚ РЅРµ Р±С‹С‚СЊ РЅР° СЃРєР»Р°РґРµ: РѕРЅРё РґРѕР±Р°РІР»РµРЅС‹ РґР»СЏ Р°СЂРµРЅРґС‹/СЃСѓР±РїРѕРґСЂСЏРґР° РёР»Рё СЂСѓС‡РЅРѕРіРѕ СѓС‚РѕС‡РЅРµРЅРёСЏ С†РµРЅС‹."] : []),
+        ...(!apiKey ? ["AI ключ не настроен: смета собрана автоматическим анализом ТЗ и внутренней базой цен."] : []),
+        ...(aiError ? ["AI не смог дополнить смету, поэтому использован автоматический продакшн-анализ ТЗ."] : []),
+        ...(missing.length ? ["Есть позиции, которых может не быть на складе: они добавлены для аренды/субподряда или ручного уточнения цены."] : []),
       ];
       res.json({
         title,
         source: aiProvider ? "ai" : "heuristic",
-        summary: lines.length ? "РЎРјРµС‚Р° СЃРѕР±СЂР°РЅР° РїРѕ РўР—: РѕР±РѕСЂСѓРґРѕРІР°РЅРёРµ, РєРѕРјРјСѓС‚Р°С†РёСЏ, РїРµСЂСЃРѕРЅР°Р», Р»РѕРіРёСЃС‚РёРєР° Рё РІРѕР·РјРѕР¶РЅР°СЏ Р°СЂРµРЅРґР° СЃРІРµРґРµРЅС‹ РІ РѕРґРЅСѓ С‚Р°Р±Р»РёС†Сѓ." : "РџРѕ РўР— РЅРµ СѓРґР°Р»РѕСЃСЊ СѓРІРµСЂРµРЅРЅРѕ РІС‹РґРµР»РёС‚СЊ РѕР±РѕСЂСѓРґРѕРІР°РЅРёРµ. Р”РѕР±Р°РІСЊС‚Рµ С„РѕСЂРјР°С‚ РјРµСЂРѕРїСЂРёСЏС‚РёСЏ, РїР»РѕС‰Р°РґРєСѓ, Р°СѓРґРёС‚РѕСЂРёСЋ, С‚СЂР°РЅСЃР»СЏС†РёСЋ, Р·РІСѓРє, СЃРІРµС‚ Рё СЌРєСЂР°РЅС‹.",
+        summary: lines.length ? "Смета собрана по ТЗ: оборудование, коммутация, персонал, логистика и возможная аренда сведены в одну таблицу." : "По ТЗ не удалось уверенно выделить оборудование. Добавьте формат мероприятия, площадку, аудиторию, трансляцию, звук, свет и экраны.",
         items: lines,
         missing,
         warnings,
@@ -6560,7 +6718,7 @@ ${priceHints}
       });
     } catch (error: any) {
       console.error("[Estimates] analyze error:", error);
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР±СЂР°С‚СЊ СЃРјРµС‚Сѓ" });
+      res.status(500).json({ message: error?.message || "Не удалось собрать смету" });
     }
   });
 
@@ -6580,10 +6738,10 @@ ${priceHints}
 
   app.get("/api/connection-schemas/:id", async (req, res) => {
     try {
-      if (!(await hasWorkspaceAccess(req.user))) return res.status(403).json({ message: "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СЃС…РµРјР°Рј" });
+      if (!(await hasWorkspaceAccess(req.user))) return res.status(403).json({ message: "Нет доступа к схемам" });
       const { id } = req.params;
       const schema = await storage.getConnectionSchemaById(id);
-      
+
       if (!schema) {
         return res.status(404).json({ message: "Schema not found" });
       }
@@ -6601,7 +6759,7 @@ ${priceHints}
   app.post("/api/connection-schemas", async (req, res) => {
     try {
       if (!(await hasWorkspaceAccess(req.user))) {
-        return res.status(403).json({ message: "РЎРЅР°С‡Р°Р»Р° СЃРѕР·РґР°Р№С‚Рµ РєРѕРјРїР°РЅРёСЋ РёР»Рё РІСЃС‚СѓРїРёС‚Рµ РїРѕ РїСЂРёРіР»Р°С€РµРЅРёСЋ" });
+        return res.status(403).json({ message: "Сначала создайте компанию или вступите по приглашению" });
       }
       const { name, description } = req.body;
 
@@ -6623,12 +6781,12 @@ ${priceHints}
       const isDbDown = /ECONNREFUSED|connect|connection refused/i.test(errorMessage) || error?.code === "ECONNREFUSED";
       if (isDbDown) {
         return res.status(500).json({
-          message: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ Рє Р±Р°Р·Рµ РґР°РЅРЅС‹С…. РџСЂРѕРІРµСЂСЊС‚Рµ, С‡С‚Рѕ PostgreSQL Р·Р°РїСѓС‰РµРЅ Рё DATABASE_URL РІ .env СѓРєР°Р·Р°РЅ РІРµСЂРЅРѕ.",
+          message: "Не удалось подключиться к базе данных. Проверьте, что PostgreSQL запущен и DATABASE_URL в .env указан верно.",
         });
       }
       if (errorMessage.includes("does not exist") || errorMessage.includes("relation") || errorMessage.includes("table")) {
         return res.status(500).json({
-          message: "РўР°Р±Р»РёС†С‹ РґР»СЏ СЃС…РµРј РїРѕРґРєР»СЋС‡РµРЅРёСЏ РЅРµ СЃРѕР·РґР°РЅС‹. Р’С‹РїРѕР»РЅРёС‚Рµ SQL СЃРєСЂРёРїС‚ create_connection_schemas_tables.sql РІ РІР°С€РµР№ Р±Р°Р·Рµ РґР°РЅРЅС‹С….",
+          message: "Таблицы для схем подключения не созданы. Выполните SQL скрипт create_connection_schemas_tables.sql в вашей базе данных.",
           error: errorMessage,
         });
       }
@@ -6646,7 +6804,7 @@ ${priceHints}
       if (description !== undefined) updateData.description = description;
 
       const updatedSchema = await storage.updateConnectionSchema(id, updateData);
-      
+
       if (!updatedSchema) {
         return res.status(404).json({ message: "Schema not found" });
       }
@@ -6662,10 +6820,10 @@ ${priceHints}
 
   app.delete("/api/connection-schemas/:id", async (req, res) => {
     try {
-      if (!(await hasWorkspaceAccess(req.user))) return res.status(403).json({ message: "Р СњР ВµРЎвЂљ Р Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р В° Р С” РЎРѓРЎвЂ¦Р ВµР СР В°Р С" });
+      if (!(await hasWorkspaceAccess(req.user))) return res.status(403).json({ message: "Нет доступа к схемам" });
       const { id } = req.params;
       const deleted = await storage.deleteConnectionSchema(id);
-      
+
       if (!deleted) {
         return res.status(404).json({ message: "Schema not found" });
       }
@@ -6681,27 +6839,27 @@ ${priceHints}
 
   app.post("/api/connection-schemas/:id/ai-generate", async (req, res) => {
     try {
-      if (!(await hasWorkspaceAccess(req.user))) return res.status(403).json({ message: "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СЃС…РµРјР°Рј" });
+      if (!(await hasWorkspaceAccess(req.user))) return res.status(403).json({ message: "Нет доступа к схемам" });
       const schema = await storage.getConnectionSchemaById(req.params.id);
-      if (!schema) return res.status(404).json({ message: "РЎС…РµРјР° РЅРµ РЅР°Р№РґРµРЅР°" });
+      if (!schema) return res.status(404).json({ message: "Схема не найдена" });
       const prompt = String(req.body?.prompt || schema.description || schema.name || "").trim();
       const searchTerms = prompt
         .split(/[,;\n]+/)
         .map((part) => part.trim())
         .filter(Boolean)
         .slice(0, 18);
-      const fallbackTerms = searchTerms.length ? searchTerms : ["РєР°РјРµСЂР°", "РјРёРєСЂРѕС„РѕРЅ", "РІРёРґРµРѕРјРёРєС€РµСЂ", "РєРѕРјРїСЊСЋС‚РµСЂ С‚СЂР°РЅСЃР»СЏС†РёРё", "СЂРѕСѓС‚РµСЂ"];
+      const fallbackTerms = searchTerms.length ? searchTerms : ["камера", "микрофон", "видеомикшер", "компьютер трансляции", "роутер"];
       const created: any[] = [];
       for (const [index, term] of fallbackTerms.entries()) {
         const fakeReq: any = { body: { query: term } };
         const lower = term.toLowerCase();
         const type =
-          /РєР°РјРµСЂР°|camera/i.test(lower) ? "camera" :
-          /РјРёРєСЂРѕС„РѕРЅ|mic/i.test(lower) ? "mic" :
-          /СЃРІРµС‚|light/i.test(lower) ? "lighting" :
-          /router|switch|СЂРѕСѓС‚РµСЂ|СЃРµС‚СЊ|lan/i.test(lower) ? "network" :
-          /atem|РјРёРєС€РµСЂ|РєРѕРјРјСѓС‚Р°С‚РѕСЂ|switcher/i.test(lower) ? "video" :
-          /РјРѕРЅРёС‚РѕСЂ|СЌРєСЂР°РЅ|display/i.test(lower) ? "display" :
+          /камера|camera/i.test(lower) ? "camera" :
+          /микрофон|mic/i.test(lower) ? "mic" :
+          /свет|light/i.test(lower) ? "lighting" :
+          /router|switch|роутер|сеть|lan/i.test(lower) ? "network" :
+          /atem|микшер|коммутатор|switcher/i.test(lower) ? "video" :
+          /монитор|экран|display/i.test(lower) ? "display" :
           "computer";
         const portsIn: any[] = [];
         const portsOut: any[] = [];
@@ -6710,7 +6868,7 @@ ${priceHints}
         if (/atem.*mini/i.test(lower)) {
           [1, 2, 3, 4].forEach((n) => addIn(`HDMI IN ${n}`, "HDMI"));
           addOut("HDMI OUT", "HDMI"); addIn("LAN", "LAN"); addIn("USB-C", "USB");
-        } else if (/atem|switcher|РІРёРґРµРѕРјРёРєС€РµСЂ|РєРѕРјРјСѓС‚Р°С‚РѕСЂ/i.test(lower)) {
+        } else if (/atem|switcher|видеомикшер|коммутатор/i.test(lower)) {
           [1, 2, 3, 4, 5, 6, 7, 8].forEach((n) => addIn(`SDI IN ${n}`, "SDI"));
           [1, 2, 3, 4].forEach((n) => addOut(`SDI OUT ${n}`, "SDI"));
           addIn("LAN", "LAN");
@@ -6734,7 +6892,7 @@ ${priceHints}
       }
       res.json({ created, aiAvailable: Boolean(process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN) });
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРіРµРЅРµСЂРёСЂРѕРІР°С‚СЊ СЃС…РµРјСѓ" });
+      res.status(500).json({ message: error?.message || "Не удалось сгенерировать схему" });
     }
   });
 
@@ -6761,15 +6919,15 @@ ${priceHints}
     } catch (error: any) {
       console.error("Create component error:", error);
       const errorMessage = error.message || "Failed to create component";
-      
-      // РџСЂРѕРІРµСЂСЏРµРј, РЅРµ СЏРІР»СЏРµС‚СЃСЏ Р»Рё РѕС€РёР±РєР° СЃРІСЏР·Р°РЅРЅРѕР№ СЃ РѕС‚СЃСѓС‚СЃС‚РІРёРµРј С‚Р°Р±Р»РёС†С‹
+
+      // Проверяем, не является ли ошибка связанной с отсутствием таблицы
       if (errorMessage.includes("does not exist") || errorMessage.includes("relation") || errorMessage.includes("table")) {
         return res.status(500).json({
-          message: "РўР°Р±Р»РёС†С‹ РґР»СЏ СЃС…РµРј РїРѕРґРєР»СЋС‡РµРЅРёСЏ РЅРµ СЃРѕР·РґР°РЅС‹. Р’С‹РїРѕР»РЅРёС‚Рµ SQL СЃРєСЂРёРїС‚ create_connection_schemas_tables.sql РІ РІР°С€РµР№ Р±Р°Р·Рµ РґР°РЅРЅС‹С….",
+          message: "Таблицы для схем подключения не созданы. Выполните SQL скрипт create_connection_schemas_tables.sql в вашей базе данных.",
           error: errorMessage,
         });
       }
-      
+
       res.status(500).json({
         message: errorMessage,
       });
@@ -6789,7 +6947,7 @@ ${priceHints}
       if (connections) updateData.connections = connections;
 
       const updatedComponent = await storage.updateConnectionSchemaComponent(id, updateData);
-      
+
       if (!updatedComponent) {
         return res.status(404).json({ message: "Component not found" });
       }
@@ -6807,7 +6965,7 @@ ${priceHints}
     try {
       const { id } = req.params;
       const deleted = await storage.deleteConnectionSchemaComponent(id);
-      
+
       if (!deleted) {
         return res.status(404).json({ message: "Component not found" });
       }
@@ -6821,11 +6979,11 @@ ${priceHints}
     }
   });
 
-  // Р­С„РёСЂ РћРўРРЎ вЂ” РЅР°СЃС‚СЂРѕР№РєРё РїРѕС‚РѕРєР°
+  // Эфир ОТИС — настройки потока
   app.get("/api/otis", async (req, res) => {
     try {
       const settings = await storage.getOtisStreamSettings();
-      res.json(settings || { name: "Р­С„РёСЂ РћРўРРЎ", showTimecode: true, withSound: true });
+      res.json(settings || { name: "Эфир ОТИС", showTimecode: true, withSound: true });
     } catch (error: any) {
       const msg = error?.message ?? String(error);
       console.error("Get otis settings error:", msg);
@@ -6838,7 +6996,7 @@ ${priceHints}
     try {
       const { streamUrl, streamUrlBackup, showTimecode, withSound, name, timecodeSource, vmixHost, vmixPort } = req.body;
       const settings = await storage.upsertOtisStreamSettings({
-        name: name ?? "Р­С„РёСЂ РћРўРРЎ",
+        name: name ?? "Эфир ОТИС",
         streamUrl: streamUrl ?? undefined,
         streamUrlBackup: streamUrlBackup ?? undefined,
         showTimecode: showTimecode !== false,
@@ -6856,16 +7014,16 @@ ${priceHints}
     }
   });
 
-  // РџСЂРѕРґР°РєС€РЅ: Р»РёС‡РЅС‹Рµ РґРµР»Р° СѓС‡Р°СЃС‚РЅРёРєРѕРІ С€РѕСѓ
+  // Продакшн: личные дела участников шоу
   app.post("/api/production/upload-photo", productionPhotoUpload.single("photo"), async (req, res) => {
     try {
       if (!req.file) {
-        return res.status(400).json({ message: "Р¤Р°Р№Р» РЅРµ РІС‹Р±СЂР°РЅ" });
+        return res.status(400).json({ message: "Файл не выбран" });
       }
       const photoUrl = `/uploads/production/${req.file.filename}`;
       res.json({ url: photoUrl });
     } catch (error: any) {
-      res.status(500).json({ message: error?.message || "РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё" });
+      res.status(500).json({ message: error?.message || "Ошибка загрузки" });
     }
   });
 
@@ -6937,7 +7095,7 @@ ${priceHints}
     }
   });
 
-  // РџСЂРѕРґР°РєС€РЅ: РјР°СЂРєРµСЂС‹ РїРѕ С‚Р°Р№РјРєРѕРґСѓ
+  // Продакшн: маркеры по таймкоду
   app.get("/api/events/:eventId/markers", async (req, res) => {
     try {
       const { eventId } = req.params;
@@ -7006,28 +7164,28 @@ ${priceHints}
   app.post("/api/equipment/search", async (req, res) => {
     try {
       const { query } = req.body;
-      
+
       if (!query || typeof query !== "string") {
         return res.status(400).json({ message: "Query is required" });
       }
 
-      // Р‘Р°Р·РѕРІР°СЏ Р»РѕРіРёРєР° РїР°СЂСЃРёРЅРіР° РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ РёР· РЅР°Р·РІР°РЅРёСЏ
-      // Р’ Р±СѓРґСѓС‰РµРј Р·РґРµСЃСЊ РјРѕР¶РЅРѕ РёРЅС‚РµРіСЂРёСЂРѕРІР°С‚СЊ СЂРµР°Р»СЊРЅС‹Р№ API РїРѕРёСЃРєР°
+      // Базовая логика парсинга оборудования из названия
+      // В будущем здесь можно интегрировать реальный API поиска
       const queryLower = query.toLowerCase();
-      
-      // РћРїСЂРµРґРµР»СЏРµРј С‚РёРї РѕР±РѕСЂСѓРґРѕРІР°РЅРёСЏ
-      let type = "computer";
-      if (queryLower.includes("РєР°РјРµСЂР°") || queryLower.includes("camera")) type = "camera";
-      else if (queryLower.includes("РјРёРєСЂРѕС„РѕРЅ") || queryLower.includes("mic")) type = "mic";
-      else if (queryLower.includes("РјРёРєС€РµСЂ") || queryLower.includes("mixer")) type = "audio";
-      else if (queryLower.includes("СЂРѕСѓС‚РµСЂ") || queryLower.includes("router") || queryLower.includes("switch")) type = "network";
-      else if (queryLower.includes("РјРѕРЅРёС‚РѕСЂ") || queryLower.includes("monitor") || queryLower.includes("С‚РµР»РµРІРёР·РѕСЂ") || queryLower.includes("tv")) type = "display";
 
-      // РџР°СЂСЃРёРј РїСЂРѕРёР·РІРѕРґРёС‚РµР»СЏ Рё РјРѕРґРµР»СЊ
+      // Определяем тип оборудования
+      let type = "computer";
+      if (queryLower.includes("камера") || queryLower.includes("camera")) type = "camera";
+      else if (queryLower.includes("микрофон") || queryLower.includes("mic")) type = "mic";
+      else if (queryLower.includes("микшер") || queryLower.includes("mixer")) type = "audio";
+      else if (queryLower.includes("роутер") || queryLower.includes("router") || queryLower.includes("switch")) type = "network";
+      else if (queryLower.includes("монитор") || queryLower.includes("monitor") || queryLower.includes("телевизор") || queryLower.includes("tv")) type = "display";
+
+      // Парсим производителя и модель
       const parts = query.split(/\s+/);
       let manufacturer = "";
       let model = "";
-      
+
       const manufacturers = ["Sony", "Canon", "Panasonic", "Blackmagic", "ATEM", "Elgato", "Behringer", "TP-Link", "D-Link", "LG", "Samsung", "OTIS"];
       for (const part of parts) {
         const found = manufacturers.find(m => part.toLowerCase().includes(m.toLowerCase()));
@@ -7041,7 +7199,7 @@ ${priceHints}
         }
       }
 
-      // РћРїСЂРµРґРµР»СЏРµРј РїРѕСЂС‚С‹ РЅР° РѕСЃРЅРѕРІРµ С‚РёРїР°
+      // Определяем порты на основе типа
       const portsIn: any[] = [];
       const portsOut: any[] = [];
 
@@ -7051,10 +7209,10 @@ ${priceHints}
         for (let i = 1; i <= count; i += 1) direction === "in" ? addIn(`${prefix}${i}`, portType) : addOut(`${prefix}${i}`, portType);
       };
       const explicitCounts = [
-        { re: /(\d+)\s*(x|Г—)?\s*sdi|sdi\s*(\d+)/i, name: "SDI", type: "SDI" },
-        { re: /(\d+)\s*(x|Г—)?\s*hdmi|hdmi\s*(\d+)/i, name: "HDMI", type: "HDMI" },
-        { re: /(\d+)\s*(x|Г—)?\s*(lan|ethernet|rj45)|(?:lan|ethernet|rj45)\s*(\d+)/i, name: "LAN", type: "LAN" },
-        { re: /(\d+)\s*(x|Г—)?\s*xlr|xlr\s*(\d+)/i, name: "XLR", type: "XLR" },
+        { re: /(\d+)\s*(x|×)?\s*sdi|sdi\s*(\d+)/i, name: "SDI", type: "SDI" },
+        { re: /(\d+)\s*(x|×)?\s*hdmi|hdmi\s*(\d+)/i, name: "HDMI", type: "HDMI" },
+        { re: /(\d+)\s*(x|×)?\s*(lan|ethernet|rj45)|(?:lan|ethernet|rj45)\s*(\d+)/i, name: "LAN", type: "LAN" },
+        { re: /(\d+)\s*(x|×)?\s*xlr|xlr\s*(\d+)/i, name: "XLR", type: "XLR" },
       ];
       const explicit = explicitCounts.some((rule) => {
         const match = queryLower.match(rule.re);

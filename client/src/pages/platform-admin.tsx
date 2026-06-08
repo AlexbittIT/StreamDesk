@@ -118,13 +118,13 @@ const COLORS = {
 };
 
 const PIE_COLORS = [COLORS.violet, COLORS.blue, COLORS.amber, COLORS.red, COLORS.cyan, COLORS.green];
-const MONTH_LABELS = ["СЏРЅРІ", "С„РµРІ", "РјР°СЂ", "Р°РїСЂ", "РјР°Р№", "РёСЋРЅ", "РёСЋР»", "Р°РІРі", "СЃРµРЅ", "РѕРєС‚", "РЅРѕСЏ", "РґРµРє"];
+const MONTH_LABELS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 const REFRESH_OPTIONS = [
-  { value: 1000, label: "1 СЃРµРє" },
-  { value: 5000, label: "5 СЃРµРє" },
-  { value: 15000, label: "15 СЃРµРє" },
-  { value: 60000, label: "1 РјРёРЅ" },
-  { value: 300000, label: "5 РјРёРЅ" },
+  { value: 1000, label: "1 сек" },
+  { value: 5000, label: "5 сек" },
+  { value: 15000, label: "15 сек" },
+  { value: 60000, label: "1 мин" },
+  { value: 300000, label: "5 мин" },
 ];
 const PLATFORM_TABS = ["overview", "companies", "users", "ai", "incidents", "metrics"] as const;
 type PlatformTab = typeof PLATFORM_TABS[number];
@@ -149,8 +149,8 @@ function pct(value: unknown) {
 
 function formatBytes(value?: number | null) {
   const bytes = num(value);
-  if (bytes <= 0) return "0 Р‘";
-  const units = ["Р‘", "РљР‘", "РњР‘", "Р“Р‘", "РўР‘"];
+  if (bytes <= 0) return "0 Б";
+  const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
   let size = bytes;
   let index = 0;
   while (size >= 1024 && index < units.length - 1) {
@@ -161,9 +161,9 @@ function formatBytes(value?: number | null) {
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) return "РЅРµС‚ РґР°РЅРЅС‹С…";
+  if (!value) return "нет данных";
   const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "РЅРµС‚ РґР°РЅРЅС‹С…";
+  if (!Number.isFinite(date.getTime())) return "нет данных";
   return date.toLocaleString("ru-RU", {
     day: "2-digit",
     month: "short",
@@ -177,46 +177,46 @@ function formatUptime(seconds?: number | null) {
   const days = Math.floor(value / 86400);
   const hours = Math.floor((value % 86400) / 3600);
   const minutes = Math.floor((value % 3600) / 60);
-  if (days > 0) return `${days} Рґ ${hours} С‡`;
-  if (hours > 0) return `${hours} С‡ ${minutes} РјРёРЅ`;
-  return `${minutes} РјРёРЅ`;
+  if (days > 0) return `${days} д ${hours} ч`;
+  if (hours > 0) return `${hours} ч ${minutes} мин`;
+  return `${minutes} мин`;
 }
 
 function statusLabel(value: string) {
   switch (value) {
-    case "online": return "РћРЅР»Р°Р№РЅ";
-    case "offline": return "РћС„Р»Р°Р№РЅ";
-    case "maintenance": return "РћР±СЃР»СѓР¶РёРІР°РЅРёРµ";
-    case "open": return "РћС‚РєСЂС‹С‚Рѕ";
-    case "investigating": return "Р’ СЂР°Р±РѕС‚Рµ";
-    case "resolved": return "Р’С‹РїРѕР»РЅРµРЅРѕ";
-    case "closed": return "Р—Р°РєСЂС‹С‚Рѕ";
-    case "active": return "РђРєС‚РёРІРЅР°";
-    case "suspended": return "РћСЃС‚Р°РЅРѕРІР»РµРЅР°";
-    default: return value || "РЅРµРёР·РІРµСЃС‚РЅРѕ";
+    case "online": return "Онлайн";
+    case "offline": return "Офлайн";
+    case "maintenance": return "Обслуживание";
+    case "open": return "Открыто";
+    case "investigating": return "В работе";
+    case "resolved": return "Выполнено";
+    case "closed": return "Закрыто";
+    case "active": return "Активна";
+    case "suspended": return "Остановлена";
+    default: return value || "неизвестно";
   }
 }
 
 function severityLabel(value: string) {
   switch (value) {
-    case "critical": return "РљСЂРёС‚РёС‡РЅРѕ";
-    case "high": return "Р’С‹СЃРѕРєРёР№";
-    case "medium": return "РЎСЂРµРґРЅРёР№";
-    case "low": return "РќРёР·РєРёР№";
-    default: return value || "РЅРµ СѓРєР°Р·Р°РЅ";
+    case "critical": return "Критично";
+    case "high": return "Высокий";
+    case "medium": return "Средний";
+    case "low": return "Низкий";
+    default: return value || "не указан";
   }
 }
 
 function usageLabel(value: string) {
   switch (value) {
     case "heartbeat": return "Heartbeat";
-    case "task_activity": return "Р—Р°РґР°С‡Рё";
-    case "project_activity": return "РџСЂРѕРµРєС‚С‹";
-    case "company_created": return "РљРѕРјРїР°РЅРёРё";
-    case "user_registered": return "Р РµРіРёСЃС‚СЂР°С†РёРё";
-    case "incident": return "РРЅС†РёРґРµРЅС‚С‹";
-    case "system_seen": return "РЎРёСЃС‚РµРјС‹";
-    case "streamdesk_host": return "РЎРµСЂРІРµСЂ";
+    case "task_activity": return "Задачи";
+    case "project_activity": return "Проекты";
+    case "company_created": return "Компании";
+    case "user_registered": return "Регистрации";
+    case "incident": return "Инциденты";
+    case "system_seen": return "Системы";
+    case "streamdesk_host": return "Сервер";
     default: return value;
   }
 }
@@ -276,13 +276,13 @@ function issueListForCompany(item: any, load?: any) {
   const openIncidents = num(item?.incidents?.open ?? load?.openIncidents);
   const overdue = num(item?.tasks?.overdue);
   if (item?.company?.status && item.company.status !== "active") {
-    issues.push({ level: "critical", text: `РЎС‚Р°С‚СѓСЃ РєРѕРјРїР°РЅРёРё: ${statusLabel(item.company.status)}` });
+    issues.push({ level: "critical", text: `Статус компании: ${statusLabel(item.company.status)}` });
   }
-  if (offline > 0) issues.push({ level: "warning", text: `РћС„Р»Р°Р№РЅ СЃРёСЃС‚РµРј: ${offline}` });
-  if (openIncidents > 0) issues.push({ level: "warning", text: `РћС‚РєСЂС‹С‚С‹С… РёРЅС†РёРґРµРЅС‚РѕРІ: ${openIncidents}` });
-  if (overdue > 0) issues.push({ level: "info", text: `РџСЂРѕСЃСЂРѕС‡РµРЅРЅС‹С… Р·Р°РґР°С‡: ${overdue}` });
-  if (!item?.workspace?.monitoringEnabled) issues.push({ level: "info", text: "РњРѕРЅРёС‚РѕСЂРёРЅРі РєРѕРјРїР°РЅРёРё РІС‹РєР»СЋС‡РµРЅ" });
-  if (num(item?.systems?.total) === 0) issues.push({ level: "info", text: "РќРµС‚ РїРѕРґРєР»СЋС‡РµРЅРЅС‹С… СЃРёСЃС‚РµРј" });
+  if (offline > 0) issues.push({ level: "warning", text: `Офлайн систем: ${offline}` });
+  if (openIncidents > 0) issues.push({ level: "warning", text: `Открытых инцидентов: ${openIncidents}` });
+  if (overdue > 0) issues.push({ level: "info", text: `Просроченных задач: ${overdue}` });
+  if (!item?.workspace?.monitoringEnabled) issues.push({ level: "info", text: "Мониторинг компании выключен" });
+  if (num(item?.systems?.total) === 0) issues.push({ level: "info", text: "Нет подключенных систем" });
   return issues;
 }
 
@@ -317,7 +317,7 @@ function ActivityHeatmap({
         <div>
           <div className="font-semibold">{title}</div>
           <div className="text-sm text-muted-foreground">
-            {total.toLocaleString("ru-RU")} СЃРѕР±С‹С‚РёР№ Р·Р° РіРѕРґ
+            {total.toLocaleString("ru-RU")} событий за год
           </div>
         </div>
       </div>
@@ -367,8 +367,8 @@ function TodayUsageChart({ data }: { data: any[] }) {
   return (
     <div className="space-y-2">
       <div>
-        <div className="font-semibold">РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ СЃРµСЂРІРёСЃР° СЃРµРіРѕРґРЅСЏ</div>
-        <div className="text-sm text-muted-foreground">Heartbeat, Р°РєС‚РёРІРЅС‹Рµ СЃРёСЃС‚РµРјС‹ Рё РЅР°РіСЂСѓР·РєР° РѕР±РЅРѕРІР»СЏСЋС‚СЃСЏ РІ РІС‹Р±СЂР°РЅРЅРѕРј РёРЅС‚РµСЂРІР°Р»Рµ.</div>
+        <div className="font-semibold">Использование сервиса сегодня</div>
+        <div className="text-sm text-muted-foreground">Heartbeat, активные системы и нагрузка обновляются в выбранном интервале.</div>
       </div>
       <div className="h-44 rounded-lg border bg-background/50 p-2">
         <ResponsiveContainer width="100%" height="100%">
@@ -379,7 +379,7 @@ function TodayUsageChart({ data }: { data: any[] }) {
             <RechartsTooltip />
             <Legend />
             <Area type="monotone" dataKey="heartbeats" name="Heartbeat" stroke={COLORS.violet} fill={COLORS.violet} fillOpacity={0.18} />
-            <Line type="monotone" dataKey="activeSystems" name="РђРєС‚РёРІРЅС‹Рµ СЃРёСЃС‚РµРјС‹" stroke={COLORS.green} strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="activeSystems" name="Активные системы" stroke={COLORS.green} strokeWidth={2} dot={false} />
             <Line type="monotone" dataKey="cpuPercent" name="CPU %" stroke={COLORS.amber} strokeWidth={2} dot={false} />
           </AreaChart>
         </ResponsiveContainer>
@@ -474,10 +474,10 @@ export default function PlatformAdmin() {
       queryClient.invalidateQueries({ queryKey: ["/api/platform/incidents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/platform/overview"] });
       queryClient.invalidateQueries({ queryKey: ["/api/platform/telemetry"] });
-      toast({ title: "Р“РѕС‚РѕРІРѕ", description: "РЎС‚Р°С‚СѓСЃ РёРЅС†РёРґРµРЅС‚Р° РѕР±РЅРѕРІР»РµРЅ." });
+      toast({ title: "Готово", description: "Статус инцидента обновлен." });
     },
     onError: (error: any) => {
-      toast({ title: "РћС€РёР±РєР°", description: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РёРЅС†РёРґРµРЅС‚", variant: "destructive" });
+      toast({ title: "Ошибка", description: error?.message || "Не удалось обновить инцидент", variant: "destructive" });
     },
   });
 
@@ -488,12 +488,12 @@ export default function PlatformAdmin() {
     },
     onSuccess: (data) => {
       setOpsAiResult(data);
-      toast({ title: "AI-Р°РЅР°Р»РёР· РіРѕС‚РѕРІ", description: data?.model ? `РњРѕРґРµР»СЊ: ${data.model}` : undefined });
+      toast({ title: "AI-анализ готов", description: data?.model ? `Модель: ${data.model}` : undefined });
     },
     onError: (error: any) => {
       toast({
-        title: "AI-Р°РЅР°Р»РёР· РЅРµРґРѕСЃС‚СѓРїРµРЅ",
-        description: error?.message || "РџСЂРѕРІРµСЂСЊС‚Рµ HUGGINGFACE_API_KEY / HF_TOKEN РІ .env",
+        title: "AI-анализ недоступен",
+        description: error?.message || "Проверьте HUGGINGFACE_API_KEY / HF_TOKEN в .env",
         variant: "destructive",
       });
     },
@@ -506,10 +506,10 @@ export default function PlatformAdmin() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/platform/users"] });
-      toast({ title: "Р“РѕС‚РѕРІРѕ", description: "РџР°СЂРѕР»СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РѕР±РЅРѕРІР»РµРЅ." });
+      toast({ title: "Готово", description: "Пароль пользователя обновлен." });
     },
     onError: (error: any) => {
-      toast({ title: "РћС€РёР±РєР°", description: error?.message || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃР±СЂРѕСЃРёС‚СЊ РїР°СЂРѕР»СЊ", variant: "destructive" });
+      toast({ title: "Ошибка", description: error?.message || "Не удалось сбросить пароль", variant: "destructive" });
     },
   });
 
@@ -521,10 +521,10 @@ export default function PlatformAdmin() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/platform/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/platform/overview"] });
-      toast({ title: "Р вЂњР С•РЎвЂљР С•Р Р†Р С•", description: "Р СџР С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»РЎРЉ РЎС“Р Т‘Р В°Р В»Р ВµР Р… Р С‘Р В· Р В°Р С”РЎвЂљР С‘Р Р†Р Р…РЎвЂ№РЎвЂ¦." });
+      toast({ title: "Готово", description: "Пользователь удален из активных." });
     },
     onError: (error: any) => {
-      toast({ title: "Р С›РЎв‚¬Р С‘Р В±Р С”Р В°", description: error?.message || "Р СњР Вµ РЎС“Р Т‘Р В°Р В»Р С•РЎРѓРЎРЉ РЎС“Р Т‘Р В°Р В»Р С‘РЎвЂљРЎРЉ Р С—Р С•Р В»РЎРЉР В·Р С•Р Р†Р В°РЎвЂљР ВµР В»РЎРЏ", variant: "destructive" });
+      toast({ title: "Ошибка", description: error?.message || "Не удалось удалить пользователя", variant: "destructive" });
     },
   });
 
@@ -568,18 +568,18 @@ export default function PlatformAdmin() {
     const offline = num(overview?.totals?.offlineSystems);
     const criticalIncidents = incidents.filter((incident) => incident.severity === "critical" && !["resolved", "closed"].includes(String(incident.status))).length;
 
-    if (cpu >= 85) insights.push({ level: "critical", title: "CPU РїРµСЂРµРіСЂСѓР¶РµРЅ", text: `РЎРµР№С‡Р°СЃ ${Math.round(cpu)}%. РќСѓР¶РµРЅ СЂР°Р·Р±РѕСЂ РїСЂРѕС†РµСЃСЃРѕРІ Рё С‡Р°СЃС‚РѕС‚С‹ Р·Р°РїСЂРѕСЃРѕРІ.` });
-    else if (cpu >= 65) insights.push({ level: "warning", title: "CPU СЂР°СЃС‚РµС‚", text: `РЎРµР№С‡Р°СЃ ${Math.round(cpu)}%. РЎС‚РѕРёС‚ РїРѕСЃРјРѕС‚СЂРµС‚СЊ РІСЃРїР»РµСЃРєРё РїРѕ РєРѕРјРїР°РЅРёСЏРј Рё Р°РіРµРЅС‚Р°Рј.` });
-    else insights.push({ level: "good", title: "CPU РІ РЅРѕСЂРјРµ", text: `РЎРµР№С‡Р°СЃ ${Math.round(cpu)}%, Р·Р°РїР°СЃ РїРѕ СЃРµСЂРІРµСЂСѓ РµСЃС‚СЊ.` });
+    if (cpu >= 85) insights.push({ level: "critical", title: "CPU перегружен", text: `Сейчас ${Math.round(cpu)}%. Нужен разбор процессов и частоты запросов.` });
+    else if (cpu >= 65) insights.push({ level: "warning", title: "CPU растет", text: `Сейчас ${Math.round(cpu)}%. Стоит посмотреть всплески по компаниям и агентам.` });
+    else insights.push({ level: "good", title: "CPU в норме", text: `Сейчас ${Math.round(cpu)}%, запас по серверу есть.` });
 
-    if (ram >= 85) insights.push({ level: "critical", title: "RAM РїРѕС‡С‚Рё Р·Р°РїРѕР»РЅРµРЅР°", text: `РџР°РјСЏС‚СЊ Р·Р°РЅСЏС‚Р° РЅР° ${Math.round(ram)}%. РџСЂРѕРІРµСЂСЊС‚Рµ Node heap Рё С„РѕРЅРѕРІС‹Рµ Р·Р°РґР°С‡Рё.` });
-    else if (ram >= 70) insights.push({ level: "warning", title: "RAM Р±Р»РёР·РєРѕ Рє РІРµСЂС…РЅРµР№ РіСЂР°РЅРёС†Рµ", text: `РџР°РјСЏС‚СЊ Р·Р°РЅСЏС‚Р° РЅР° ${Math.round(ram)}%. РЎР»РµРґРёС‚Рµ Р·Р° С‚СЂРµРЅРґРѕРј РІ Р±Р»РёР¶Р°Р№С€РёРµ РјРёРЅСѓС‚С‹.` });
+    if (ram >= 85) insights.push({ level: "critical", title: "RAM почти заполнена", text: `Память занята на ${Math.round(ram)}%. Проверьте Node heap и фоновые задачи.` });
+    else if (ram >= 70) insights.push({ level: "warning", title: "RAM близко к верхней границе", text: `Память занята на ${Math.round(ram)}%. Следите за трендом в ближайшие минуты.` });
 
-    if (disk >= 85) insights.push({ level: "critical", title: "Р”РёСЃРє РїРѕС‡С‚Рё Р·Р°РїРѕР»РЅРµРЅ", text: `РЎРІРѕР±РѕРґРЅРѕРµ РјРµСЃС‚Рѕ Р·Р°РєР°РЅС‡РёРІР°РµС‚СЃСЏ: Р·Р°РЅСЏС‚Рѕ ${Math.round(disk)}%. РџСЂРѕРІРµСЂСЊС‚Рµ uploads, Р»РѕРіРё Рё Р±СЌРєР°РїС‹.` });
-    if (offline > 0) insights.push({ level: "warning", title: "Р•СЃС‚СЊ РѕС„Р»Р°Р№РЅ-СЃРёСЃС‚РµРјС‹", text: `${offline} СЃРёСЃС‚РµРј РЅРµ РїСЂРёСЃС‹Р»Р°СЋС‚ heartbeat. РџСЂРѕРІРµСЂСЊС‚Рµ Р°РіРµРЅС‚С‹ Рё СЃРµС‚СЊ.` });
-    if (criticalIncidents > 0) insights.push({ level: "critical", title: "РљСЂРёС‚РёС‡РЅС‹Рµ РёРЅС†РёРґРµРЅС‚С‹", text: `${criticalIncidents} Р·Р°СЏРІРѕРє С‚СЂРµР±СѓСЋС‚ РїРµСЂРІРѕРѕС‡РµСЂРµРґРЅРѕР№ РѕР±СЂР°Р±РѕС‚РєРё.` });
+    if (disk >= 85) insights.push({ level: "critical", title: "Диск почти заполнен", text: `Свободное место заканчивается: занято ${Math.round(disk)}%. Проверьте uploads, логи и бэкапы.` });
+    if (offline > 0) insights.push({ level: "warning", title: "Есть офлайн-системы", text: `${offline} систем не присылают heartbeat. Проверьте агенты и сеть.` });
+    if (criticalIncidents > 0) insights.push({ level: "critical", title: "Критичные инциденты", text: `${criticalIncidents} заявок требуют первоочередной обработки.` });
     if (openIncidents.length === 0 && offline === 0 && cpu < 65 && ram < 70 && disk < 80) {
-      insights.push({ level: "good", title: "РџР»Р°С‚С„РѕСЂРјР° СЃС‚Р°Р±РёР»СЊРЅР°", text: "РћС‚РєСЂС‹С‚С‹С… РёРЅС†РёРґРµРЅС‚РѕРІ Рё СЏРІРЅС‹С… РїСЂРѕР±Р»РµРј РїРѕ РёРЅС„СЂР°СЃС‚СЂСѓРєС‚СѓСЂРµ СЃРµР№С‡Р°СЃ РЅРµС‚." });
+      insights.push({ level: "good", title: "Платформа стабильна", text: "Открытых инцидентов и явных проблем по инфраструктуре сейчас нет." });
     }
     return insights;
   }, [telemetry.serverHost, overview?.server, overview?.totals, incidents, openIncidents.length]);
@@ -609,7 +609,7 @@ export default function PlatformAdmin() {
     ]);
   }
 
-  const refreshLabel = REFRESH_OPTIONS.find((option) => option.value === refreshIntervalMs)?.label || `${refreshIntervalMs / 1000} СЃРµРє`;
+  const refreshLabel = REFRESH_OPTIONS.find((option) => option.value === refreshIntervalMs)?.label || `${refreshIntervalMs / 1000} сек`;
   const lastUpdatedLabel = formatDateTime(telemetry.generatedAt || overview?.generatedAt);
 
   if (!isPlatformAdmin) {
@@ -618,8 +618,8 @@ export default function PlatformAdmin() {
         <Card className="max-w-lg">
           <CardContent className="py-8 text-center">
             <AlertCircle className="mx-auto mb-4 h-12 w-12 text-red-500" />
-            <h2 className="mb-2 text-lg font-semibold">Р”РѕСЃС‚СѓРї Р·Р°РєСЂС‹С‚</h2>
-            <p className="text-sm text-muted-foreground">Р­С‚Р° РїР°РЅРµР»СЊ РґРѕСЃС‚СѓРїРЅР° С‚РѕР»СЊРєРѕ РІР»Р°РґРµР»СЊС†Сѓ РїР»Р°С‚С„РѕСЂРјС‹.</p>
+            <h2 className="mb-2 text-lg font-semibold">Доступ закрыт</h2>
+            <p className="text-sm text-muted-foreground">Эта панель доступна только владельцу платформы.</p>
           </CardContent>
         </Card>
       </div>
@@ -631,15 +631,15 @@ export default function PlatformAdmin() {
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="space-y-2">
           <Badge variant="secondary">Owner Console</Badge>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">РљРѕРЅС‚СЂРѕР»СЊ РїР»Р°С‚С„РѕСЂРјС‹ StreamDesk</h1>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Контроль платформы StreamDesk</h1>
           <p className="max-w-3xl text-sm text-muted-foreground sm:text-base">
-            РЎРµСЂРІРµСЂ, РєРѕРјРїР°РЅРёРё, Р°РіРµРЅС‚С‹, Р¶Р°Р»РѕР±С‹, AI-РґРёР°РіРЅРѕСЃС‚РёРєР° Рё Р°РєС‚РёРІРЅРѕСЃС‚СЊ СЂР°Р·РЅРµСЃРµРЅС‹ РїРѕ РІРєР»Р°РґРєР°Рј, С‡С‚РѕР±С‹ Р±С‹СЃС‚СЂРѕ РІРёРґРµС‚СЊ РіРґРµ РЅР°РіСЂСѓР·РєР°, РіРґРµ РїСЂРѕР±Р»РµРјР° Рё С‡С‚Рѕ СѓР¶Рµ РІР·СЏС‚Рѕ РІ СЂР°Р±РѕС‚Сѓ.
+            Сервер, компании, агенты, жалобы, AI-диагностика и активность разнесены по вкладкам, чтобы быстро видеть где нагрузка, где проблема и что уже взято в работу.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="text-xs text-muted-foreground sm:text-right">
-            <div>РћР±РЅРѕРІР»РµРЅРѕ: {lastUpdatedLabel}</div>
-            <div>РРЅС‚РµСЂРІР°Р»: {refreshLabel}</div>
+            <div>Обновлено: {lastUpdatedLabel}</div>
+            <div>Интервал: {refreshLabel}</div>
           </div>
           <Select value={String(refreshIntervalMs)} onValueChange={(value) => setRefreshIntervalMs(Number(value))}>
             <SelectTrigger className="w-full sm:w-32">
@@ -653,7 +653,7 @@ export default function PlatformAdmin() {
           </Select>
           <Button variant="outline" onClick={() => void refreshAll()} disabled={refreshing}>
             <RefreshCw className={cn("mr-2 h-4 w-4", refreshing && "animate-spin")} />
-            РћР±РЅРѕРІРёС‚СЊ
+            Обновить
           </Button>
         </div>
       </div>
@@ -663,8 +663,8 @@ export default function PlatformAdmin() {
           <CardContent className="flex items-start gap-3 p-4">
             <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-500" />
             <div>
-              <div className="font-medium">Р§Р°СЃС‚СЊ РґР°РЅРЅС‹С… РЅРµ Р·Р°РіСЂСѓР·РёР»Р°СЃСЊ</div>
-              <div className="text-sm text-muted-foreground">РџСЂРѕРІРµСЂСЊС‚Рµ Р°РІС‚РѕСЂРёР·Р°С†РёСЋ owner-Р°РєРєР°СѓРЅС‚Р° Рё СЃРѕСЃС‚РѕСЏРЅРёРµ API, Р·Р°С‚РµРј РѕР±РЅРѕРІРёС‚Рµ РїР°РЅРµР»СЊ.</div>
+              <div className="font-medium">Часть данных не загрузилась</div>
+              <div className="text-sm text-muted-foreground">Проверьте авторизацию owner-аккаунта и состояние API, затем обновите панель.</div>
             </div>
           </CardContent>
         </Card>
@@ -673,25 +673,25 @@ export default function PlatformAdmin() {
       <Tabs value={activeTab} onValueChange={handlePlatformTabChange} className="space-y-5">
         <TabsContent value="overview" className="mt-0 space-y-5">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <StatCard label="РљРѕРјРїР°РЅРёРё" value={overview?.totals?.companies ?? 0} icon={Building2} />
-            <StatCard label="РџРѕР»СЊР·РѕРІР°С‚РµР»Рё" value={overview?.totals?.users ?? 0} icon={Users} />
-            <StatCard label="РћС‚РєСЂС‹С‚С‹Рµ РёРЅС†РёРґРµРЅС‚С‹" value={overview?.totals?.openIncidents ?? openIncidents.length} icon={Wrench} />
-            <StatCard label="РћС„Р»Р°Р№РЅ СЃРёСЃС‚РµРј" value={overview?.totals?.offlineSystems ?? 0} icon={ServerCog} />
-            <StatCard label="RAM СЃРµСЂРІРµСЂР°" value={pct(telemetry.serverHost?.memory?.usedPercent ?? overview?.server?.memory?.usedPercent)} icon={Cpu} />
+            <StatCard label="Компании" value={overview?.totals?.companies ?? 0} icon={Building2} />
+            <StatCard label="Пользователи" value={overview?.totals?.users ?? 0} icon={Users} />
+            <StatCard label="Открытые инциденты" value={overview?.totals?.openIncidents ?? openIncidents.length} icon={Wrench} />
+            <StatCard label="Офлайн систем" value={overview?.totals?.offlineSystems ?? 0} icon={ServerCog} />
+            <StatCard label="RAM сервера" value={pct(telemetry.serverHost?.memory?.usedPercent ?? overview?.server?.memory?.usedPercent)} icon={Cpu} />
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2"><ServerCog className="h-5 w-5" />РЎРµСЂРІРµСЂ StreamDesk</CardTitle>
-                <CardDescription>РЎРѕСЃС‚РѕСЏРЅРёРµ С…РѕСЃС‚Р°, РЅР° РєРѕС‚РѕСЂРѕРј СЂР°Р±РѕС‚Р°РµС‚ РїР»Р°С‚С„РѕСЂРјР°.</CardDescription>
+                <CardTitle className="flex items-center gap-2"><ServerCog className="h-5 w-5" />Сервер StreamDesk</CardTitle>
+                <CardDescription>Состояние хоста, на котором работает платформа.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2">
                   {[
                     ["CPU", pct(telemetry.serverHost?.cpu?.percent ?? overview?.server?.cpu?.percent), Cpu],
                     ["RAM", pct(telemetry.serverHost?.memory?.usedPercent ?? overview?.server?.memory?.usedPercent), Database],
-                    ["Р”РёСЃРє", pct(telemetry.serverHost?.disk?.usedPercent ?? overview?.server?.disk?.usedPercent), HardDrive],
+                    ["Диск", pct(telemetry.serverHost?.disk?.usedPercent ?? overview?.server?.disk?.usedPercent), HardDrive],
                     ["Uptime", formatUptime(telemetry.serverHost?.uptimeSeconds ?? overview?.server?.uptimeSeconds), ShieldCheck],
                     ["RX/TX", `${num(telemetry.serverHost?.network?.rxMbps)} / ${num(telemetry.serverHost?.network?.txMbps)} Mbps`, Network],
                     ["Node RSS", `${num(telemetry.serverHost?.appMemory?.rssMb ?? overview?.server?.appMemory?.rssMb)} MB`, Activity],
@@ -709,20 +709,20 @@ export default function PlatformAdmin() {
                 </div>
                 <div className="rounded-lg border bg-background/60 p-3 text-sm text-muted-foreground">
                   <div className="font-medium text-foreground">{telemetry.serverHost?.hostname || overview?.server?.hostname || "StreamDesk host"}</div>
-                  <div>{telemetry.serverHost?.cpu?.model || overview?.server?.cpu?.model || "CPU РЅРµ РѕРїСЂРµРґРµР»РµРЅ"}</div>
-                  <div>RAM РІСЃРµРіРѕ: {formatBytes(telemetry.serverHost?.memory?.total ?? overview?.server?.memory?.total)}</div>
+                  <div>{telemetry.serverHost?.cpu?.model || overview?.server?.cpu?.model || "CPU не определен"}</div>
+                  <div>RAM всего: {formatBytes(telemetry.serverHost?.memory?.total ?? overview?.server?.memory?.total)}</div>
                 </div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>РђРєС‚РёРІРЅРѕСЃС‚СЊ РїР»Р°С‚С„РѕСЂРјС‹</CardTitle>
-                <CardDescription>Р“РѕРґРѕРІРѕР№ РєР°Р»РµРЅРґР°СЂСЊ СЃРѕР±С‹С‚РёР№ Р±РµР· РїРµСЂРµРєР»СЋС‡Р°С‚РµР»СЏ РјРµСЃСЏС†Р°; РЅРёР¶Рµ Р¶РёРІРѕР№ РіСЂР°С„РёРє СЃРµРіРѕРґРЅСЏС€РЅРµРіРѕ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ.</CardDescription>
+                <CardTitle>Активность платформы</CardTitle>
+                <CardDescription>Годовой календарь событий без переключателя месяца; ниже живой график сегодняшнего использования.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <ActivityHeatmap
-                  title="РћР±С‰Р°СЏ Р°РєС‚РёРІРЅРѕСЃС‚СЊ"
+                  title="Общая активность"
                   points={telemetry.activityHeatmap}
                 />
                 <TodayUsageChart data={telemetry.hourlyLoad || []} />
@@ -744,7 +744,7 @@ export default function PlatformAdmin() {
               >
                 <div className="mb-2 flex items-center gap-2">
                   <Badge variant="outline">{severityLabel(advice.severity)}</Badge>
-                  {advice.companyId && <Badge variant="secondary">РљРѕРјРїР°РЅРёСЏ</Badge>}
+                  {advice.companyId && <Badge variant="secondary">Компания</Badge>}
                 </div>
                 <div className="font-medium">{advice.title}</div>
                 <p className="mt-1 text-sm text-muted-foreground">{advice.message}</p>
@@ -759,16 +759,16 @@ export default function PlatformAdmin() {
             <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="relative w-full lg:max-w-md">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input value={companySearch} onChange={(event) => setCompanySearch(event.target.value)} placeholder="РџРѕРёСЃРє РєРѕРјРїР°РЅРёРё" className="pl-9" />
+                <Input value={companySearch} onChange={(event) => setCompanySearch(event.target.value)} placeholder="Поиск компании" className="pl-9" />
               </div>
               <Select value={companyFilter} onValueChange={setCompanyFilter}>
                 <SelectTrigger className="w-full lg:w-56"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Р’СЃРµ РєРѕРјРїР°РЅРёРё</SelectItem>
-                  <SelectItem value="active">Р‘РµР· РїСЂРѕР±Р»РµРј</SelectItem>
-                  <SelectItem value="problem">Р•СЃС‚СЊ РїСЂРѕР±Р»РµРјС‹</SelectItem>
-                  <SelectItem value="offline">РћС„Р»Р°Р№РЅ СЃРёСЃС‚РµРјС‹</SelectItem>
-                  <SelectItem value="incidents">Р•СЃС‚СЊ РёРЅС†РёРґРµРЅС‚С‹</SelectItem>
+                  <SelectItem value="all">Все компании</SelectItem>
+                  <SelectItem value="active">Без проблем</SelectItem>
+                  <SelectItem value="problem">Есть проблемы</SelectItem>
+                  <SelectItem value="offline">Офлайн системы</SelectItem>
+                  <SelectItem value="incidents">Есть инциденты</SelectItem>
                 </SelectContent>
               </Select>
             </CardContent>
@@ -776,9 +776,9 @@ export default function PlatformAdmin() {
 
           <div className="grid gap-4 xl:grid-cols-[1fr_0.95fr]">
             <div className="space-y-3">
-              {overviewQuery.isLoading && <div className="text-sm text-muted-foreground">Р—Р°РіСЂСѓР·РєР° РєРѕРјРїР°РЅРёР№...</div>}
+              {overviewQuery.isLoading && <div className="text-sm text-muted-foreground">Загрузка компаний...</div>}
               {!overviewQuery.isLoading && filteredCompanies.length === 0 && (
-                <Card><CardContent className="p-6 text-sm text-muted-foreground">РљРѕРјРїР°РЅРёР№ РїРѕ РІС‹Р±СЂР°РЅРЅРѕРјСѓ С„РёР»СЊС‚СЂСѓ РЅРµС‚.</CardContent></Card>
+                <Card><CardContent className="p-6 text-sm text-muted-foreground">Компаний по выбранному фильтру нет.</CardContent></Card>
               )}
               {filteredCompanies.map((item: any) => {
                 const load = companyLoadById.get(item.company.id);
@@ -798,10 +798,10 @@ export default function PlatformAdmin() {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium">{item.company.name}</span>
-                          <Badge variant={issues.length ? "outline" : "secondary"}>{issues.length ? "РЅСѓР¶РµРЅ РєРѕРЅС‚СЂРѕР»СЊ" : "РЅРѕСЂРјР°"}</Badge>
+                          <Badge variant={issues.length ? "outline" : "secondary"}>{issues.length ? "нужен контроль" : "норма"}</Badge>
                         </div>
                         <div className="mt-1 text-sm text-muted-foreground">
-                          {statusLabel(item.company.status)} В· Р°РєС‚РёРІРЅС‹С… {item.members?.active ?? 0} В· pending {item.members?.pending ?? 0}
+                          {statusLabel(item.company.status)} · активных {item.members?.active ?? 0} · pending {item.members?.pending ?? 0}
                         </div>
                         {issues.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1">
@@ -810,10 +810,10 @@ export default function PlatformAdmin() {
                         )}
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <Badge variant="outline">РЎРёСЃС‚РµРјС‹ {item.systems?.online ?? 0}/{item.systems?.total ?? 0}</Badge>
-                        <Badge variant="outline">24С‡ {load?.activity24h ?? 0}</Badge>
-                        <Badge variant="outline">РРЅС†РёРґРµРЅС‚С‹ {item.incidents?.open ?? load?.openIncidents ?? 0}</Badge>
-                        <Badge variant="outline">Р—Р°РґР°С‡Рё {item.tasks?.total ?? 0}</Badge>
+                        <Badge variant="outline">Системы {item.systems?.online ?? 0}/{item.systems?.total ?? 0}</Badge>
+                        <Badge variant="outline">24ч {load?.activity24h ?? 0}</Badge>
+                        <Badge variant="outline">Инциденты {item.incidents?.open ?? load?.openIncidents ?? 0}</Badge>
+                        <Badge variant="outline">Задачи {item.tasks?.total ?? 0}</Badge>
                       </div>
                     </div>
                   </button>
@@ -823,36 +823,36 @@ export default function PlatformAdmin() {
 
             <Card>
               <CardHeader>
-                <CardTitle>РћС‚С‡РµС‚ РїРѕ РєРѕРјРїР°РЅРёРё</CardTitle>
-                <CardDescription>РќР°РіСЂСѓР·РєР°, Р°РєС‚РёРІРЅРѕСЃС‚СЊ, РїСЂРѕР±Р»РµРјС‹ Рё РїРѕРґРєР»СЋС‡РµРЅРЅС‹Рµ Р°РіРµРЅС‚С‹ РІС‹Р±СЂР°РЅРЅРѕР№ РєРѕРјРїР°РЅРёРё.</CardDescription>
+                <CardTitle>Отчет по компании</CardTitle>
+                <CardDescription>Нагрузка, активность, проблемы и подключенные агенты выбранной компании.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {!selectedCompany ? (
-                  <div className="text-sm text-muted-foreground">Р’С‹Р±РµСЂРёС‚Рµ РєРѕРјРїР°РЅРёСЋ СЃР»РµРІР°.</div>
+                  <div className="text-sm text-muted-foreground">Выберите компанию слева.</div>
                 ) : (
                   <>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <div className="text-lg font-semibold">{selectedCompany.company.name}</div>
                         <div className="text-sm text-muted-foreground">
-                          Workspace: {Array.isArray(selectedCompany.workspace?.needs) && selectedCompany.workspace.needs.length ? selectedCompany.workspace.needs.join(", ") : "РјРѕРґСѓР»Рё РЅРµ РІС‹Р±СЂР°РЅС‹"}
+                          Workspace: {Array.isArray(selectedCompany.workspace?.needs) && selectedCompany.workspace.needs.length ? selectedCompany.workspace.needs.join(", ") : "модули не выбраны"}
                         </div>
                       </div>
                       <Badge variant={selectedCompanyIssues.length ? "outline" : "secondary"}>
-                        {selectedCompanyIssues.length ? "РµСЃС‚СЊ РІРѕРїСЂРѕСЃС‹" : "СЃС‚Р°Р±РёР»СЊРЅРѕ"}
+                        {selectedCompanyIssues.length ? "есть вопросы" : "стабильно"}
                       </Badge>
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-2">
                       {[
-                        ["РЎРѕС‚СЂСѓРґРЅРёРєРё", selectedCompany.members?.active ?? 0],
-                        ["РЎРёСЃС‚РµРјС‹ online", `${selectedCompany.systems?.online ?? 0}/${selectedCompany.systems?.total ?? 0}`],
-                        ["РћР±РѕСЂСѓРґРѕРІР°РЅРёРµ", selectedCompany.equipment ?? 0],
-                        ["РЎС‚СЂРёРјС‹", `${selectedCompany.streams?.active ?? 0}/${selectedCompany.streams?.total ?? 0}`],
-                        ["Р—Р°РґР°С‡Рё", selectedCompany.tasks?.total ?? 0],
-                        ["РџСЂРѕСЃСЂРѕС‡РµРЅРѕ", selectedCompany.tasks?.overdue ?? 0],
-                        ["CPU 24С‡", pct(selectedCompanyLoad?.avgCpu24h)],
-                        ["RAM 24С‡", pct(selectedCompanyLoad?.avgMemory24h)],
+                        ["Сотрудники", selectedCompany.members?.active ?? 0],
+                        ["Системы online", `${selectedCompany.systems?.online ?? 0}/${selectedCompany.systems?.total ?? 0}`],
+                        ["Оборудование", selectedCompany.equipment ?? 0],
+                        ["Стримы", `${selectedCompany.streams?.active ?? 0}/${selectedCompany.streams?.total ?? 0}`],
+                        ["Задачи", selectedCompany.tasks?.total ?? 0],
+                        ["Просрочено", selectedCompany.tasks?.overdue ?? 0],
+                        ["CPU 24ч", pct(selectedCompanyLoad?.avgCpu24h)],
+                        ["RAM 24ч", pct(selectedCompanyLoad?.avgMemory24h)],
                       ].map(([label, value]) => (
                         <div key={label} className="rounded-lg border bg-background/60 p-3">
                           <div className="text-xs text-muted-foreground">{label}</div>
@@ -863,35 +863,35 @@ export default function PlatformAdmin() {
 
                     {selectedCompanyIssues.length > 0 && (
                       <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
-                        <div className="mb-2 font-medium">Р§С‚Рѕ С‚СЂРµР±СѓРµС‚ РІРЅРёРјР°РЅРёСЏ</div>
+                        <div className="mb-2 font-medium">Что требует внимания</div>
                         <div className="space-y-1 text-sm text-muted-foreground">
-                          {selectedCompanyIssues.map((issue) => <div key={issue.text}>вЂў {issue.text}</div>)}
+                          {selectedCompanyIssues.map((issue) => <div key={issue.text}>• {issue.text}</div>)}
                         </div>
                       </div>
                     )}
 
                     {selectedCompanyActivity ? (
                       <ActivityHeatmap
-                        title={`РђРєС‚РёРІРЅРѕСЃС‚СЊ: ${selectedCompany.company.name}`}
+                        title={`Активность: ${selectedCompany.company.name}`}
                         points={selectedCompanyActivity.activityHeatmap}
                       />
                     ) : (
                       <div className="rounded-lg border bg-background/60 p-3 text-sm text-muted-foreground">
-                        РџРѕ РєРѕРјРїР°РЅРёРё РїРѕРєР° РЅРµС‚ СЃРѕР±С‹С‚РёР№ РґР»СЏ РіРѕРґРѕРІРѕРіРѕ РіСЂР°С„РёРєР°.
+                        По компании пока нет событий для годового графика.
                       </div>
                     )}
 
                     <div className="space-y-2">
-                      <div className="font-medium">РђРіРµРЅС‚С‹ Рё СЃРёСЃС‚РµРјС‹</div>
+                      <div className="font-medium">Агенты и системы</div>
                       {(selectedCompany.systems?.samples || []).length === 0 ? (
-                        <div className="rounded-lg border bg-background/60 p-3 text-sm text-muted-foreground">РђРіРµРЅС‚С‹ РµС‰Рµ РЅРµ РїРѕРґРєР»СЋС‡РµРЅС‹.</div>
+                        <div className="rounded-lg border bg-background/60 p-3 text-sm text-muted-foreground">Агенты еще не подключены.</div>
                       ) : (
                         selectedCompany.systems.samples.map((system: any) => (
                           <div key={system.id} className="rounded-lg border bg-background/60 p-3">
                             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                               <div>
                                 <div className="font-medium">{system.name}</div>
-                                <div className="text-xs text-muted-foreground">{system.type} В· {statusLabel(system.status)} В· {formatDateTime(system.lastPing)}</div>
+                                <div className="text-xs text-muted-foreground">{system.type} · {statusLabel(system.status)} · {formatDateTime(system.lastPing)}</div>
                               </div>
                               <div className="flex flex-wrap gap-2">
                                 <Badge variant="outline">CPU {pct(system.cpuPercent)}</Badge>
@@ -913,24 +913,24 @@ export default function PlatformAdmin() {
         <TabsContent value="users" className="mt-0 space-y-5">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Users className="h-5 w-5" />РџРѕР»СЊР·РѕРІР°С‚РµР»Рё</CardTitle>
-              <CardDescription>РЈРЅРёРєР°Р»СЊРЅС‹Рµ Р°РєРєР°СѓРЅС‚С‹ РїР»Р°С‚С„РѕСЂРјС‹: РѕРґРЅРѕС„Р°РјРёР»СЊС†С‹ РґРѕРїСѓСЃС‚РёРјС‹, РЅРѕ Р»РѕРіРёРЅ, РїРѕС‡С‚Р° Рё ID РѕСЃС‚Р°СЋС‚СЃСЏ СЂР°Р·РЅС‹РјРё.</CardDescription>
+              <CardTitle className="flex items-center gap-2"><Users className="h-5 w-5" />Пользователи</CardTitle>
+              <CardDescription>Уникальные аккаунты платформы: однофамильцы допустимы, но логин, почта и ID остаются разными.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {usersQuery.isLoading && <div className="text-sm text-muted-foreground">Р—Р°РіСЂСѓР·РєР° РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№...</div>}
+              {usersQuery.isLoading && <div className="text-sm text-muted-foreground">Загрузка пользователей...</div>}
               {!usersQuery.isLoading && platformUsers.length === 0 && (
-                <div className="rounded-lg border bg-background/60 p-4 text-sm text-muted-foreground">РџРѕР»СЊР·РѕРІР°С‚РµР»РµР№ РїРѕРєР° РЅРµС‚.</div>
+                <div className="rounded-lg border bg-background/60 p-4 text-sm text-muted-foreground">Пользователей пока нет.</div>
               )}
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[860px] text-sm">
                   <thead className="bg-muted/60 text-left text-xs uppercase text-muted-foreground">
                     <tr>
-                      <th className="px-3 py-2">РЎРѕС‚СЂСѓРґРЅРёРє</th>
-                      <th className="px-3 py-2">Р›РѕРіРёРЅ / РїРѕС‡С‚Р°</th>
-                      <th className="px-3 py-2">РљРѕРјРїР°РЅРёСЏ</th>
-                      <th className="px-3 py-2">Р РѕР»СЊ</th>
-                      <th className="px-3 py-2">РЎС‚Р°С‚СѓСЃ</th>
-                      <th className="px-3 py-2 text-right">Р”РµР№СЃС‚РІРёСЏ</th>
+                      <th className="px-3 py-2">Сотрудник</th>
+                      <th className="px-3 py-2">Логин / почта</th>
+                      <th className="px-3 py-2">Компания</th>
+                      <th className="px-3 py-2">Роль</th>
+                      <th className="px-3 py-2">Статус</th>
+                      <th className="px-3 py-2 text-right">Действия</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -945,12 +945,12 @@ export default function PlatformAdmin() {
                           </td>
                           <td className="px-3 py-3">
                             <div>{user.username}</div>
-                            <div className="text-xs text-muted-foreground">{user.email || "РїРѕС‡С‚Р° РЅРµ СѓРєР°Р·Р°РЅР°"}</div>
+                            <div className="text-xs text-muted-foreground">{user.email || "почта не указана"}</div>
                           </td>
-                          <td className="px-3 py-3">{companyNames || "Р±РµР· РєРѕРјРїР°РЅРёРё"}</td>
+                          <td className="px-3 py-3">{companyNames || "без компании"}</td>
                           <td className="px-3 py-3"><Badge variant="outline">{user.role || "employee"}</Badge></td>
                           <td className="px-3 py-3">
-                            <Badge variant={user.active === false ? "outline" : "secondary"}>{user.active === false ? "РЅРµ Р°РєС‚РёРІРµРЅ" : "Р°РєС‚РёРІРµРЅ"}</Badge>
+                            <Badge variant={user.active === false ? "outline" : "secondary"}>{user.active === false ? "не активен" : "активен"}</Badge>
                           </td>
                           <td className="px-3 py-3 text-right">
                             <div className="flex justify-end gap-2">
@@ -994,26 +994,26 @@ export default function PlatformAdmin() {
           <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2"><BrainCircuit className="h-5 w-5" />AI РґРёР°РіРЅРѕСЃС‚РёРєР°</CardTitle>
-                <CardDescription>Qwen РґРµР»Р°РµС‚ Р±С‹СЃС‚СЂС‹Р№ ops-СЃРєР°РЅ, DeepSeek РіР»СѓР±Р¶Рµ СЂР°Р·Р±РёСЂР°РµС‚ РїСЂРёС‡РёРЅС‹ Рё СЂРёСЃРєРё.</CardDescription>
+                <CardTitle className="flex items-center gap-2"><BrainCircuit className="h-5 w-5" />AI диагностика</CardTitle>
+                <CardDescription>Qwen делает быстрый ops-скан, DeepSeek глубже разбирает причины и риски.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex flex-wrap gap-2">
                   <Button variant="outline" onClick={() => opsAiMutation.mutate("quick")} disabled={opsAiMutation.isPending}>
                     <Sparkles className="mr-2 h-4 w-4" />
-                    Qwen Р°РЅР°Р»РёР·
+                    Qwen анализ
                   </Button>
                   <Button onClick={() => opsAiMutation.mutate("deep")} disabled={opsAiMutation.isPending}>
                     <BrainCircuit className="mr-2 h-4 w-4" />
-                    DeepSeek РіР»СѓР±РѕРєРѕ
+                    DeepSeek глубоко
                   </Button>
                 </div>
                 {opsAiMutation.isPending && (
-                  <div className="rounded-lg border bg-background/60 p-4 text-sm text-muted-foreground">РќРµР№СЂРѕСЃРµС‚СЊ Р°РЅР°Р»РёР·РёСЂСѓРµС‚ СЃРµСЂРІРµСЂ, РєРѕРјРїР°РЅРёРё, РјРµС‚СЂРёРєРё Рё РёРЅС†РёРґРµРЅС‚С‹...</div>
+                  <div className="rounded-lg border bg-background/60 p-4 text-sm text-muted-foreground">Нейросеть анализирует сервер, компании, метрики и инциденты...</div>
                 )}
                 {!opsAiResult && !opsAiMutation.isPending && (
                   <div className="rounded-lg border bg-background/60 p-4 text-sm text-muted-foreground">
-                    РќР°Р¶РјРёС‚Рµ Qwen РґР»СЏ Р±С‹СЃС‚СЂРѕРіРѕ Р°РЅР°Р»РёР·Р°. Р•СЃР»Рё РјРѕРґРµР»СЊ РЅРµРґРѕСЃС‚СѓРїРЅР° РІ Hugging Face Router, СЃРµСЂРІРµСЂ РїРѕРїСЂРѕР±СѓРµС‚ РЅРµСЃРєРѕР»СЊРєРѕ Qwen fallback-РјРѕРґРµР»РµР№.
+                    Нажмите Qwen для быстрого анализа. Если модель недоступна в Hugging Face Router, сервер попробует несколько Qwen fallback-моделей.
                   </div>
                 )}
                 {opsAiResult && (
@@ -1031,8 +1031,8 @@ export default function PlatformAdmin() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Р›РѕРєР°Р»СЊРЅС‹Рµ СЃРѕРІРµС‚С‹ Р±РµР· AI</CardTitle>
-                <CardDescription>Р‘С‹СЃС‚СЂС‹Рµ РїСЂРѕРІРµСЂРєРё, СЂР°СЃСЃС‡РёС‚Р°РЅРЅС‹Рµ РёР· С‚РµР»РµРјРµС‚СЂРёРё РЅР° СЃРµСЂРІРµСЂРµ.</CardDescription>
+                <CardTitle>Локальные советы без AI</CardTitle>
+                <CardDescription>Быстрые проверки, рассчитанные из телеметрии на сервере.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {(telemetry.opsAdvisor || []).map((advice, index) => (
@@ -1055,42 +1055,42 @@ export default function PlatformAdmin() {
             <CardContent className="grid gap-3 p-4 lg:grid-cols-[1fr_190px_190px]">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input value={incidentSearch} onChange={(event) => setIncidentSearch(event.target.value)} placeholder="РџРѕРёСЃРє РїРѕ Р¶Р°Р»РѕР±Р°Рј Рё РёРЅС†РёРґРµРЅС‚Р°Рј" className="pl-9" />
+                <Input value={incidentSearch} onChange={(event) => setIncidentSearch(event.target.value)} placeholder="Поиск по жалобам и инцидентам" className="pl-9" />
               </div>
               <Select value={incidentStatusFilter} onValueChange={setIncidentStatusFilter}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="active">РђРєС‚РёРІРЅС‹Рµ</SelectItem>
-                  <SelectItem value="open">РћС‚РєСЂС‹С‚С‹Рµ</SelectItem>
-                  <SelectItem value="investigating">Р’ СЂР°Р±РѕС‚Рµ</SelectItem>
-                  <SelectItem value="done">Р’С‹РїРѕР»РЅРµРЅРЅС‹Рµ</SelectItem>
-                  <SelectItem value="all">Р’СЃРµ</SelectItem>
+                  <SelectItem value="active">Активные</SelectItem>
+                  <SelectItem value="open">Открытые</SelectItem>
+                  <SelectItem value="investigating">В работе</SelectItem>
+                  <SelectItem value="done">Выполненные</SelectItem>
+                  <SelectItem value="all">Все</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={incidentSeverityFilter} onValueChange={setIncidentSeverityFilter}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Р›СЋР±Р°СЏ РІР°Р¶РЅРѕСЃС‚СЊ</SelectItem>
-                  <SelectItem value="critical">РљСЂРёС‚РёС‡РЅРѕ</SelectItem>
-                  <SelectItem value="high">Р’С‹СЃРѕРєР°СЏ</SelectItem>
-                  <SelectItem value="medium">РЎСЂРµРґРЅСЏСЏ</SelectItem>
-                  <SelectItem value="low">РќРёР·РєР°СЏ</SelectItem>
+                  <SelectItem value="all">Любая важность</SelectItem>
+                  <SelectItem value="critical">Критично</SelectItem>
+                  <SelectItem value="high">Высокая</SelectItem>
+                  <SelectItem value="medium">Средняя</SelectItem>
+                  <SelectItem value="low">Низкая</SelectItem>
                 </SelectContent>
               </Select>
             </CardContent>
           </Card>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-            <StatCard label="РђРєС‚РёРІРЅС‹Рµ" value={openIncidents.length} icon={AlertTriangle} />
-            <StatCard label="Р’ СЂР°Р±РѕС‚Рµ" value={incidents.filter((i) => i.status === "investigating").length} icon={Wrench} />
-            <StatCard label="Р’С‹РїРѕР»РЅРµРЅРЅС‹Рµ" value={incidents.filter((i) => ["resolved", "closed"].includes(i.status)).length} icon={CheckCircle2} />
-            <StatCard label="РљСЂРёС‚РёС‡РЅС‹Рµ" value={incidents.filter((i) => i.severity === "critical").length} icon={AlertCircle} />
+            <StatCard label="Активные" value={openIncidents.length} icon={AlertTriangle} />
+            <StatCard label="В работе" value={incidents.filter((i) => i.status === "investigating").length} icon={Wrench} />
+            <StatCard label="Выполненные" value={incidents.filter((i) => ["resolved", "closed"].includes(i.status)).length} icon={CheckCircle2} />
+            <StatCard label="Критичные" value={incidents.filter((i) => i.severity === "critical").length} icon={AlertCircle} />
           </div>
 
           <div className="space-y-3">
-            {incidentsQuery.isLoading && <div className="text-sm text-muted-foreground">Р—Р°РіСЂСѓР·РєР° РёРЅС†РёРґРµРЅС‚РѕРІ...</div>}
+            {incidentsQuery.isLoading && <div className="text-sm text-muted-foreground">Загрузка инцидентов...</div>}
             {!incidentsQuery.isLoading && filteredIncidents.length === 0 && (
-              <Card><CardContent className="p-6 text-sm text-muted-foreground">РРЅС†РёРґРµРЅС‚РѕРІ РїРѕ РІС‹Р±СЂР°РЅРЅС‹Рј С„РёР»СЊС‚СЂР°Рј РЅРµС‚.</CardContent></Card>
+              <Card><CardContent className="p-6 text-sm text-muted-foreground">Инцидентов по выбранным фильтрам нет.</CardContent></Card>
             )}
             {filteredIncidents.map((incident) => {
               const done = incident.status === "resolved" || incident.status === "closed";
@@ -1106,7 +1106,7 @@ export default function PlatformAdmin() {
                       </div>
                       <div className="text-sm text-muted-foreground">{incident.message}</div>
                       <div className="text-xs text-muted-foreground">
-                        РљРѕРјРїР°РЅРёСЏ: {incident.company?.name || "РЅРµ СѓРєР°Р·Р°РЅР°"} В· РђРІС‚РѕСЂ: {incident.reporter?.name || incident.reporter?.username || "РЅРµРёР·РІРµСЃС‚РЅРѕ"} В· {formatDateTime(incident.createdAt)}
+                        Компания: {incident.company?.name || "не указана"} · Автор: {incident.reporter?.name || incident.reporter?.username || "неизвестно"} · {formatDateTime(incident.createdAt)}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -1116,14 +1116,14 @@ export default function PlatformAdmin() {
                         disabled={incidentStatusMutation.isPending || incident.status === "investigating" || done}
                         onClick={() => incidentStatusMutation.mutate({ id: incident.id, status: "investigating" })}
                       >
-                        Р’ СЂР°Р±РѕС‚Сѓ
+                        В работу
                       </Button>
                       <Button
                         size="sm"
                         disabled={incidentStatusMutation.isPending || done}
                         onClick={() => incidentStatusMutation.mutate({ id: incident.id, status: "resolved" })}
                       >
-                        Р—Р°РєСЂС‹С‚СЊ
+                        Закрыть
                       </Button>
                     </div>
                   </div>
@@ -1136,8 +1136,8 @@ export default function PlatformAdmin() {
         <TabsContent value="metrics" className="mt-0 space-y-5">
           <Card className="border-primary/20 bg-primary/5">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><BrainCircuit className="h-5 w-5" />AI-Р°РЅР°Р»РёР· РјРµС‚СЂРёРє</CardTitle>
-              <CardDescription>РћС†РµРЅРєР° СЃС‚СЂРѕРёС‚СЃСЏ РїРѕ СЃРІРµР¶РµР№ С‚РµР»РµРјРµС‚СЂРёРё Рё РѕР±РЅРѕРІР»СЏРµС‚СЃСЏ РІРјРµСЃС‚Рµ СЃ РіСЂР°С„РёРєР°РјРё.</CardDescription>
+              <CardTitle className="flex items-center gap-2"><BrainCircuit className="h-5 w-5" />AI-анализ метрик</CardTitle>
+              <CardDescription>Оценка строится по свежей телеметрии и обновляется вместе с графиками.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {metricInsights.map((insight) => (
@@ -1151,7 +1151,7 @@ export default function PlatformAdmin() {
                   )}
                 >
                   <div className="mb-2 flex items-center gap-2">
-                    <Badge variant="outline">{insight.level === "critical" ? "РїР»РѕС…Рѕ" : insight.level === "warning" ? "РІРЅРёРјР°РЅРёРµ" : "С…РѕСЂРѕС€Рѕ"}</Badge>
+                    <Badge variant="outline">{insight.level === "critical" ? "плохо" : insight.level === "warning" ? "внимание" : "хорошо"}</Badge>
                   </div>
                   <div className="font-medium">{insight.title}</div>
                   <p className="mt-1 text-sm text-muted-foreground">{insight.text}</p>
@@ -1159,7 +1159,7 @@ export default function PlatformAdmin() {
               ))}
               <Button variant="outline" className="h-auto justify-start p-3 text-left" onClick={() => { setActiveTab("ai"); opsAiMutation.mutate("quick"); }} disabled={opsAiMutation.isPending}>
                 <Sparkles className="mr-2 h-4 w-4" />
-                Р—Р°РїСѓСЃС‚РёС‚СЊ Qwen РїРѕ СЌС‚РёРј РјРµС‚СЂРёРєР°Рј
+                Запустить Qwen по этим метрикам
               </Button>
             </CardContent>
           </Card>
@@ -1167,8 +1167,8 @@ export default function PlatformAdmin() {
           <div className="grid gap-4 xl:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>РќР°РіСЂСѓР·РєР° СЃРµСЂРІРµСЂР° РІ СЂРµР°Р»СЊРЅРѕРј РІСЂРµРјРµРЅРё</CardTitle>
-                <CardDescription>CPU, RAM, РґРёСЃРє Рё heap Node.js РѕР±РЅРѕРІР»СЏСЋС‚СЃСЏ РєР°Р¶РґС‹Рµ {refreshLabel}.</CardDescription>
+                <CardTitle>Нагрузка сервера в реальном времени</CardTitle>
+                <CardDescription>CPU, RAM, диск и heap Node.js обновляются каждые {refreshLabel}.</CardDescription>
               </CardHeader>
               <CardContent className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1189,8 +1189,8 @@ export default function PlatformAdmin() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Heartbeat Рё СЃРёСЃС‚РµРјС‹ РѕРЅР»Р°Р№РЅ</CardTitle>
-                <CardDescription>РЎРєРѕР»СЊРєРѕ Р°РіРµРЅС‚РѕРІ РїСЂРёСЃС‹Р»Р°СЋС‚ РґР°РЅРЅС‹Рµ СЃРµР№С‡Р°СЃ Рё РєР°РєР°СЏ РЅР°РіСЂСѓР·РєР° РїРѕ РЅРёРј.</CardDescription>
+                <CardTitle>Heartbeat и системы онлайн</CardTitle>
+                <CardDescription>Сколько агентов присылают данные сейчас и какая нагрузка по ним.</CardDescription>
               </CardHeader>
               <CardContent className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1210,8 +1210,8 @@ export default function PlatformAdmin() {
 
             <Card>
               <CardHeader>
-                <CardTitle>РђРєС‚РёРІРЅРѕСЃС‚СЊ РєРѕРјРїР°РЅРёР№</CardTitle>
-                <CardDescription>РђРєС‚РёРІРЅРѕСЃС‚СЊ Р·Р° 24 С‡Р°СЃР°, РёРЅС„СЂР°СЃС‚СЂСѓРєС‚СѓСЂР° Рё РёРЅС†РёРґРµРЅС‚С‹.</CardDescription>
+                <CardTitle>Активность компаний</CardTitle>
+                <CardDescription>Активность за 24 часа, инфраструктура и инциденты.</CardDescription>
               </CardHeader>
               <CardContent className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1221,8 +1221,8 @@ export default function PlatformAdmin() {
                     <YAxis type="category" dataKey="name" width={130} tick={{ fill: "#cbd5e1", fontSize: 11 }} />
                     <RechartsTooltip />
                     <Legend />
-                    <Bar dataKey="activity24h" name="РђРєС‚РёРІРЅРѕСЃС‚СЊ 24С‡" fill={COLORS.violet} radius={[0, 4, 4, 0]} />
-                    <Bar dataKey="openIncidents" name="РРЅС†РёРґРµРЅС‚С‹" fill={COLORS.red} radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="activity24h" name="Активность 24ч" fill={COLORS.violet} radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="openIncidents" name="Инциденты" fill={COLORS.red} radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -1230,8 +1230,8 @@ export default function PlatformAdmin() {
 
             <Card>
               <CardHeader>
-                <CardTitle>РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ СЃРµСЂРІРёСЃР°</CardTitle>
-                <CardDescription>РўРёРїС‹ СЃРѕР±С‹С‚РёР№ РїР»Р°С‚С„РѕСЂРјС‹ Р·Р° РіРѕРґ.</CardDescription>
+                <CardTitle>Использование сервиса</CardTitle>
+                <CardDescription>Типы событий платформы за год.</CardDescription>
               </CardHeader>
               <CardContent className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1240,7 +1240,7 @@ export default function PlatformAdmin() {
                     <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} />
                     <YAxis type="category" dataKey="name" width={130} tickFormatter={usageLabel} tick={{ fill: "#cbd5e1", fontSize: 11 }} />
                     <RechartsTooltip formatter={(value: number, name: string) => [value, usageLabel(String(name))]} />
-                    <Bar dataKey="value" name="РЎРѕР±С‹С‚РёР№" fill={COLORS.blue} radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="value" name="Событий" fill={COLORS.blue} radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -1250,8 +1250,8 @@ export default function PlatformAdmin() {
           <div className="grid gap-4 xl:grid-cols-[0.7fr_1.3fr]">
             <Card>
               <CardHeader>
-                <CardTitle>РЎС‚Р°С‚СѓСЃС‹ СЃРёСЃС‚РµРј</CardTitle>
-                <CardDescription>РЎСЂРµР· РїРѕ РІСЃРµРј СЃРёСЃС‚РµРјР°Рј.</CardDescription>
+                <CardTitle>Статусы систем</CardTitle>
+                <CardDescription>Срез по всем системам.</CardDescription>
               </CardHeader>
               <CardContent className="h-[240px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -1268,17 +1268,17 @@ export default function PlatformAdmin() {
 
             <Card>
               <CardHeader>
-                <CardTitle>РўРѕРї СЃРёСЃС‚РµРј РїРѕРґ РЅР°РіСЂСѓР·РєРѕР№</CardTitle>
-                <CardDescription>CPU, RAM, РґРёСЃРє Рё СЃРµС‚СЊ РїРѕ Р°РіРµРЅС‚Р°Рј.</CardDescription>
+                <CardTitle>Топ систем под нагрузкой</CardTitle>
+                <CardDescription>CPU, RAM, диск и сеть по агентам.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                {(telemetry.topSystems || []).length === 0 && <div className="text-sm text-muted-foreground">РќРµС‚ СЃРёСЃС‚РµРј СЃ РјРµС‚СЂРёРєР°РјРё.</div>}
+                {(telemetry.topSystems || []).length === 0 && <div className="text-sm text-muted-foreground">Нет систем с метриками.</div>}
                 {(telemetry.topSystems || []).map((system) => (
                   <div key={system.id} className="rounded-lg border bg-background/60 p-3">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <div className="font-medium">{system.name}</div>
-                        <div className="text-xs text-muted-foreground">{system.companyName} В· {statusLabel(system.status)} В· {formatDateTime(system.lastPing)}</div>
+                        <div className="text-xs text-muted-foreground">{system.companyName} · {statusLabel(system.status)} · {formatDateTime(system.lastPing)}</div>
                       </div>
                       <Badge variant="outline">{Math.round(num(system.networkMbps))} Mbps</Badge>
                     </div>

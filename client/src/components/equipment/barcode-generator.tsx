@@ -6,11 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, Printer, ScanBarcode, RefreshCw } from "lucide-react";
 import {
+  buildBarcodeLabelBitmapPayload,
   downloadBarcodeLabelPng,
   openBarcodePrintWindow,
   renderCompactBarcodeLabel,
   sanitizeBarcodeFilePart,
 } from "@/lib/barcode-label";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import type { Equipment } from "@shared/schema";
 
 interface BarcodeGeneratorProps {
@@ -184,6 +187,8 @@ export function EquipmentBarcodeModal({
 }) {
   const barcodeRef = useRef<SVGSVGElement>(null);
   const [barcodeValue, setBarcodeValue] = useState("");
+  const [isPrinting, setIsPrinting] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (isOpen && equipment) {
@@ -219,13 +224,28 @@ export function EquipmentBarcodeModal({
     );
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
     if (!barcodeRef.current) return;
-    openBarcodePrintWindow({
-      svg: barcodeRef.current,
-      name: equipment?.name,
-      model: equipment?.model || "",
-    });
+    setIsPrinting(true);
+    try {
+      const label = await buildBarcodeLabelBitmapPayload(barcodeRef.current, barcodeValue);
+      const response = await apiRequest("POST", "/api/equipment/labels/print-bitmaps", {
+        labels: [label],
+      });
+      const data = await response.json();
+      toast({
+        title: "Этикетка отправлена",
+        description: `Принтер: ${data?.printer || "TSC"}.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Ошибка печати",
+        description: error?.message || "Не удалось отправить PNG-этикетку на принтер",
+        variant: "destructive",
+      });
+    } finally {
+      setIsPrinting(false);
+    }
   };
 
   if (!equipment) return null;
@@ -276,6 +296,7 @@ export function EquipmentBarcodeModal({
             </Button>
             <Button 
               onClick={handlePrint}
+              disabled={isPrinting}
               className="w-full"
               data-testid="button-print-equipment-barcode"
             >

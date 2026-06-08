@@ -1,4 +1,4 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+﻿import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
 import { Calendar, Clock, Video, RefreshCw, ExternalLink, AlertCircle, CheckCircle2 } from "lucide-react";
@@ -43,11 +43,11 @@ function cp1251Byte(char: string): number {
 }
 
 function fixMojibake(value: string) {
-  if (!/[РС][\u0400-\u04ff]|вЂ|В·/.test(value)) return value;
+  if (!/[\u0420\u0421][\u0400-\u04ff]|\u0432\u0402|\u0412\u00b7/.test(value)) return value;
   try {
     const bytes = Uint8Array.from(Array.from(value).map(cp1251Byte));
     const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    return decoded.includes("�") ? value : decoded;
+    return decoded.includes("\ufffd") ? value : decoded;
   } catch {
     return value;
   }
@@ -114,8 +114,8 @@ export default function VmixScheduler() {
                 Offline
               </Badge>
             )}
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               size="sm"
               onClick={() => refetch()}
               disabled={isRefetching}
@@ -158,8 +158,8 @@ export default function VmixScheduler() {
                   Расписание
                 </div>
                 {data.events.slice(0, 4).map((event) => (
-                  <div 
-                    key={event.id} 
+                  <div
+                    key={event.id}
                     className="flex items-center justify-between py-1.5 border-b border-slate-100 dark:border-slate-700 last:border-0"
                   >
                     <div className="flex items-center gap-2 min-w-0">
@@ -189,9 +189,9 @@ export default function VmixScheduler() {
                 <span className="text-slate-400 dark:text-slate-500">
                   Обновлено: {format(parseISO(data.lastSync), "HH:mm")}
                 </span>
-                <a 
-                  href="https://vmix.rullz.ru" 
-                  target="_blank" 
+                <a
+                  href="https://vmix.rullz.ru"
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs text-primary hover:underline flex items-center gap-1"
                 >

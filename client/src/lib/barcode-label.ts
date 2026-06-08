@@ -4,11 +4,21 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 export const BARCODE_LABEL_WIDTH = 320;
 export const BARCODE_LABEL_HEIGHT = 104;
-export const BARCODE_LABEL_BRAND = "отис";
+export const BARCODE_LABEL_BRAND = "ОТИС";
 
 type BarcodeLabelOptions = {
   format?: string;
   brand?: string;
+};
+
+type BarcodeBitmapOptions = {
+  widthMm?: number;
+  heightMm?: number;
+  gapMm?: number;
+  dpi?: number;
+  targetWidthDots?: number;
+  targetHeightDots?: number;
+  invertBits?: boolean;
 };
 
 const readSize = (value: string | null, fallback: number) => {
@@ -18,9 +28,9 @@ const readSize = (value: string | null, fallback: number) => {
 
 const truncateMiddle = (value: string, maxLength: number) => {
   if (value.length <= maxLength) return value;
-  const left = Math.ceil((maxLength - 1) / 2);
-  const right = Math.floor((maxLength - 1) / 2);
-  return `${value.slice(0, left)}…${value.slice(-right)}`;
+  const left = Math.ceil((maxLength - 3) / 2);
+  const right = Math.floor((maxLength - 3) / 2);
+  return `${value.slice(0, left)}...${value.slice(-right)}`;
 };
 
 const escapeHtml = (value: string) =>
@@ -30,6 +40,15 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+
+const bytesToBase64 = (bytes: Uint8Array) => {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+};
 
 export function sanitizeBarcodeFilePart(value: string | null | undefined) {
   return String(value || "equipment")
@@ -74,7 +93,7 @@ export function renderCompactBarcodeLabel(
   svg.setAttribute("height", String(BARCODE_LABEL_HEIGHT));
   svg.setAttribute("viewBox", `0 0 ${BARCODE_LABEL_WIDTH} ${BARCODE_LABEL_HEIGHT}`);
   svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", `Штрихкод ${code}`);
+  svg.setAttribute("aria-label", `Barcode ${code}`);
   svg.style.display = "block";
   svg.style.maxWidth = "100%";
   svg.style.height = "auto";
@@ -116,7 +135,7 @@ export function renderCompactBarcodeLabel(
   overlayText.setAttribute("y", String(overlayY + 12.5));
   overlayText.setAttribute("text-anchor", "middle");
   overlayText.setAttribute("fill", "#111111");
-  overlayText.setAttribute("font-family", "system-ui, -apple-system, Segoe UI, sans-serif");
+  overlayText.setAttribute("font-family", "Arial, Helvetica, sans-serif");
   overlayText.setAttribute("font-size", "10");
   overlayText.setAttribute("font-weight", "700");
   overlayText.setAttribute("letter-spacing", "0");
@@ -128,10 +147,9 @@ export function renderCompactBarcodeLabel(
   codeText.setAttribute("y", "89");
   codeText.setAttribute("text-anchor", "middle");
   codeText.setAttribute("fill", "#111111");
-  codeText.setAttribute("font-family", "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace");
+  codeText.setAttribute("font-family", "Consolas, Monaco, monospace");
   codeText.setAttribute("font-size", code.length > 32 ? "8" : code.length > 24 ? "9" : "11");
   svg.appendChild(codeText);
-
 }
 
 export function downloadBarcodeLabelPng(svg: SVGSVGElement, fileName: string) {
@@ -165,6 +183,88 @@ export function downloadBarcodeLabelPng(svg: SVGSVGElement, fileName: string) {
   img.src = url;
 }
 
+export async function buildBarcodeLabelBitmapPayload(
+  svg: SVGSVGElement,
+  value: string,
+  options: BarcodeBitmapOptions = {},
+) {
+  const widthMm = options.widthMm ?? 40;
+  const heightMm = options.heightMm ?? 20;
+  const gapMm = options.gapMm ?? 2;
+  const dpi = options.dpi ?? 300;
+  const labelWidthDots = Math.round(widthMm * dpi / 25.4);
+  const labelHeightDots = Math.round(heightMm * dpi / 25.4);
+  const targetWidthDots = options.targetWidthDots ?? Math.max(BARCODE_LABEL_WIDTH, labelWidthDots - 18);
+  const targetHeightDots = options.targetHeightDots ?? Math.min(
+    labelHeightDots - 18,
+    Math.round(targetWidthDots * BARCODE_LABEL_HEIGHT / BARCODE_LABEL_WIDTH),
+  );
+  // TSC TE310/EZD prints this bitmap polarity correctly when white pixels are
+  // encoded as set bits and black label content is encoded as cleared bits.
+  const invertBits = options.invertBits ?? true;
+  const svgData = new XMLSerializer().serializeToString(svg);
+  const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(svgBlob);
+
+  try {
+    const img = new Image();
+    const loaded = new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Не удалось подготовить PNG для печати"));
+    });
+    img.src = url;
+    await loaded;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidthDots;
+    canvas.height = targetHeightDots;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas недоступен для печати этикетки");
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, targetWidthDots, targetHeightDots);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0, targetWidthDots, targetHeightDots);
+
+    const pixels = ctx.getImageData(0, 0, targetWidthDots, targetHeightDots).data;
+    const widthBytes = Math.ceil(targetWidthDots / 8);
+    const bitmap = new Uint8Array(widthBytes * targetHeightDots);
+
+    for (let y = 0; y < targetHeightDots; y += 1) {
+      for (let x = 0; x < targetWidthDots; x += 1) {
+        const pixelIndex = (y * targetWidthDots + x) * 4;
+        const r = pixels[pixelIndex];
+        const g = pixels[pixelIndex + 1];
+        const b = pixels[pixelIndex + 2];
+        const a = pixels[pixelIndex + 3];
+        const luminance = (r * 0.299) + (g * 0.587) + (b * 0.114);
+        const isBlackPixel = a > 32 && luminance < 190;
+        const shouldSetBit = invertBits ? !isBlackPixel : isBlackPixel;
+        if (shouldSetBit) {
+          bitmap[y * widthBytes + (x >> 3)] |= 0x80 >> (x & 7);
+        }
+      }
+    }
+
+    return {
+      value,
+      bitmapBase64: bytesToBase64(bitmap),
+      widthBytes,
+      heightDots: targetHeightDots,
+      xDots: Math.max(0, Math.round((labelWidthDots - targetWidthDots) / 2)),
+      yDots: Math.max(0, Math.round((labelHeightDots - targetHeightDots) / 2)),
+      labelWidthDots,
+      labelHeightDots,
+      widthMm,
+      heightMm,
+      gapMm,
+      dpi,
+    };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export function openBarcodePrintWindow(params: {
   svg: SVGSVGElement;
   title?: string;
@@ -186,47 +286,29 @@ export function openBarcodePrintWindow(params: {
         <meta charset="utf-8" />
         <title>${title}</title>
         <style>
-          @page { size: 78mm 48mm; margin: 4mm; }
+          @page { size: 40mm 20mm; margin: 0; }
           * { box-sizing: border-box; }
           body {
-            min-height: 100vh;
             margin: 0;
+            width: 40mm;
+            height: 20mm;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: #f4f4f5;
-            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+            background: #ffffff;
+            font-family: Arial, Helvetica, sans-serif;
             color: #111827;
           }
           .sheet {
-            width: 70mm;
-            padding: 3mm;
-            background: #ffffff;
+            width: 100%;
             text-align: center;
-            border: 1px solid #d4d4d8;
-          }
-          .name {
-            font-size: 10pt;
-            font-weight: 700;
-            line-height: 1.15;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-          }
-          .model {
-            min-height: 10pt;
-            margin-top: 1mm;
-            font-size: 8pt;
-            color: #52525b;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            background: #ffffff;
           }
           svg {
             display: block;
-            width: 100%;
-            height: auto;
-            margin-top: 2mm;
+            width: 27.1mm;
+            height: 8.8mm;
+            margin: 0 auto;
           }
           .no-print {
             position: fixed;
@@ -242,8 +324,6 @@ export function openBarcodePrintWindow(params: {
             font-weight: 600;
           }
           @media print {
-            body { min-height: auto; background: #ffffff; }
-            .sheet { border: 0; padding: 0; width: 70mm; }
             .no-print { display: none; }
           }
         </style>

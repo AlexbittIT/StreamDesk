@@ -62,8 +62,8 @@ export function PhotoUpload({ equipmentId, existingPhotos, onPhotosChange }: Pho
     if (!newPhotoUrl.trim()) return;
     if (newPhotoUrl.trim().startsWith('blob:')) {
       toast({
-        title: "РћС€РёР±РєР°",
-        description: "Blob-СЃСЃС‹Р»РєРё РЅРµ СЃРѕС…СЂР°РЅСЏСЋС‚СЃСЏ. Р—Р°РіСЂСѓР·РёС‚Рµ С„Р°Р№Р» РєРЅРѕРїРєРѕР№ РЅРёР¶Рµ.",
+        title: "Ошибка",
+        description: "Blob-ссылки не сохраняются. Загрузите файл кнопкой ниже.",
         variant: "destructive",
       });
       return;
