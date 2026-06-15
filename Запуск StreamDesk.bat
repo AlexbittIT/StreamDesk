@@ -97,7 +97,7 @@ echo ==========================================
 echo.
 
 set NODE_ENV=development
-call npx cross-env NODE_ENV=development npx tsx server/index.ts
+call npx cross-env NODE_ENV=development npx tsx backend/index.ts
 
 if %errorlevel% neq 0 (
     echo.

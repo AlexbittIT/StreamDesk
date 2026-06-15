@@ -142,15 +142,15 @@ StreamDesk должен помогать менеджеру, инженеру и
 ## Структура проекта
 
 ```text
-client/                 frontend-приложение
-client/src/pages/       страницы StreamDesk
-client/src/components/  переиспользуемые компоненты
-client/src/lib/         клиентские утилиты
-server/                 API, авторизация, интеграции, мониторинг
-shared/                 общие схемы и типы
-scripts/                деплой, удаленные команды, служебные скрипты
-tmp-drizzle/            SQL для настройки/исправления БД
-docs/                   дополнительные материалы
+frontend/                клиентское приложение (Vite + React)
+frontend/src/pages/      страницы StreamDesk
+frontend/src/components/ переиспользуемые компоненты
+frontend/src/lib/        клиентские утилиты
+backend/                 API, авторизация, интеграции, мониторинг
+shared/                  общие схемы и типы
+scripts/                 деплой, удаленные команды, служебные скрипты
+docs/                    документация и руководства
+tmp-drizzle/             служебные снапшоты Drizzle
 ```
 
 ## Переменные окружения

@@ -6,7 +6,7 @@
 # Зависимости
 # ============================================
 node_modules/
-client/node_modules/
+frontend/node_modules/
 .pnp
 .pnp.js
 .yarn/
@@ -20,9 +20,9 @@ client/node_modules/
 # ============================================
 dist/
 build/
-client/dist/
-client/build/
-server/dist/
+frontend/dist/
+frontend/build/
+backend/dist/
 *.tsbuildinfo
 *.buildinfo
 .next/
@@ -247,7 +247,7 @@ deploy.config
 # ============================================
 .replit
 replit.md
-server/public/
+backend/public/
 *.tar.gz
 encode-password.html
 

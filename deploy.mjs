@@ -70,7 +70,7 @@ function run(cmd, args, opts = {}) {
 async function deployViaScp(rootDir, user, host, remotePath, runFn, port) {
   const tmpDir = path.join(os.tmpdir(), `streamdesk-deploy-${Date.now()}`);
   const zipPath = path.join(os.tmpdir(), `streamdesk-deploy-${Date.now()}.zip`);
-  const excludeDirs = ["node_modules", ".git", "client\\node_modules", "attached_assets", "design-website"];
+  const excludeDirs = ["node_modules", ".git", "frontend\\node_modules", "attached_assets", "design-website"];
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
     const robocopyArgs = [
@@ -136,7 +136,7 @@ async function main() {
   const rsyncExclude = [
     "node_modules",
     ".git",
-    "client/node_modules",
+    "frontend/node_modules",
     ".env",
     "*.log",
     ".DS_Store",

@@ -82,7 +82,7 @@ async function createBundle() {
       "ecosystem.config.cjs",
       "package.json",
       "package-lock.json",
-      "server/templates",
+      "backend/templates",
       "scripts/streamdesk-agent.ps1",
       "scripts/streamdesk-agent-linux.sh",
     ];
