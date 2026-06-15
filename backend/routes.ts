@@ -317,8 +317,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // В production логин/пароль принимаем только по HTTPS (иначе их видно в Wireshark и т.п.)
+  // Исключение: ALLOW_INSECURE_LOGIN=true временно разрешает вход по HTTP (локальный тест без SSL).
   app.use("/api/auth/login", (req, res, next) => {
     if (process.env.NODE_ENV !== "production") return next();
+    if (process.env.ALLOW_INSECURE_LOGIN === "true") return next();
     const isSecure = isHttpsRequest(req);
     if (!isSecure) {
       return res.status(403).json({
