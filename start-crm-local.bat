@@ -70,7 +70,7 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":5000" ^| findstr "LISTENING
 )
 
 call :log [7/7] Starting CRM...
-start "StreamDesk CRM Dev Server" cmd /k "cd /d ""%~dp0"" && chcp 65001 >nul && set NODE_ENV=development && npx cross-env NODE_ENV=development tsx server/index.ts"
+start "StreamDesk CRM Dev Server" cmd /k "cd /d ""%~dp0"" && chcp 65001 >nul && set NODE_ENV=development && npx cross-env NODE_ENV=development tsx backend/index.ts"
 
 call :log Waiting for server startup...
 timeout /t 6 /nobreak >nul

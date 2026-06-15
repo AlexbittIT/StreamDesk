@@ -12,7 +12,7 @@
 npm run build
 ```
 
-Будет создана папка `dist` и `client/dist` с готовым приложением.
+Будет создана папка `dist` и `frontend/dist` с готовым приложением.
 
 ## 2. Что загружать в FileZilla
 
@@ -23,14 +23,14 @@ npm run build
 | Не загружать |
 |--------------|
 | `node_modules` |
-| `client/node_modules` |
+| `frontend/node_modules` |
 | `.git` |
 | **`.env`** — на сервере оставьте свой .env (БД, PORT), не заменяйте его |
 | `attached_assets` (если не нужны локальные вложения) |
 | `design-website` |
 | `*.log` |
 
-То есть загружайте: `client/`, `server/`, `shared/`, `dist/`, `client/dist/`, `package.json`, `deploy-to-server.sh`, все конфиги и остальные файлы. Папки `node_modules` можно не тянуть — на сервере выполните `npm install --production`.
+То есть загружайте: `frontend/`, `backend/`, `shared/`, `dist/`, `frontend/dist/`, `package.json`, `deploy-to-server.sh`, все конфиги и остальные файлы. Папки `node_modules` можно не тянуть — на сервере выполните `npm install --production`.
 
 ## 3. После загрузки — на сервере
 

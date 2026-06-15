@@ -53,7 +53,7 @@ Target flow:
 
 ### YouGile
 
-Current app already has a server integration layer in [server/yougile.ts](c:/Users/6a6a/Desktop/StreamDesk/server/yougile.ts).
+Current app already has a backend integration layer in [backend/yougile.ts](../backend/yougile.ts).
 
 For the UI/manual guide we should expose:
 

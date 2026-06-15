@@ -97,8 +97,8 @@ if not exist "node_modules\postgres" (
 :: Установка переменной окружения
 set NODE_ENV=development
 
-:: Запуск через tsx (dotenv будет загружен автоматически через import "dotenv/config" в server/index.ts)
-call npx tsx server/index.ts
+:: Запуск через tsx (dotenv будет загружен автоматически через import "dotenv/config" в backend/index.ts)
+call npx tsx backend/index.ts
 
 :: Если сервер остановился
 if %errorlevel% neq 0 (

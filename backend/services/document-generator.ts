@@ -228,7 +228,7 @@ export class DocumentGenerator {
   private async loadEquipmentPassTemplate(): Promise<Buffer> {
     const candidatePaths = [
       process.env.EQUIPMENT_PASS_TEMPLATE_PATH,
-      path.resolve(process.cwd(), "server/templates/equipment-pass-template.docx"),
+      path.resolve(process.cwd(), "backend/templates/equipment-pass-template.docx"),
       "d:\\Программы\\DISTR_ALL\\DISTR\\FORMS\\Пропуск_на_материальные_ценности_бланк.docx",
     ].filter((value): value is string => Boolean(value));
 
