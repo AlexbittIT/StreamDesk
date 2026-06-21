@@ -3,6 +3,10 @@ node_modules
 dist
 migrations/meta
 
+# Java-сборка — собирается внутри образа (Maven), в контекст не нужна
+backend-java/target
+backend-java/uploads
+
 # Git и IDE
 .git
 .gitignore
