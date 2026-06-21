@@ -2,7 +2,13 @@ package com.streamdesk.connectionschema;
 
 import com.streamdesk.config.ApiException;
 import com.streamdesk.connectionschema.dto.ComponentRequest;
+import com.streamdesk.connectionschema.dto.ConnectionRequest;
 import com.streamdesk.connectionschema.dto.SchemaRequest;
+import com.streamdesk.connectionschema.validation.BuildResult;
+import com.streamdesk.connectionschema.validation.ConnectionValidator;
+import com.streamdesk.connectionschema.validation.ConnectorTypes;
+import com.streamdesk.connectionschema.validation.ValidationResult;
+import com.streamdesk.connectionschema.validation.Violation;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,6 +19,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -247,5 +254,130 @@ public class ConnectionSchemaService {
 
     private static boolean isBlank(String s) {
         return s == null || s.isBlank();
+    }
+
+    // --- connections: валидация и хранение связей (Sprint 2) ---
+
+    /** Компоненты схемы, индексированные по id. */
+    private Map<String, ConnectionSchemaComponent> componentsById(String schemaId) {
+        Map<String, ConnectionSchemaComponent> byId = new LinkedHashMap<>();
+        for (ConnectionSchemaComponent c : componentRepository.findBySchemaIdOrderByCreatedAt(schemaId)) {
+            byId.put(c.getId(), c);
+        }
+        return byId;
+    }
+
+    /** Все связи схемы (хранятся в connections каждого компонента). */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> allConnections(Map<String, ConnectionSchemaComponent> byId) {
+        List<Map<String, Object>> all = new ArrayList<>();
+        for (ConnectionSchemaComponent c : byId.values()) {
+            List<Object> list = c.getConnections();
+            if (list == null) {
+                continue;
+            }
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> map) {
+                    all.add((Map<String, Object>) map);
+                }
+            }
+        }
+        return all;
+    }
+
+    /** POST /{schemaId}/connections — проверка одной новой связи по правилам контракта. */
+    public ValidationResult validateConnection(String schemaId, ConnectionRequest req) {
+        if (req == null || isBlank(req.fromDeviceId()) || isBlank(req.fromPortId())
+                || isBlank(req.toDeviceId()) || isBlank(req.toPortId())) {
+            throw ApiException.badRequest("Нужны fromDeviceId, fromPortId, toDeviceId, toPortId");
+        }
+        Map<String, ConnectionSchemaComponent> byId = componentsById(schemaId);
+        List<Map<String, Object>> existing = allConnections(byId);
+        return ValidationResult.of(ConnectionValidator.validate(req, byId, existing));
+    }
+
+    /** Сохраняет валидную связь в connections компонента-источника, возвращает её с id. */
+    @Transactional
+    public Map<String, Object> persistConnection(String schemaId, ConnectionRequest req) {
+        ConnectionSchemaComponent from = componentRepository.findById(req.fromDeviceId())
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Компонент-источник не найден"));
+
+        Map<String, Object> conn = new LinkedHashMap<>();
+        conn.put("id", UUID.randomUUID().toString());
+        conn.put("fromDeviceId", req.fromDeviceId());
+        conn.put("fromPortId", req.fromPortId());
+        conn.put("toDeviceId", req.toDeviceId());
+        conn.put("toPortId", req.toPortId());
+        conn.put("cableType", req.cableType());
+        conn.put("protocol", req.protocol());
+
+        List<Object> list = from.getConnections() != null ? from.getConnections() : new ArrayList<>();
+        list.add(conn);
+        from.setConnections(list);
+        from.setUpdatedAt(Instant.now());
+        componentRepository.save(from);
+        return conn;
+    }
+
+    /** DELETE /connections/{id} — удаляет связь из компонента, где она хранится. */
+    @Transactional
+    public void deleteConnection(String connectionId) {
+        for (ConnectionSchemaComponent c : componentRepository.findAll()) {
+            List<Object> list = c.getConnections();
+            if (list == null || list.isEmpty()) {
+                continue;
+            }
+            boolean removed = list.removeIf(o ->
+                    o instanceof Map<?, ?> m && connectionId.equals(String.valueOf(m.get("id"))));
+            if (removed) {
+                c.setConnections(list);
+                c.setUpdatedAt(Instant.now());
+                componentRepository.save(c);
+                return;
+            }
+        }
+        throw new ApiException(HttpStatus.NOT_FOUND, "Connection not found");
+    }
+
+    /** POST /{id}/validate — прогон правил по всем связям схемы. */
+    public ValidationResult validateSchema(String schemaId) {
+        Map<String, ConnectionSchemaComponent> byId = componentsById(schemaId);
+        List<Map<String, Object>> all = allConnections(byId);
+        List<Violation> violations = new ArrayList<>();
+        for (Map<String, Object> conn : all) {
+            ConnectionRequest req = toRequest(conn);
+            List<Map<String, Object>> others = all.stream().filter(x -> x != conn).toList();
+            violations.addAll(ConnectionValidator.validate(req, byId, others));
+        }
+        return ValidationResult.of(violations);
+    }
+
+    /** POST /{id}/build — проверка целостности схемы + краткий вердикт. */
+    public BuildResult buildSchema(String schemaId) {
+        ValidationResult vr = validateSchema(schemaId);
+        String summary = vr.ok()
+                ? "Схема корректна: нарушений не найдено."
+                : "Найдено нарушений: " + vr.violations().size();
+        return new BuildResult(vr.ok(), vr.violations(), summary);
+    }
+
+    /** GET /connector-types — справочник типов разъёмов. */
+    public List<ConnectorTypes.ConnectorType> connectorTypes() {
+        return ConnectorTypes.all();
+    }
+
+    private ConnectionRequest toRequest(Map<String, Object> conn) {
+        return new ConnectionRequest(
+                asString(conn.get("fromDeviceId")),
+                asString(conn.get("fromPortId")),
+                asString(conn.get("toDeviceId")),
+                asString(conn.get("toPortId")),
+                asString(conn.get("cableType")),
+                asString(conn.get("protocol"))
+        );
+    }
+
+    private static String asString(Object value) {
+        return value == null ? null : String.valueOf(value);
     }
 }
