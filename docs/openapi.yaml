@@ -1,0 +1,695 @@
+openapi: 3.0.3
+
+info:
+  title: StreamDesk — Connection Diagram (Схема подключения) API
+  version: 0.2.0-sprint2
+  description: >
+    Замороженный контракт модуля «Схема подключения» для Sprint 2.
+
+    Источник истины — фактический код текущей реализации (Node/Express + Drizzle/PostgreSQL):
+      * роуты:        backend/routes.ts  (`/api/connection-schemas*`, `/api/equipment`)
+      * модель БД:    shared/schema.ts   (`connectionSchemas`, `connectionSchemaComponents`, `equipment`)
+      * SQL:          create_connection_schemas_tables.sql
+      * фронт-типы:   frontend/src/components/connection-schemas/schema-canvas.tsx
+      * цвета/типы:   frontend/src/components/connection-schemas/signal-colors.ts
+
+    Назначение: при переписывании бэкенда на Java (Spring Boot) этот сервис должен быть
+    DROP-IN заменой — те же пути и формы данных, что уже потребляет фронт, плюс новые
+    эндпоинты Sprint 2 (серверная валидация соединений, «Собрать», справочник типов разъёмов).
+
+    Эндпоинты помечены:
+      * (EXISTING) — уже реализованы в текущем Node-бэке, формы взяты из кода 1:1.
+      * (NEW S2)   — добавляются в Sprint 2; помечены `x-status: planned`.
+
+    Модель данных намеренно сохранена как «компонентная»: схема содержит компоненты
+    (Component = устройство/нода). Порты живут в `properties.portsIn/portsOut`,
+    кабели/связи — в массиве `connections` у компонента. Это совпадает с текущей БД,
+    поэтому миграция не ломает фронт. См. раздел «Открытое решение» в инструкции.
+
+servers:
+  - url: http://localhost:5000
+    description: Локальный запуск (Docker compose)
+  - url: https://staging.streamdesk.local
+    description: Staging
+
+tags:
+  - name: Connection Schemas
+    description: CRUD схем подключения
+  - name: Components
+    description: Компоненты схемы (устройства/ноды с портами)
+  - name: Connections
+    description: Связи (кабели) между портами — с серверной валидацией (Sprint 2)
+  - name: Validation
+    description: Проверка соединений и целостности схемы «Собрать» (Sprint 2)
+  - name: AI
+    description: AI-генерация черновика схемы (DeepSeek / Hugging Face)
+  - name: Equipment
+    description: Каталог склада — источник нод для схемы
+  - name: Reference
+    description: Справочники (типы разъёмов)
+
+security:
+  - cookieAuth: []
+
+paths:
+  ###########################################################################
+  # CONNECTION SCHEMAS — CRUD (EXISTING)
+  ###########################################################################
+  /api/connection-schemas:
+    get:
+      tags: [Connection Schemas]
+      summary: Список схем (EXISTING)
+      description: Возвращает все схемы рабочего пространства. Без доступа к воркспейсу — пустой массив `[]`.
+      operationId: listConnectionSchemas
+      responses:
+        "200":
+          description: Список схем
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ConnectionSchema" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    post:
+      tags: [Connection Schemas]
+      summary: Создать схему (EXISTING)
+      operationId: createConnectionSchema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConnectionSchemaCreate" }
+      responses:
+        "200":
+          description: Созданная схема
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectionSchema" }
+        "400":
+          description: Не передано имя
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { message: "Name is required" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/connection-schemas/{id}:
+    parameters:
+      - $ref: "#/components/parameters/SchemaId"
+    get:
+      tags: [Connection Schemas]
+      summary: Открыть схему с компонентами (EXISTING)
+      description: Возвращает схему вместе с массивом `components`.
+      operationId: getConnectionSchema
+      responses:
+        "200":
+          description: Схема и её компоненты
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectionSchemaWithComponents" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    put:
+      tags: [Connection Schemas]
+      summary: Обновить схему (имя/описание) (EXISTING)
+      operationId: updateConnectionSchema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConnectionSchemaUpdate" }
+      responses:
+        "200":
+          description: Обновлённая схема
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConnectionSchema" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    delete:
+      tags: [Connection Schemas]
+      summary: Удалить схему (EXISTING)
+      operationId: deleteConnectionSchema
+      responses:
+        "200": { $ref: "#/components/responses/SuccessFlag" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  ###########################################################################
+  # COMPONENTS (EXISTING)
+  ###########################################################################
+  /api/connection-schemas/{schemaId}/components:
+    parameters:
+      - $ref: "#/components/parameters/SchemaIdPath"
+    post:
+      tags: [Components]
+      summary: Добавить компонент на схему (EXISTING)
+      description: Создаёт ноду/устройство. `type` и `name` обязательны.
+      operationId: createComponent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComponentCreate" }
+      responses:
+        "200":
+          description: Созданный компонент
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Component" }
+        "400":
+          description: Не передан type/name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { message: "Type and name are required" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/connection-schemas/components/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ComponentId"
+    put:
+      tags: [Components]
+      summary: Обновить компонент (EXISTING)
+      description: Любое из полей опционально; переданные — обновляются (позиция, свойства, связи и т.д.).
+      operationId: updateComponent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComponentUpdate" }
+      responses:
+        "200":
+          description: Обновлённый компонент
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Component" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    delete:
+      tags: [Components]
+      summary: Удалить компонент (EXISTING)
+      operationId: deleteComponent
+      responses:
+        "200": { $ref: "#/components/responses/SuccessFlag" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  ###########################################################################
+  # CONNECTIONS — explicit validated edges (NEW S2)
+  ###########################################################################
+  /api/connection-schemas/{schemaId}/connections:
+    parameters:
+      - $ref: "#/components/parameters/SchemaIdPath"
+    post:
+      tags: [Connections, Validation]
+      summary: Создать связь с серверной валидацией (NEW S2)
+      x-status: planned
+      description: >
+        Создаёт кабель между выходным и входным портом. Сервер — источник истины:
+        отклоняет in→in, out→out, несовместимый тип, занятый порт. При нарушении — 422
+        со списком `violations`. Дополняет (а в Java-версии заменяет) хранение связей
+        в `component.connections`.
+      operationId: createConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConnectionCreate" }
+      responses:
+        "200":
+          description: Связь создана и валидна
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Connection" }
+        "422":
+          description: Связь недопустима (нарушены правила)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationResult" }
+              example:
+                ok: false
+                violations:
+                  - code: ERR_DIRECTION
+                    message: "Нельзя соединять вход со входом — нужно OUT → IN"
+                    fromPortId: "in-1"
+                    toPortId: "in-2"
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/connection-schemas/connections/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionId"
+    delete:
+      tags: [Connections]
+      summary: Удалить связь (NEW S2)
+      x-status: planned
+      operationId: deleteConnection
+      responses:
+        "200": { $ref: "#/components/responses/SuccessFlag" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  ###########################################################################
+  # VALIDATION & BUILD (NEW S2)
+  ###########################################################################
+  /api/connection-schemas/{id}/validate:
+    parameters:
+      - $ref: "#/components/parameters/SchemaId"
+    post:
+      tags: [Validation]
+      summary: Проверить всю схему (NEW S2)
+      x-status: planned
+      description: Прогоняет правила валидации по всем связям схемы и возвращает список нарушений.
+      operationId: validateConnectionSchema
+      responses:
+        "200":
+          description: Результат проверки
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationResult" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/connection-schemas/{id}/build:
+    parameters:
+      - $ref: "#/components/parameters/SchemaId"
+    post:
+      tags: [Validation]
+      summary: «Собрать» — проверка целостности схемы (NEW S2)
+      x-status: planned
+      description: >
+        Проверяет целостность всей схемы (висящие порты, конфликты, незамкнутые связи,
+        несовместимости) и возвращает вердикт «ok» либо список проблем.
+      operationId: buildConnectionSchema
+      responses:
+        "200":
+          description: Результат сборки
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BuildResult" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  ###########################################################################
+  # AI GENERATION (EXISTING, расширяется в S2)
+  ###########################################################################
+  /api/connection-schemas/{id}/ai-generate:
+    parameters:
+      - $ref: "#/components/parameters/SchemaId"
+    post:
+      tags: [AI]
+      summary: AI-генерация черновика схемы (EXISTING; контракт расширен для S2)
+      description: >
+        Генерирует компоненты по текстовому описанию (`prompt`; если пусто — берётся
+        description/name схемы). Текущая реализация возвращает `{created, aiAvailable}`.
+        Sprint 2 ДОБАВЛЯЕТ к ответу явные поля `source` (ai|local) и `error`, чтобы сбой
+        ИИ был виден, а не молчаливо подменялся шаблоном.
+      operationId: aiGenerateConnectionSchema
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiGenerateRequest" }
+      responses:
+        "200":
+          description: Сгенерированные компоненты
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiGenerateResponse" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  ###########################################################################
+  # EQUIPMENT (EXISTING) — источник нод
+  ###########################################################################
+  /api/equipment:
+    get:
+      tags: [Equipment]
+      summary: Каталог оборудования со склада (EXISTING)
+      description: >
+        Источник нод для панели «Оборудование». Без доступа к воркспейсу — `[]`.
+        Без `status` — исключаются позиции со статусом `archived`.
+      operationId: listEquipment
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, example: available }
+          description: Фильтр по статусу (available, in_use, archived, ...).
+      responses:
+        "200":
+          description: Список оборудования
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Equipment" }
+
+  ###########################################################################
+  # REFERENCE — connector types (NEW S2)
+  ###########################################################################
+  /api/connection-schemas/connector-types:
+    get:
+      tags: [Reference]
+      summary: Справочник типов разъёмов (NEW S2)
+      x-status: planned
+      description: >
+        Словарь типов разъёмов с категорией и цветом — для подсветки портов, валидации
+        совместимости и легенды. Значения цветов согласованы с
+        frontend/src/components/connection-schemas/signal-colors.ts.
+      operationId: listConnectorTypes
+      responses:
+        "200":
+          description: Список типов
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ConnectorType" }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: connect.sid
+      description: Сессионная авторизация (Passport + express-session). Часть эндпоинтов требует доступа к рабочему пространству (иначе 403 или пустой массив).
+
+  parameters:
+    SchemaId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: ID схемы подключения
+    SchemaIdPath:
+      name: schemaId
+      in: path
+      required: true
+      schema: { type: string }
+      description: ID схемы подключения
+    ComponentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: ID компонента
+    ConnectionId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: ID связи
+
+  responses:
+    Forbidden:
+      description: Нет доступа к рабочему пространству/схемам
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { message: "Нет доступа к схемам" }
+    NotFound:
+      description: Не найдено
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { message: "Schema not found" }
+    ServerError:
+      description: Внутренняя ошибка (вкл. БД недоступна / таблицы не созданы)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            dbDown:
+              value: { message: "Не удалось подключиться к базе данных. Проверьте, что PostgreSQL запущен и DATABASE_URL в .env указан верно." }
+            noTables:
+              value: { message: "Таблицы для схем подключения не созданы. Выполните SQL скрипт create_connection_schemas_tables.sql в вашей базе данных." }
+    SuccessFlag:
+      description: Успех
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SuccessFlag" }
+          example: { success: true }
+
+  schemas:
+    ConnectionSchema:
+      type: object
+      description: Схема подключения (таблица connection_schemas)
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+      required: [id, name]
+
+    ConnectionSchemaCreate:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string, nullable: true }
+      required: [name]
+
+    ConnectionSchemaUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        name: { type: string }
+        description: { type: string, nullable: true }
+
+    ConnectionSchemaWithComponents:
+      allOf:
+        - $ref: "#/components/schemas/ConnectionSchema"
+        - type: object
+          properties:
+            components:
+              type: array
+              items: { $ref: "#/components/schemas/Component" }
+
+    Component:
+      type: object
+      description: >
+        Компонент схемы = устройство/нода (таблица connection_schema_components).
+        На фронте маппится в Device. Порты лежат в properties.portsIn/portsOut.
+      properties:
+        id: { type: string }
+        schemaId: { type: string }
+        type:
+          type: string
+          description: Тип компонента
+          example: camera
+          enum: [computer, input, cable, signal, extender, splitter, camera, mic, lighting, network, video, display]
+        name: { type: string }
+        position: { $ref: "#/components/schemas/Position" }
+        properties: { $ref: "#/components/schemas/ComponentProperties" }
+        connections:
+          type: array
+          description: Исходящие связи компонента (текущая модель хранит их здесь).
+          items: { $ref: "#/components/schemas/Connection" }
+        createdAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+      required: [id, schemaId, type, name]
+
+    ComponentCreate:
+      type: object
+      properties:
+        type: { type: string, example: camera }
+        name: { type: string, example: "Sony FX3" }
+        position: { $ref: "#/components/schemas/Position" }
+        properties: { $ref: "#/components/schemas/ComponentProperties" }
+        connections:
+          type: array
+          items: { $ref: "#/components/schemas/Connection" }
+      required: [type, name]
+
+    ComponentUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        type: { type: string }
+        name: { type: string }
+        position: { $ref: "#/components/schemas/Position" }
+        properties: { $ref: "#/components/schemas/ComponentProperties" }
+        connections:
+          type: array
+          items: { $ref: "#/components/schemas/Connection" }
+
+    ComponentProperties:
+      type: object
+      description: Доп. свойства компонента; порты хранятся здесь. Допускаются произвольные поля.
+      additionalProperties: true
+      properties:
+        source:
+          type: string
+          description: Происхождение (например "ai-assistant").
+        portsIn:
+          type: array
+          items: { $ref: "#/components/schemas/Port" }
+        portsOut:
+          type: array
+          items: { $ref: "#/components/schemas/Port" }
+
+    Port:
+      type: object
+      description: Порт компонента (вход или выход).
+      properties:
+        id: { type: string, example: "in-1" }
+        name: { type: string, example: "HDMI IN 1" }
+        type:
+          type: string
+          enum: [in, out]
+          description: Направление порта.
+        portType:
+          type: string
+          description: Тип разъёма (см. справочник connector-types).
+          example: HDMI
+      required: [id, type]
+
+    Position:
+      type: object
+      properties:
+        x: { type: number, example: 80 }
+        y: { type: number, example: 90 }
+      required: [x, y]
+
+    Connection:
+      type: object
+      description: >
+        Связь (кабель) между выходным портом одного устройства и входным портом другого.
+        Имена полей совпадают с фронтовым интерфейсом Cable (deviceId == component id).
+      properties:
+        id: { type: string }
+        fromDeviceId: { type: string }
+        fromPortId: { type: string }
+        toDeviceId: { type: string }
+        toPortId: { type: string }
+        cableType: { type: string, description: "Тип кабеля/разъёма", example: HDMI }
+        protocol: { type: string, nullable: true }
+      required: [fromDeviceId, fromPortId, toDeviceId, toPortId]
+
+    ConnectionCreate:
+      type: object
+      properties:
+        fromDeviceId: { type: string }
+        fromPortId: { type: string }
+        toDeviceId: { type: string }
+        toPortId: { type: string }
+        cableType: { type: string }
+        protocol: { type: string, nullable: true }
+      required: [fromDeviceId, fromPortId, toDeviceId, toPortId]
+
+    Violation:
+      type: object
+      description: Нарушение правила валидации соединения.
+      properties:
+        code:
+          type: string
+          enum: [ERR_DIRECTION, ERR_TYPE_MISMATCH, ERR_PORT_OCCUPIED, ERR_SELF_CONNECTION, ERR_PORT_NOT_FOUND]
+        message: { type: string }
+        fromPortId: { type: string, nullable: true }
+        toPortId: { type: string, nullable: true }
+        componentId: { type: string, nullable: true }
+      required: [code, message]
+
+    ValidationResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        violations:
+          type: array
+          items: { $ref: "#/components/schemas/Violation" }
+      required: [ok, violations]
+
+    BuildResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        violations:
+          type: array
+          items: { $ref: "#/components/schemas/Violation" }
+        summary: { type: string, nullable: true }
+      required: [ok, violations]
+
+    AiGenerateRequest:
+      type: object
+      properties:
+        prompt:
+          type: string
+          description: Текстовое описание/ТЗ. Если пусто — берётся description/name схемы.
+          example: "камера, микрофон, видеомикшер ATEM, компьютер трансляции, роутер"
+
+    AiGenerateResponse:
+      type: object
+      properties:
+        created:
+          type: array
+          description: Созданные компоненты.
+          items: { $ref: "#/components/schemas/Component" }
+        aiAvailable:
+          type: boolean
+          description: Доступен ли AI-ключ (HUGGINGFACE_API_KEY / HF_TOKEN).
+        source:
+          type: string
+          enum: [ai, local]
+          description: (NEW S2) Откуда результат — реальный ИИ или локальный шаблон.
+        error:
+          type: string
+          nullable: true
+          description: (NEW S2) Явная причина сбоя ИИ (вместо молчаливого фолбэка).
+      required: [created, aiAvailable]
+
+    Equipment:
+      type: object
+      description: Позиция склада (таблица equipment). Используется как источник нод.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type: { type: string }
+        model: { type: string, nullable: true }
+        serialNumber: { type: string, nullable: true }
+        inventoryNumber: { type: string, nullable: true }
+        barcode: { type: string, nullable: true }
+        specifications: { type: object, additionalProperties: true, nullable: true }
+        notes: { type: string, nullable: true }
+        status: { type: string, example: available }
+        location: { type: string, nullable: true }
+        assignedTo: { type: string, nullable: true }
+        lastUsed: { type: string, format: date-time, nullable: true }
+        photos:
+          type: array
+          items: { type: string }
+          nullable: true
+        createdAt: { type: string, format: date-time, nullable: true }
+      required: [id, name, type, status]
+
+    ConnectorType:
+      type: object
+      description: Тип разъёма из справочника (значения цветов из signal-colors.ts).
+      properties:
+        id: { type: string, example: HDMI }
+        label: { type: string, example: HDMI }
+        category:
+          type: string
+          enum: [video, audio, network, power, data, other]
+        color: { type: string, example: "#f59e0b" }
+      required: [id, category]
+
+    Error:
+      type: object
+      properties:
+        message: { type: string }
+        error: { type: string, nullable: true }
+        code: { type: string, nullable: true }
+      required: [message]
+
+    SuccessFlag:
+      type: object
+      properties:
+        success: { type: boolean }
+      required: [success]
