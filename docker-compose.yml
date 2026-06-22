@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      # Проброс на хост для доступа GUI-клиентами (DBeaver/IntelliJ/pgAdmin).
+      # Если 5432 на хосте занят — поменяй левую часть на 5433.
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-streamdesk}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-streamdesk}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # JDBC к БД внутри docker-сети (хост = имя сервиса "db")
+      JDBC_DATABASE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-streamdesk}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Java-only: Hibernate сам создаёт/обновляет схему из сущностей (Drizzle/Node не нужны)
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      # В проде держим false (fallback-админ admin/admin123 отключён)
+      ALLOW_FALLBACK_ADMIN: "${ALLOW_FALLBACK_ADMIN:-false}"
+      SERVER_PORT: "8080"
+    ports:
+      - "8080:8080"
+    volumes:
+      # Загруженные файлы (фото/аватары/чат/транскрипции) — переживают пересоздание контейнера
+      - uploads:/app/uploads
+
+volumes:
+  pgdata:
+  uploads:
