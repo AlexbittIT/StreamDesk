@@ -325,6 +325,50 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/ServerError" }
 
+  /api/connection-schemas/ai-schema:
+    post:
+      tags: [AI, Validation]
+      summary: AI-генерация схемы через DeepSeek (NEW S2)
+      x-status: implemented
+      description: >
+        Принимает ТЗ (`prompt`) и/или список оборудования (`equipment`), зовёт DeepSeek
+        и возвращает схему — ноды и связи — для отрисовки на холсте. Связи проходят
+        серверную валидацию: недопустимые (in→in, несовместимый тип, занятый порт и т.п.)
+        отбрасываются и перечисляются в `dropped`, поэтому возвращаемая схема всегда
+        валидна (`validation.ok = true`). При сбое AI — явная ошибка (502/503) с ретраями
+        внутри; молчаливого фолбэка на шаблон нет.
+      operationId: aiSchema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiSchemaRequest" }
+      responses:
+        "200":
+          description: Сгенерированная и провалидированная схема
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiSchemaResponse" }
+        "400":
+          description: Нет ни ТЗ, ни оборудования на входе
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { message: "Нужно ТЗ (prompt) или список оборудования (equipment)" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502":
+          description: AI вернул ошибку/невалидный ответ после ретраев
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { message: "DeepSeek вернул статус 500" }
+        "503":
+          description: AI не настроен (нет DEEPSEEK_API_KEY)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { message: "AI недоступен: не задан DEEPSEEK_API_KEY" }
+
   ###########################################################################
   # EQUIPMENT (EXISTING) — источник нод
   ###########################################################################
@@ -615,6 +659,48 @@ components:
           items: { $ref: "#/components/schemas/Violation" }
         summary: { type: string, nullable: true }
       required: [ok, violations]
+
+    AiSchemaRequest:
+      type: object
+      description: Вход AI-генерации схемы — ТЗ и/или список оборудования.
+      properties:
+        prompt:
+          type: string
+          description: Текстовое ТЗ.
+          example: "Конференция: 2 камеры, видеомикшер ATEM, компьютер трансляции, экран, роутер"
+        equipment:
+          type: array
+          description: Список оборудования (нод-кандидатов).
+          items:
+            type: object
+            properties:
+              name: { type: string, example: "Sony FX3" }
+              type: { type: string, example: camera }
+              model: { type: string, nullable: true }
+
+    AiSchemaResponse:
+      type: object
+      description: Сгенерированная и провалидированная схема для холста.
+      properties:
+        source:
+          type: string
+          enum: [ai]
+          description: Всегда "ai" — фолбэка на шаблон нет.
+        nodes:
+          type: array
+          description: Ноды (устройства с портами и позицией) для отрисовки.
+          items: { type: object, additionalProperties: true }
+        connections:
+          type: array
+          description: Связи, прошедшие серверную валидацию.
+          items: { $ref: "#/components/schemas/Connection" }
+        validation:
+          $ref: "#/components/schemas/ValidationResult"
+        dropped:
+          type: array
+          description: Нарушения, из-за которых часть связей AI была отброшена.
+          items: { $ref: "#/components/schemas/Violation" }
+      required: [source, nodes, connections, validation]
 
     AiGenerateRequest:
       type: object
