@@ -9,6 +9,7 @@ import com.streamdesk.connectionschema.dto.AiSchemaRequest;
 import com.streamdesk.connectionschema.dto.AiSchemaResponse;
 import com.streamdesk.connectionschema.dto.ConnectionRequest;
 import com.streamdesk.connectionschema.validation.ConnectionValidator;
+import com.streamdesk.connectionschema.validation.ConnectorTypes;
 import com.streamdesk.connectionschema.validation.ValidationResult;
 import com.streamdesk.connectionschema.validation.Violation;
 import org.springframework.http.HttpStatus;
@@ -32,25 +33,36 @@ import java.util.UUID;
 @Service
 public class AiSchemaService {
 
-    private static final String SYSTEM_PROMPT = """
-            Ты инженер аудио-видео и IT, проектируешь схему подключения оборудования.
-            Верни ТОЛЬКО валидный JSON-объект (json), без markdown и пояснений, строго по схеме:
-            {
-              "nodes": [
-                {"id":"n1","type":"camera","name":"Камера 1","position":{"x":80,"y":90},
-                 "portsIn":[{"id":"in-1","name":"DC","type":"in","portType":"DC"}],
-                 "portsOut":[{"id":"out-1","name":"SDI OUT","type":"out","portType":"SDI"}]}
-              ],
-              "connections": [
-                {"fromDeviceId":"n1","fromPortId":"out-1","toDeviceId":"n2","toPortId":"in-1","cableType":"SDI"}
-              ]
-            }
-            Правила: связь идёт ТОЛЬКО из выходного порта (out) во входной (in);
-            типы разъёмов (portType) у соединяемых портов должны совпадать; используй
-            только те id портов, что объявлены у нод; один входной порт принимает один кабель.
-            Типы нод: computer, camera, mic, lighting, network, video, display, splitter, extender, input, cable, signal.
-            Типы разъёмов: HDMI, SDI, XLR, TRS, RCA, BNC, NDI, LAN, USB, USB-C, AES, MADI, DC, AC, WIRELESS.
-            """;
+    private static final String SYSTEM_PROMPT = buildSystemPrompt();
+
+    /**
+     * Системный промпт собирается из справочника разъёмов ({@link ConnectorTypes}) —
+     * единого источника истины, а не из захардкоженного списка. Модель обязана
+     * вернуть portType КОДОМ из справочника (канон), сопоставляя свободные
+     * обозначения через перечисленные синонимы.
+     */
+    private static String buildSystemPrompt() {
+        return """
+                Ты инженер аудио-видео и IT, проектируешь схему подключения оборудования.
+                Верни ТОЛЬКО валидный JSON-объект (json), без markdown и пояснений, строго по схеме:
+                {
+                  "nodes": [
+                    {"id":"n1","type":"camera","name":"Камера 1","position":{"x":80,"y":90},
+                     "portsIn":[{"id":"in-1","name":"Power","type":"in","portType":"POWER"}],
+                     "portsOut":[{"id":"out-1","name":"SDI OUT","type":"out","portType":"SDI"}]}
+                  ],
+                  "connections": [
+                    {"fromDeviceId":"n1","fromPortId":"out-1","toDeviceId":"n2","toPortId":"in-1","cableType":"SDI"}
+                  ]
+                }
+                Правила: связь идёт ТОЛЬКО из выходного порта (out) во входной (in);
+                типы разъёмов (portType) у соединяемых портов должны совпадать; используй
+                только те id портов, что объявлены у нод; один входной порт принимает один кабель.
+                Типы нод: computer, camera, mic, lighting, network, video, display, splitter, extender, input, cable, signal.
+                Типы разъёмов (portType) — используй ТОЛЬКО код из справочника ниже (канон),
+                сопоставляя свободные обозначения через синонимы в скобках:
+                """ + ConnectorTypes.promptVocabulary() + "\n";
+    }
 
     private final DeepSeekClient deepSeek;
     private final ObjectMapper objectMapper;
