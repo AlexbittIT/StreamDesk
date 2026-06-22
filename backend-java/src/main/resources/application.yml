@@ -51,6 +51,14 @@ app:
     fallback-admin-enabled: ${ALLOW_FALLBACK_ADMIN:true}
     admin-username: ${ADMIN_USERNAME:admin}
     admin-password: ${ADMIN_PASSWORD:admin123}
+  # AI-генерация схем подключения (DeepSeek). Без ключа эндпоинт /ai-schema
+  # отвечает явной ошибкой 503 (фолбэка на шаблон нет).
+  ai:
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY:}
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+      model: ${DEEPSEEK_MODEL:deepseek-chat}
+      max-attempts: ${DEEPSEEK_MAX_ATTEMPTS:3}
 
 logging:
   level:

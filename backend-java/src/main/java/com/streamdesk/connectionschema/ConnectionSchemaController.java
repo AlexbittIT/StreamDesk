@@ -4,6 +4,8 @@ import com.streamdesk.auth.AuthenticatedUser;
 import com.streamdesk.company.CompanyService;
 import com.streamdesk.config.ApiException;
 import com.streamdesk.connectionschema.dto.AiGenerateRequest;
+import com.streamdesk.connectionschema.dto.AiSchemaRequest;
+import com.streamdesk.connectionschema.dto.AiSchemaResponse;
 import com.streamdesk.connectionschema.dto.ComponentRequest;
 import com.streamdesk.connectionschema.dto.ConnectionRequest;
 import com.streamdesk.connectionschema.dto.SchemaRequest;
@@ -33,10 +35,14 @@ import java.util.Map;
 public class ConnectionSchemaController {
 
     private final ConnectionSchemaService schemaService;
+    private final AiSchemaService aiSchemaService;
     private final CompanyService companyService;
 
-    public ConnectionSchemaController(ConnectionSchemaService schemaService, CompanyService companyService) {
+    public ConnectionSchemaController(ConnectionSchemaService schemaService,
+                                      AiSchemaService aiSchemaService,
+                                      CompanyService companyService) {
         this.schemaService = schemaService;
+        this.aiSchemaService = aiSchemaService;
         this.companyService = companyService;
     }
 
@@ -143,6 +149,18 @@ public class ConnectionSchemaController {
     @GetMapping("/connector-types")
     public List<ConnectorTypes.ConnectorType> connectorTypes() {
         return schemaService.connectorTypes();
+    }
+
+    /**
+     * AI-генерация схемы (DeepSeek): по ТЗ и/или списку оборудования возвращает
+     * ноды + связи, прошедшие серверную валидацию, для отрисовки на холсте.
+     * При сбое AI — явная ошибка (502/503) с ретраями внутри, без фолбэка на шаблон.
+     */
+    @PostMapping("/ai-schema")
+    public AiSchemaResponse aiSchema(@RequestBody AiSchemaRequest req,
+                                     @AuthenticationPrincipal AuthenticatedUser user) {
+        requireWorkspace(user, "Нет доступа к схемам");
+        return aiSchemaService.generate(req);
     }
 
     private void requireWorkspace(AuthenticatedUser user, String message) {
