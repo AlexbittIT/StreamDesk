@@ -37,6 +37,10 @@ public class Equipment {
     @Column(name = "model")
     private String model;
 
+    // Производитель — часть ключа кэша «производитель+модель» для поиска портов (Task 2).
+    @Column(name = "manufacturer")
+    private String manufacturer;
+
     @Column(name = "serial_number")
     private String serialNumber;
 

@@ -54,6 +54,11 @@ public class DeepSeekClient {
         return apiKey != null && !apiKey.isBlank();
     }
 
+    /** Имя модели — для записи provenance (source_model). */
+    public String modelName() {
+        return model;
+    }
+
     /**
      * Запрашивает у DeepSeek строгий JSON-объект. Ретраит сбои сети, не-2xx и
      * невалидный JSON. При исчерпании попыток или отсутствии ключа — ApiException.
