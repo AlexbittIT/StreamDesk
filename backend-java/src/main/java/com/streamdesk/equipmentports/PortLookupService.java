@@ -89,6 +89,29 @@ public class PortLookupService {
             низким confidence. specifications — краткие ключевые характеристики.
             """ + PORT_RULES + "%VOCAB%\n";
 
+    private static final String SUGGEST_SYSTEM_PROMPT = """
+            Ты инженер AV/IT. По запросу пользователя верни ТОЛЬКО валидный JSON-объект
+            (json), без markdown, со списком до 10 наиболее подходящих КОНКРЕТНЫХ моделей
+            оборудования по схеме:
+            {
+              "models": [
+                {
+                  "name":"Blackmagic ATEM Mini",
+                  "manufacturer":"Blackmagic Design",
+                  "model":"ATEM Mini",
+                  "deviceType":"video",
+                  "configurablePorts":false,
+                  "confidence":0.0,
+                  "portsIn":[{"name":"HDMI IN 1","portType":"HDMI"}],
+                  "portsOut":[{"name":"USB-C","portType":"USB_C"}],
+                  "unmappedTerms":[]
+                }
+              ]
+            }
+            Дай разнообразные реальные модели, релевантные запросу; для каждой укажи её
+            ключевые порты. Если запрос — конкретная модель, поставь её первой.
+            """ + PORT_RULES + "%VOCAB%\n";
+
     private final DeepSeekClient deepSeek;
     private final ObjectMapper objectMapper;
     private final EquipmentModelPortsRepository portsRepository;
@@ -175,6 +198,45 @@ public class PortLookupService {
             return portsRepository.findAll();
         }
         return portsRepository.findByStatusOrderByUpdatedAtDesc(status);
+    }
+
+    // ---- подсказки: список до 10 моделей по запросу (вкладка «Поиск в интернете») ----
+
+    /**
+     * По свободному запросу возвращает до 10 моделей с предложенными портами. Это
+     * только подсказки на выбор — в очередь unmapped и в кэш НИЧЕГО не пишем, пока
+     * человек не выберет конкретную модель и не одобрит её ({@link #approveDiscovered}).
+     */
+    public List<DeviceDiscoveryResponse> suggestModels(String query) {
+        String q = clean(query);
+        if (q.isEmpty()) {
+            throw ApiException.badRequest("Нужен запрос (query)");
+        }
+        JsonNode json = deepSeek.generateJson(vocab(SUGGEST_SYSTEM_PROMPT),
+                "Запрос: " + q + "\nВерни до 10 наиболее подходящих моделей с их портами.");
+        JsonNode models = json.get("models");
+        List<DeviceDiscoveryResponse> result = new ArrayList<>();
+        if (models != null && models.isArray()) {
+            for (JsonNode m : models) {
+                List<String> unmapped = new ArrayList<>();
+                String mf = text(m, "manufacturer");
+                String md = text(m, "model");
+                List<Map<String, Object>> in = parsePorts(m.get("portsIn"), "in", mf, md, unmapped, false);
+                List<Map<String, Object>> out = parsePorts(m.get("portsOut"), "out", mf, md, unmapped, false);
+                DiscoveredDevice device = new DiscoveredDevice(
+                        text(m, "name"), mf, md, text(m, "deviceType"), specifications(m));
+                result.add(new DeviceDiscoveryResponse(
+                        device, buildPortsMap(in, out),
+                        m.path("configurablePorts").asBoolean(false), confidence(m), unmapped));
+                if (result.size() >= 10) {
+                    break;
+                }
+            }
+        }
+        if (result.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "ИИ не вернул ни одной модели");
+        }
+        return result;
     }
 
     // ---- device discovery: устройства нет на складе ----
@@ -305,6 +367,12 @@ public class PortLookupService {
      */
     private List<Map<String, Object>> parsePorts(JsonNode arr, String direction,
                                                  String mf, String md, List<String> unmapped) {
+        return parsePorts(arr, direction, mf, md, unmapped, true);
+    }
+
+    private List<Map<String, Object>> parsePorts(JsonNode arr, String direction,
+                                                 String mf, String md, List<String> unmapped,
+                                                 boolean persistUnmapped) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (arr == null || !arr.isArray()) {
             return out;
@@ -318,7 +386,9 @@ public class PortLookupService {
             }
             if (!ConnectorTypes.isKnown(rawType)) {
                 addUnmapped(unmapped, rawType);
-                recordUnmapped(rawType, mf, md, name, direction);
+                if (persistUnmapped) {
+                    recordUnmapped(rawType, mf, md, name, direction);
+                }
                 continue;
             }
             Map<String, Object> port = new LinkedHashMap<>();

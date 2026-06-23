@@ -75,6 +75,14 @@ public class EquipmentPortsController {
         return service.updatePorts(id, req.ports(), req.status(), user.id());
     }
 
+    /** Подсказки: до 10 моделей по запросу с предложенными портами (вкладка «Поиск»). */
+    @PostMapping("/suggest")
+    public List<DeviceDiscoveryResponse> suggest(@RequestBody DeviceDiscoveryRequest req,
+                                                 @AuthenticationPrincipal AuthenticatedUser user) {
+        requireAuth(user);
+        return service.suggestModels(req != null ? req.query() : null);
+    }
+
     /** Опознать устройство по свободному описанию (когда его нет на складе). */
     @PostMapping("/discover")
     public DeviceDiscoveryResponse discover(@RequestBody DeviceDiscoveryRequest req,

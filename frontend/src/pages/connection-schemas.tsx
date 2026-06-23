@@ -601,6 +601,40 @@ export default function ConnectionSchemas() {
     },
   });
 
+  // Удаление кабеля (двойной клик по связи): убираем запись из connections источника.
+  const deleteConnectionMutation = useMutation({
+    mutationFn: async (cable: { fromDeviceId: string; fromPortId: string; toDeviceId: string; toPortId: string }) => {
+      const component = selectedSchemaData?.components?.find(c => c.id === cable.fromDeviceId);
+      if (!component) throw new Error("Устройство не найдено");
+      const connections = normalizeConnections(component.connections).filter((conn) =>
+        !(conn.componentId === cable.toDeviceId &&
+          conn.port === cable.toPortId &&
+          (conn.fromPortId ?? conn.port) === cable.fromPortId)
+      );
+      const response = await apiRequest("PUT", `/api/connection-schemas/components/${cable.fromDeviceId}`, {
+        position: component.position,
+        properties: component.properties,
+        connections,
+      });
+      if (!response.ok) throw new Error("Не удалось удалить связь");
+      return response.json();
+    },
+    onSuccess: () => {
+      if (selectedSchema) {
+        queryClient.invalidateQueries({ queryKey: ["/api/connection-schemas", selectedSchema] });
+        refetchSelectedSchema();
+      }
+      toast({ title: "Связь удалена" });
+    },
+    onError: (e: any) => {
+      toast({ title: "Ошибка", description: e?.message || "Не удалось удалить связь", variant: "destructive" });
+    },
+  });
+
+  const handleDeleteConnection = (cable: { fromDeviceId: string; fromPortId: string; toDeviceId: string; toPortId: string }) => {
+    deleteConnectionMutation.mutate(cable);
+  };
+
   const handleCreateSchema = () => {
     if (!newSchemaName.trim()) {
       toast({
@@ -871,6 +905,7 @@ export default function ConnectionSchemas() {
                 onZoneDrawn={handleZoneDrawn}
                 onCancelDrawZone={() => setDrawZoneMode(false)}
                 onAddConnection={handleAddConnection}
+                onDeleteConnection={handleDeleteConnection}
                 onZoneSelect={setSelectedZoneId}
                 selectedZoneId={selectedZoneId}
                 onDeviceDelete={handleDeleteComponent}
@@ -1117,6 +1152,7 @@ export default function ConnectionSchemas() {
                     onZoneDrawn={handleZoneDrawn}
                     onCancelDrawZone={() => setDrawZoneMode(false)}
                     onAddConnection={handleAddConnection}
+                    onDeleteConnection={handleDeleteConnection}
                     onZoneSelect={setSelectedZoneId}
                     selectedZoneId={selectedZoneId}
                     onDeviceDelete={handleDeleteComponent}

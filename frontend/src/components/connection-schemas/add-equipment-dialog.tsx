@@ -16,7 +16,7 @@ import type { Equipment } from "@shared/schema";
 import {
   useConnectorTypes,
   lookupPorts,
-  discoverDevice,
+  suggestModels,
   approveDevice,
   updatePorts,
   type PortDef,
@@ -124,31 +124,34 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
     if (!open) setReview(null);
   }, [open]);
 
-  // Опознать устройство через ИИ (вкладка «Поиск в интернете»), порты — на проверку.
-  const runDiscover = async (query: string) => {
+  // Поиск через ИИ: короткий список (до 10) моделей-подсказок с портами.
+  const runSuggest = async (query: string) => {
     const q = query.trim();
     if (!q) return;
     setIsSearching(true);
+    setSearchSuggestionsOpen(false);
+    setSearchResults([]);
     try {
-      const r = await discoverDevice(q);
-      setReview({
-        source: "discover",
-        device: {
-          name: r.device?.name || q,
-          manufacturer: r.device?.manufacturer,
-          model: r.device?.model,
-          type: r.device?.deviceType || "other",
-        },
+      const list = await suggestModels(q);
+      const mapped = list.map((r) => ({
+        name: r.device?.name || q,
+        manufacturer: r.device?.manufacturer,
+        model: r.device?.model,
+        type: r.device?.deviceType || "other",
         portsIn: r.ports?.portsIn || [],
         portsOut: r.ports?.portsOut || [],
         configurablePorts: !!r.configurablePorts,
         confidence: r.confidence ?? null,
         unmappedTerms: r.unmappedTerms || [],
-      });
+      }));
+      setSearchResults(mapped);
+      if (mapped.length === 0) {
+        toast({ title: "Ничего не найдено", description: "ИИ не вернул моделей" });
+      }
     } catch (e: any) {
       toast({
-        title: "Не удалось опознать устройство",
-        description: e?.message || "Ошибка ИИ",
+        title: "Поиск не сработал",
+        description: e?.message || "Ошибка ИИ (проверьте DEEPSEEK_API_KEY)",
         variant: "destructive",
       });
     } finally {
@@ -406,12 +409,23 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
     onClose();
   };
 
-  const handleAddFromSearch = (result: EquipmentTemplate) => {
-    onAdd(result);
-    setSearchTerm("");
-    setSearchResults([]);
+  // Выбор модели из подсказок → инлайн-ревью портов перед добавлением на холст.
+  const handleAddFromSearch = (result: any) => {
+    setReview({
+      source: "discover",
+      device: {
+        name: result.name,
+        manufacturer: result.manufacturer,
+        model: result.model,
+        type: result.type || "other",
+      },
+      portsIn: result.portsIn || [],
+      portsOut: result.portsOut || [],
+      configurablePorts: !!result.configurablePorts,
+      confidence: result.confidence ?? null,
+      unmappedTerms: result.unmappedTerms || [],
+    });
     setSearchSuggestionsOpen(false);
-    onClose();
   };
 
   const handleAddCustom = () => {
@@ -732,7 +746,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        runDiscover(searchTerm);
+                        runSuggest(searchTerm);
                       }
                     }}
                   />
@@ -757,7 +771,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                     </div>
                   )}
                 </div>
-                <Button onClick={() => runDiscover(searchTerm)} disabled={isSearching} className="shrink-0">
+                <Button onClick={() => runSuggest(searchTerm)} disabled={isSearching} className="shrink-0">
                   {isSearching ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (

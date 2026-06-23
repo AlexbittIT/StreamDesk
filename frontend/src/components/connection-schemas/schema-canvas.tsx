@@ -61,6 +61,8 @@ interface SchemaCanvasProps {
   selectedZoneId?: string | null;
   /** Создание кабеля: от выходного порта к входному */
   onAddConnection?: (from: { deviceId: string; portId: string }, to: { deviceId: string; portId: string }, protocol?: string) => void;
+  /** Удаление кабеля (двойной клик по связи) */
+  onDeleteConnection?: (cable: Cable) => void;
   /** Удаление устройства (правый клик → Удалить) */
   onDeviceDelete?: (deviceId: string) => void;
 }
@@ -99,6 +101,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   onZoneSelect,
   selectedZoneId,
   onAddConnection,
+  onDeleteConnection,
   onDeviceDelete,
 }, ref) {
   const { toast } = useToast();
@@ -1126,7 +1129,25 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               const signalColor = getSignalColor(protocolLabel || fromPort.portType || toPort.portType);
               const stroke = valid ? signalColor : "#dc2626";
               return (
-                <g key={cable.id}>
+                <g
+                  key={cable.id}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteConnection?.(cable);
+                  }}
+                  style={{ cursor: onDeleteConnection ? "pointer" : undefined }}
+                >
+                  {onDeleteConnection && (
+                    <path
+                      d={pathD}
+                      stroke="transparent"
+                      strokeWidth={18}
+                      fill="none"
+                      style={{ pointerEvents: "stroke" }}
+                    >
+                      <title>Двойной клик — удалить связь</title>
+                    </path>
+                  )}
                   <path
                     d={`M ${startPoint.x} ${startPoint.y} L ${endpoints.start.x} ${endpoints.start.y}`}
                     stroke={stroke}

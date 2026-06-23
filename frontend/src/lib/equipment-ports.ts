@@ -86,6 +86,11 @@ export function discoverDevice(query: string): Promise<DiscoverResponse> {
   return postJson<DiscoverResponse>(`${BASE}/discover`, { query });
 }
 
+/** До 10 моделей-подсказок по запросу (вкладка «Поиск в интернете»). */
+export function suggestModels(query: string): Promise<DiscoverResponse[]> {
+  return postJson<DiscoverResponse[]>(`${BASE}/suggest`, { query });
+}
+
 export function approveDevice(body: {
   device: DiscoveredDevice;
   ports: PortsMap;
