@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -743,6 +744,12 @@ export default function ConnectionSchemas() {
               Создание и управление схемами подключения оборудования
             </p>
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+          <Link href="/connection-schemas/port-review">
+            <Button size="lg" variant="outline">
+              Очередь разъёмов
+            </Button>
+          </Link>
           <Dialog open={isCreatingSchema} onOpenChange={setIsCreatingSchema}>
             <DialogTrigger asChild>
               <Button size="lg" onClick={() => setIsCreatingSchema(true)}>
@@ -793,6 +800,7 @@ export default function ConnectionSchemas() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {/* Полноэкранный холст */}

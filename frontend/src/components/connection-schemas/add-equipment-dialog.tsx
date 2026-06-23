@@ -13,6 +13,15 @@ import { Search, Loader2, Plus, ExternalLink, Radio, Signal } from "lucide-react
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Equipment } from "@shared/schema";
+import {
+  useConnectorTypes,
+  lookupPorts,
+  discoverDevice,
+  approveDevice,
+  updatePorts,
+  type PortDef,
+} from "@/lib/equipment-ports";
+import { PortReviewPanel } from "./port-review-panel";
 
 /** Нормализация для поиска: нижний регистр, похожие кириллица/латиница к одному виду, двойные буквы убрать */
 function normalizeForSearch(s: string): string {
@@ -68,8 +77,24 @@ interface AddEquipmentDialogProps {
   onAdd: (equipment: EquipmentTemplate) => void;
 }
 
+/** Состояние инлайн-ревью портов, найденных ИИ (Task 2). */
+type ReviewState = {
+  source: "discover" | "stock";
+  device: { name: string; manufacturer?: string; model?: string; type: string };
+  portsIn: PortDef[];
+  portsOut: PortDef[];
+  configurablePorts: boolean;
+  confidence?: number | null;
+  unmappedTerms: string[];
+  status?: string;
+  lookupId?: string;
+};
+
 export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogProps) {
   const { toast } = useToast();
+  const { types: connectorTypes } = useConnectorTypes();
+  const [review, setReview] = useState<ReviewState | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [libraryFilter, setLibraryFilter] = useState<"my" | "team" | "community">("my");
   const [typeFilters, setTypeFilters] = useState<string[]>([]);
@@ -93,6 +118,89 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
     queryKey: ["/api/equipment"],
     enabled: open,
   });
+
+  // Сбрасываем ревью при закрытии диалога.
+  useEffect(() => {
+    if (!open) setReview(null);
+  }, [open]);
+
+  // Опознать устройство через ИИ (вкладка «Поиск в интернете»), порты — на проверку.
+  const runDiscover = async (query: string) => {
+    const q = query.trim();
+    if (!q) return;
+    setIsSearching(true);
+    try {
+      const r = await discoverDevice(q);
+      setReview({
+        source: "discover",
+        device: {
+          name: r.device?.name || q,
+          manufacturer: r.device?.manufacturer,
+          model: r.device?.model,
+          type: r.device?.deviceType || "other",
+        },
+        portsIn: r.ports?.portsIn || [],
+        portsOut: r.ports?.portsOut || [],
+        configurablePorts: !!r.configurablePorts,
+        confidence: r.confidence ?? null,
+        unmappedTerms: r.unmappedTerms || [],
+      });
+    } catch (e: any) {
+      toast({
+        title: "Не удалось опознать устройство",
+        description: e?.message || "Ошибка ИИ",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Одобрение портов человеком: фиксируем на бэке (кэш) и кладём устройство на холст.
+  const handleApproveReview = async (portsIn: PortDef[], portsOut: PortDef[]) => {
+    if (!review) return;
+    setReviewBusy(true);
+    try {
+      if (review.source === "discover") {
+        try {
+          await approveDevice({
+            device: {
+              name: review.device.name,
+              manufacturer: review.device.manufacturer,
+              model: review.device.model,
+              deviceType: review.device.type,
+            },
+            ports: { portsIn, portsOut },
+            configurablePorts: review.configurablePorts,
+          });
+        } catch (_) {
+          /* лучшее усилие: даже если сохранить не вышло — добавим на холст */
+        }
+      } else if (review.lookupId) {
+        try {
+          await updatePorts(review.lookupId, { portsIn, portsOut });
+        } catch (_) {
+          /* лучшее усилие */
+        }
+      }
+      onAdd({
+        name: review.device.name,
+        manufacturer: review.device.manufacturer,
+        model: review.device.model,
+        type: review.device.type,
+        portsIn: portsIn as Port[],
+        portsOut: portsOut as Port[],
+        specifications: {
+          manufacturer: review.device.manufacturer,
+          model: review.device.model,
+        },
+      });
+      setReview(null);
+      onClose();
+    } finally {
+      setReviewBusy(false);
+    }
+  };
 
   // Поиск только по Enter или кнопке — один запрос, один список результатов
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
@@ -249,18 +357,52 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
       .map((x) => x.item);
   }, [equipment, searchTerm, typeFilters]);
 
-  const handleAddFromStock = (item: Equipment) => {
-    const template: EquipmentTemplate = {
-      id: item.id,
-      name: item.name,
-      manufacturer: item.specifications?.manufacturer as string || undefined,
-      model: item.model || undefined,
-      type: item.type,
-      portsIn: (item.specifications?.portsIn as Port[]) || [],
-      portsOut: (item.specifications?.portsOut as Port[]) || [],
-      specifications: item.specifications as Record<string, any> || {},
-    };
-    onAdd(template);
+  const buildStockTemplate = (item: Equipment, portsIn: Port[], portsOut: Port[]): EquipmentTemplate => ({
+    id: item.id,
+    name: item.name,
+    manufacturer: ((item.specifications as any)?.manufacturer as string) || undefined,
+    model: item.model || undefined,
+    type: item.type,
+    portsIn,
+    portsOut,
+    specifications: (item.specifications as Record<string, any>) || {},
+  });
+
+  const handleAddFromStock = async (item: Equipment) => {
+    const portsIn = ((item.specifications as any)?.portsIn as Port[]) || [];
+    const portsOut = ((item.specifications as any)?.portsOut as Port[]) || [];
+    const manufacturer = ((item.specifications as any)?.manufacturer as string) || "";
+    const model = item.model || "";
+
+    // Склад знает устройство, но не хранит порты → спрашиваем ИИ (Task 2).
+    if (portsIn.length === 0 && portsOut.length === 0 && manufacturer && model) {
+      setReviewBusy(true);
+      try {
+        const r = await lookupPorts(manufacturer, model);
+        setReview({
+          source: "stock",
+          device: { name: item.name, manufacturer, model, type: item.type },
+          portsIn: r.result?.ports?.portsIn || [],
+          portsOut: r.result?.ports?.portsOut || [],
+          configurablePorts: !!r.result?.configurablePorts,
+          confidence: r.result?.confidence ?? null,
+          unmappedTerms: r.unmappedTerms || [],
+          status: r.result?.status,
+          lookupId: r.result?.id,
+        });
+        return;
+      } catch (e: any) {
+        toast({
+          title: "ИИ не нашёл порты",
+          description: e?.message || "Добавлено без портов",
+          variant: "destructive",
+        });
+      } finally {
+        setReviewBusy(false);
+      }
+    }
+
+    onAdd(buildStockTemplate(item, portsIn, portsOut));
     onClose();
   };
 
@@ -350,6 +492,24 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
           </DialogDescription>
         </DialogHeader>
 
+        {review ? (
+          <div className="flex-1 overflow-auto mt-2 pr-1">
+            <PortReviewPanel
+              device={review.device}
+              initialPortsIn={review.portsIn}
+              initialPortsOut={review.portsOut}
+              connectorTypes={connectorTypes}
+              status={review.status}
+              confidence={review.confidence}
+              configurablePorts={review.configurablePorts}
+              unmappedTerms={review.unmappedTerms}
+              approveLabel={review.source === "discover" ? "Одобрить и добавить" : "Подтвердить и добавить"}
+              busy={reviewBusy}
+              onApprove={handleApproveReview}
+              onCancel={() => setReview(null)}
+            />
+          </div>
+        ) : (
         <Tabs defaultValue="stock" className="flex-1 flex flex-col min-h-0">
           <TabsList>
             <TabsTrigger value="stock">Мой склад</TabsTrigger>
@@ -420,8 +580,8 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                     onMouseDown={(e) => e.preventDefault()}
                   >
                     {stockDropdownSuggestions.map((item) => {
-                      const portsIn = (item.specifications?.portsIn as Port[]) || [];
-                      const portsOut = (item.specifications?.portsOut as Port[]) || [];
+                      const portsIn = ((item.specifications as any)?.portsIn as Port[]) || [];
+                      const portsOut = ((item.specifications as any)?.portsOut as Port[]) || [];
                       return (
                         <button
                           key={item.id}
@@ -501,8 +661,8 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                   ) : (
                     <div className="space-y-2">
                       {filteredEquipment.map(item => {
-                        const portsIn = (item.specifications?.portsIn as Port[]) || [];
-                        const portsOut = (item.specifications?.portsOut as Port[]) || [];
+                        const portsIn = ((item.specifications as any)?.portsIn as Port[]) || [];
+                        const portsOut = ((item.specifications as any)?.portsOut as Port[]) || [];
                         return (
                           <div
                             key={item.id}
@@ -555,7 +715,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
           <TabsContent value="search" className="flex-1 flex flex-col min-h-0 mt-4">
             <div className="space-y-4">
               <p className="text-xs text-muted-foreground">
-                Введите хотя бы одну букву — появится выпадающий список. Выберите подсказку или нажмите «Поиск» / Enter.
+                Введите производителя и модель — ИИ опознает устройство и предложит порты на проверку. Нажмите «Поиск» или Enter.
               </p>
               <div ref={searchInputRef} className="flex gap-2 relative">
                 <div className="flex-1 relative">
@@ -572,7 +732,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
-                        searchEquipmentOnline(searchTerm);
+                        runDiscover(searchTerm);
                       }
                     }}
                   />
@@ -597,7 +757,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                     </div>
                   )}
                 </div>
-                <Button onClick={() => searchEquipmentOnline(searchTerm)} disabled={isSearching} className="shrink-0">
+                <Button onClick={() => runDiscover(searchTerm)} disabled={isSearching} className="shrink-0">
                   {isSearching ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
@@ -738,16 +898,9 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                           value={port.portType || "HDMI"}
                           onChange={(e) => updatePort("in", port.id, { portType: e.target.value })}
                         >
-                          <option value="HDMI">HDMI</option>
-                          <option value="SDI">SDI</option>
-                          <option value="USB">USB</option>
-                          <option value="USB-C">USB-C</option>
-                          <option value="ETH">Ethernet</option>
-                          <option value="LAN">LAN</option>
-                          <option value="BNC">BNC</option>
-                          <option value="DC">DC</option>
-                          <option value="XLR">XLR</option>
-                          <option value="Wireless">Wireless</option>
+                          {connectorTypes.map((t) => (
+                            <option key={t.id} value={t.id}>{t.label}</option>
+                          ))}
                         </select>
                         <Button
                           size="sm"
@@ -783,16 +936,9 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                           value={port.portType || "HDMI"}
                           onChange={(e) => updatePort("out", port.id, { portType: e.target.value })}
                         >
-                          <option value="HDMI">HDMI</option>
-                          <option value="SDI">SDI</option>
-                          <option value="USB">USB</option>
-                          <option value="USB-C">USB-C</option>
-                          <option value="ETH">Ethernet</option>
-                          <option value="LAN">LAN</option>
-                          <option value="BNC">BNC</option>
-                          <option value="DC">DC</option>
-                          <option value="XLR">XLR</option>
-                          <option value="Wireless">Wireless</option>
+                          {connectorTypes.map((t) => (
+                            <option key={t.id} value={t.id}>{t.label}</option>
+                          ))}
                         </select>
                         <Button
                           size="sm"
@@ -818,6 +964,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
             </ScrollArea>
           </TabsContent>
         </Tabs>
+        )}
       </DialogContent>
     </Dialog>
   );

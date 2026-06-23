@@ -30,6 +30,7 @@ import VmixScheduler from "@/pages/vmix-scheduler";
 import ManagerDashboard from "@/pages/manager-dashboard";
 import Terminal from "@/pages/terminal";
 import ConnectionSchemas from "@/pages/connection-schemas";
+import EquipmentPortsReview from "@/pages/equipment-ports-review";
 import OtisOnAir from "@/pages/otis-onair";
 import Maps from "@/pages/maps";
 import RoomBooking from "@/pages/room-booking";
@@ -131,6 +132,11 @@ function Router({ user }: { user: any }) {
       <Route path="/vmix-scheduler">
         <ProtectedRoute user={user}>
           <VmixScheduler />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/connection-schemas/port-review">
+        <ProtectedRoute user={user}>
+          <EquipmentPortsReview />
         </ProtectedRoute>
       </Route>
       <Route path="/connection-schemas">
