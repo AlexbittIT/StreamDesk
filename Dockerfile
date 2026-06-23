@@ -34,6 +34,6 @@ WORKDIR /app
 COPY --from=backend /src/target/*.jar app.jar
 # Собранный фронт — Java отдаёт его как SPA вместе с /api
 COPY --from=frontend /src/dist/public ./public
-EXPOSE 8080
+EXPOSE 5050
 # Один процесс: отдаёт и сайт (из /app/public), и REST API
 ENTRYPOINT ["java", "-jar", "app.jar", "--app.spa-dir=/app/public"]

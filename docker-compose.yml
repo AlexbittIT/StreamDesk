@@ -12,6 +12,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Старый дамп БД: выполняется автоматически ТОЛЬКО при первом старте (пустой pgdata).
+      # Чтобы перезалить — нужно пересоздать volume: docker compose down -v && docker compose up -d
+      - ./db-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-streamdesk}"]
       interval: 5s
@@ -35,9 +38,9 @@ services:
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       # В проде держим false (fallback-админ admin/admin123 отключён)
       ALLOW_FALLBACK_ADMIN: "${ALLOW_FALLBACK_ADMIN:-false}"
-      SERVER_PORT: "8080"
+      SERVER_PORT: "5050"
     ports:
-      - "8080:8080"
+      - "5050:5050"
     volumes:
       # Загруженные файлы (фото/аватары/чат/транскрипции) — переживают пересоздание контейнера
       - uploads:/app/uploads
