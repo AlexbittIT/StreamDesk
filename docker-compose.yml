@@ -36,11 +36,26 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       # Java-only: Hibernate сам создаёт/обновляет схему из сущностей (Drizzle/Node не нужны)
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      # В проде держим false (fallback-админ admin/admin123 отключён)
+      # Fallback-админ admin/admin123 ВЫКЛЮЧЕН по умолчанию (безопасно для прода).
+      # Для тестового стенда можно включить: ALLOW_FALLBACK_ADMIN=true в .env.
       ALLOW_FALLBACK_ADMIN: "${ALLOW_FALLBACK_ADMIN:-false}"
       SERVER_PORT: "5050"
+      # AI для схем подключения и подбора портов (DeepSeek / HuggingFace).
+      # Без ключей стек поднимется, но AI-эндпоинты вернут 503 — задай в .env при необходимости.
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_MODEL: "${DEEPSEEK_MODEL:-deepseek-chat}"
+      HUGGINGFACE_API_KEY: "${HUGGINGFACE_API_KEY:-}"
+      HF_TOKEN: "${HF_TOKEN:-}"
     ports:
       - "5050:5050"
+    # Готовность приложения видна в `docker compose ps` (HEALTHCHECK из Dockerfile
+    # опрашивает /api/health). Здесь переопределяем тайминги под staging.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5050/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 80s
     volumes:
       # Загруженные файлы (фото/аватары/чат/транскрипции) — переживают пересоздание контейнера
       - uploads:/app/uploads
