@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -334,6 +335,26 @@ export default function ConnectionSchemas() {
       setIsFullScreen(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (isFullScreen) {
+      document.body.classList.add('fullscreen-overlay-active');
+    } else {
+      document.body.classList.remove('fullscreen-overlay-active');
+    }
+    return () => {
+      document.body.classList.remove('fullscreen-overlay-active');
+    };
+  }, [isFullScreen]);
+
+  useEffect(() => {
+    if (!isFullScreen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsFullScreen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [isFullScreen]);
 
   // Получение выбранной схемы с компонентами
   const { data: selectedSchemaData, refetch: refetchSelectedSchema } = useQuery<ConnectionSchema>({
@@ -977,7 +998,7 @@ export default function ConnectionSchemas() {
         </div>
 
         {/* Полноэкранный холст */}
-        {isFullScreen && selectedSchemaData && (
+        {isFullScreen && selectedSchemaData && createPortal(
           <div className="fixed inset-0 z-50 bg-slate-900 flex flex-col">
             <div className="flex items-center justify-between gap-2 px-3 py-2 bg-slate-800 border-b border-slate-700 flex-wrap">
               <span className="text-white font-medium truncate">{selectedSchemaData.name} — полноэкранный режим</span>
@@ -1127,7 +1148,8 @@ export default function ConnectionSchemas() {
                 })()}
               </div>
             )}
-          </div>
+          </div>,
+          document.body
         )}
 
         {/* Диалог названия зоны после выделения на схеме */}

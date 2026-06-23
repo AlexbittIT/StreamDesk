@@ -1,0 +1,3 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <g fill="none" stroke="#8C6E4A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" color="#8C6E4A"><rect x="16" y="20" width="32" height="14" rx="2"/><circle cx="22" cy="27" r="3"/><circle cx="32" cy="27" r="3"/><circle cx="42" cy="27" r="3"/><path d="M20.3 27 H23.7 M30.3 27 H33.7 M40.3 27 H43.7"/><path d="M22 34 V39 M32 34 V39 M42 34 V39"/></g>
+  <text x="32" y="59" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif" font-size="7.5" font-weight="700" fill="#8C6E4A" textLength="58" lengthAdjust="spacingAndGlyphs">TERMINAL_BLOCK</text></svg>

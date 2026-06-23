@@ -51,7 +51,19 @@ function StubModeBanner() {
     retry: false,
     refetchInterval: false,
   });
-  if (!data?.stubMode) return null;
+  const [isFullscreenActive, setIsFullscreenActive] = useState(
+    () => document.body.classList.contains('fullscreen-overlay-active')
+  );
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsFullscreenActive(document.body.classList.contains('fullscreen-overlay-active'));
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  if (!data?.stubMode || isFullscreenActive) return null;
   return (
     <div className="bg-amber-500/90 text-amber-950 text-center py-1 px-2 sm:px-3 text-xs font-medium flex items-center justify-center gap-1.5 shrink-0">
       <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
