@@ -65,6 +65,8 @@ interface SchemaCanvasProps {
   onDeleteConnection?: (cable: Cable) => void;
   /** Удаление устройства (правый клик → Удалить) */
   onDeviceDelete?: (deviceId: string) => void;
+  /** ID компонентов с ошибками валидации — для красной подсветки на холсте. */
+  validationComponentIds?: string[];
 }
 
 export interface SchemaCanvasRef {
@@ -103,6 +105,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   onAddConnection,
   onDeleteConnection,
   onDeviceDelete,
+  validationComponentIds,
 }, ref) {
   const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -283,13 +286,21 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       let connected = false;
 
       const applyConnection = (targetDeviceId: string, targetPortId: string, targetType: "in" | "out") => {
-        if (targetDeviceId === cableDrag.fromDeviceId) return;
+        if (targetDeviceId === cableDrag.fromDeviceId) {
+          toast({ title: "Связь не создана", description: "Нельзя соединить устройство с самим собой.", variant: "destructive" });
+          connected = true;
+          return;
+        }
         let from = { deviceId: cableDrag.fromDeviceId, portId: cableDrag.fromPortId };
         let to = { deviceId: targetDeviceId, portId: targetPortId };
         if (cableDrag.fromType === "in" && targetType === "out") {
           from = { deviceId: targetDeviceId, portId: targetPortId };
           to = { deviceId: cableDrag.fromDeviceId, portId: cableDrag.fromPortId };
         } else if (!(cableDrag.fromType === "out" && targetType === "in")) {
+          const dirFrom = cableDrag.fromType === "in" ? "вход" : "выход";
+          const dirTo = targetType === "in" ? "вход" : "выход";
+          toast({ title: "Связь не создана", description: `Нельзя соединять ${dirFrom} с ${dirTo}. Сигнал должен идти от выхода ко входу.`, variant: "destructive" });
+          connected = true;
           return;
         }
         onAddConnection(from, to);
@@ -858,7 +869,13 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               <pattern id="grid" width={GRID_STEP} height={GRID_STEP} patternUnits="userSpaceOnUse">
                 <path d={`M ${GRID_STEP} 0 L 0 0 0 ${GRID_STEP}`} fill="none" stroke="rgba(148, 163, 184, 0.2)" strokeWidth="0.5" />
               </pattern>
-              <style>{`@keyframes cable-signal { to { stroke-dashoffset: -24; } }`}</style>
+              <style>{`
+                @keyframes cable-signal { to { stroke-dashoffset: -24; } }
+                @keyframes schema-error-pulse {
+                  0%, 100% { opacity: 1; }
+                  50% { opacity: 0.35; }
+                }
+              `}</style>
             </defs>
             <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="url(#grid)" />
             <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="transparent" style={{ pointerEvents: "none" }} />
@@ -915,6 +932,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               const deviceHeight = calculateDeviceHeight(device);
               const pos = getDevicePosition(device);
               const isSelected = selectedDeviceId === device.id;
+              const hasError = !!(validationComponentIds && validationComponentIds.includes(device.id));
               return (
                 <g
                   key={device.id}
@@ -939,12 +957,27 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
+                  {hasError && (
+                    <rect
+                      width={deviceWidth + 12}
+                      height={deviceHeight + 12}
+                      x={-6}
+                      y={-6}
+                      fill="none"
+                      stroke="#dc2626"
+                      strokeWidth={3}
+                      strokeDasharray="6 4"
+                      rx={11}
+                      style={{ animation: "schema-error-pulse 1.1s ease-in-out infinite" }}
+                      pointerEvents="none"
+                    />
+                  )}
                   <rect
                     width={deviceWidth}
                     height={deviceHeight}
                     fill={isSelected ? "#2563eb" : "#1e293b"}
-                    stroke={isSelected ? "#60a5fa" : "#475569"}
-                    strokeWidth={isSelected ? 3 : 2}
+                    stroke={hasError ? "#dc2626" : isSelected ? "#60a5fa" : "#475569"}
+                    strokeWidth={hasError ? 3 : isSelected ? 3 : 2}
                     rx={8}
                   />
                   <text

@@ -6,13 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
-import { 
-  Network, 
-  Plus, 
-  Trash2, 
+import {
+  Network,
+  Plus,
+  Trash2,
   Edit,
   Square,
-  Type,
   Wrench,
   Save,
   Download,
@@ -21,7 +20,11 @@ import {
   Package,
   BrainCircuit,
   Maximize2,
-  Minimize2
+  Minimize2,
+  CheckCircle2,
+  AlertTriangle,
+  X,
+  Loader2
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -202,6 +205,99 @@ function DeviceEditForm({
   );
 }
 
+interface Violation {
+  code: string;
+  message: string;
+  fromPortId?: string;
+  toPortId?: string;
+  componentId?: string;
+}
+
+interface BuildResult {
+  ok: boolean;
+  violations: Violation[];
+  summary: string;
+}
+
+function ValidationPanel({
+  violations,
+  success,
+  onClose,
+  onJumpToDevice,
+}: {
+  violations: Violation[];
+  success: boolean;
+  onClose: () => void;
+  onJumpToDevice?: (deviceId: string) => void;
+}) {
+  if (success && violations.length === 0) {
+    return (
+      <div className="m-2 rounded-lg border border-green-500/50 bg-green-50 dark:bg-green-950/40 p-3 shadow-sm">
+        <div className="flex items-start gap-2">
+          <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-green-800 dark:text-green-300">Схема целостна</p>
+            <p className="text-sm text-green-700 dark:text-green-400/80 mt-0.5">
+              Все связи корректны. Схема успешно прошла проверку.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-green-700/70 dark:text-green-400/70 hover:text-green-900 dark:hover:text-green-200 flex-shrink-0"
+            aria-label="Закрыть"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="m-2 rounded-lg border border-red-500/50 bg-red-50 dark:bg-red-950/40 shadow-sm max-h-[40vh] flex flex-col">
+      <div className="flex items-start gap-2 p-3 border-b border-red-500/30">
+        <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-red-800 dark:text-red-300">
+            Найдено нарушений: {violations.length}
+          </p>
+          <p className="text-sm text-red-700 dark:text-red-400/80 mt-0.5">
+            Нажмите на элемент, чтобы подсветить его на схеме.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-red-700/70 dark:text-red-400/70 hover:text-red-900 dark:hover:text-red-200 flex-shrink-0"
+          aria-label="Закрыть"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <ul className="overflow-y-auto divide-y divide-red-500/20">
+        {violations.map((v, idx) => {
+          const targetId = v.componentId;
+          const clickable = !!targetId && !!onJumpToDevice;
+          return (
+            <li
+              key={`${v.code}-${idx}`}
+              className={cn(
+                "flex items-start gap-2 px-3 py-2 text-sm",
+                clickable && "cursor-pointer hover:bg-red-100/60 dark:hover:bg-red-900/30"
+              )}
+              onClick={() => clickable && onJumpToDevice!(targetId!)}
+            >
+              <span className="flex-shrink-0 mt-0.5 text-red-500" aria-hidden>•</span>
+              <span className="flex-1 min-w-0 text-red-800 dark:text-red-200/90">{v.message}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export default function ConnectionSchemas() {
   const { toast } = useToast();
   const [selectedSchema, setSelectedSchema] = useState<string | null>(null);
@@ -218,6 +314,13 @@ export default function ConnectionSchemas() {
   const [drawnZoneName, setDrawnZoneName] = useState("");
   const [drawnZoneColor, setDrawnZoneColor] = useState("#3b82f6");
   const schemaCanvasRef = useRef<SchemaCanvasRef>(null);
+
+  const [buildViolations, setBuildViolations] = useState<Violation[] | null>(null);
+  const [buildSuccess, setBuildSuccess] = useState(false);
+  useEffect(() => {
+    setBuildViolations(null);
+    setBuildSuccess(false);
+  }, [selectedSchema]);
 
   // Получение всех схем
   const { data: schemas = [], refetch: refetchSchemas } = useQuery<ConnectionSchema[]>({
@@ -529,31 +632,22 @@ export default function ConnectionSchemas() {
       cableType?: string;
       protocol?: string;
     }) => {
-      const component = selectedSchemaData?.components?.find(c => c.id === payload.fromDeviceId);
-      if (!component) throw new Error("Устройство не найдено");
-      const connections = [...normalizeConnections(component.connections)];
-      const alreadyExists = connections.some((connection) =>
-        connection.componentId === payload.toDeviceId &&
-        connection.port === payload.toPortId &&
-        (connection.fromPortId ?? connection.port) === payload.fromPortId
-      );
-      if (alreadyExists) {
-        throw new Error("Соединение уже существует");
+      if (!selectedSchema) throw new Error("Схема не выбрана");
+      const res = await fetch(`/api/connection-schemas/${selectedSchema}/connections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.status === 422 && data?.violations?.length) {
+        const msgs = (data.violations as Violation[]).map((v) => v.message).join("; ");
+        throw new Error(msgs);
       }
-      connections.push({
-        componentId: payload.toDeviceId,
-        port: payload.toPortId,
-        fromPortId: payload.fromPortId,
-        cableType: payload.cableType,
-        protocol: payload.protocol,
-      });
-      const response = await apiRequest("PUT", `/api/connection-schemas/components/${payload.fromDeviceId}`, {
-        position: component.position,
-        properties: component.properties,
-        connections,
-      });
-      if (!response.ok) throw new Error("Не удалось создать соединение");
-      return response.json();
+      if (!res.ok) {
+        throw new Error(data?.message || "Не удалось создать соединение");
+      }
+      return data;
     },
     onMutate: async (payload) => {
       if (!selectedSchema) return;
@@ -584,11 +678,12 @@ export default function ConnectionSchemas() {
       });
       return { prev };
     },
-    onError: (_e, _vars, context) => {
+    onError: (e: unknown, _vars, context) => {
       if (context?.prev) {
         queryClient.setQueryData(["/api/connection-schemas", selectedSchema], context.prev);
       }
-      toast({ title: "Ошибка", description: "Не удалось создать соединение", variant: "destructive" });
+      const msg = (e as Error)?.message || "Не удалось создать соединение";
+      toast({ title: "Связь не создана", description: msg, variant: "destructive" });
     },
     onSettled: () => {
       if (selectedSchema) {
@@ -598,6 +693,8 @@ export default function ConnectionSchemas() {
     },
     onSuccess: () => {
       toast({ title: "Соединение создано" });
+      setBuildViolations(null);
+      setBuildSuccess(false);
     },
   });
 
@@ -745,6 +842,48 @@ export default function ConnectionSchemas() {
     [addConnectionMutation]
   );
 
+  const buildSchemaMutation = useMutation({
+    mutationFn: async (schemaId: string) => {
+      const response = await apiRequest("POST", `/api/connection-schemas/${schemaId}/build`);
+      return response.json() as Promise<BuildResult>;
+    },
+    onSuccess: (data) => {
+      const violations = Array.isArray(data?.violations) ? data.violations : [];
+      setBuildViolations(violations);
+      setBuildSuccess(data?.ok === true);
+      if (data?.ok) {
+        toast({ title: "Схема целостна", description: data.summary || "Проверка пройдена успешно." });
+      } else {
+        toast({
+          title: `Найдено нарушений: ${violations.length}`,
+          description: "Проблемные элементы подсвечены на схеме.",
+          variant: "destructive",
+        });
+      }
+    },
+    onError: (error: any) => {
+      setBuildSuccess(false);
+      toast({
+        title: "Не удалось проверить схему",
+        description: error?.message || "Сервер недоступен или вернул ошибку.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleBuild = useCallback(() => {
+    if (!selectedSchema) {
+      toast({ title: "Выберите схему для проверки", variant: "destructive" });
+      return;
+    }
+    buildSchemaMutation.mutate(selectedSchema);
+  }, [selectedSchema, buildSchemaMutation]);
+
+  const dismissBuild = useCallback(() => {
+    setBuildViolations(null);
+    setBuildSuccess(false);
+  }, []);
+
   const confirmDrawnZone = () => {
     if (!selectedSchema || !pendingZoneRect) return;
     if (!drawnZoneName.trim()) {
@@ -880,6 +1019,21 @@ export default function ConnectionSchemas() {
                   Выделить зону
                 </Button>
                 <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleBuild}
+                  disabled={buildSchemaMutation.isPending}
+                  className="border-slate-600 text-white hover:bg-slate-700"
+                  title="Проверить целостность схемы"
+                >
+                  {buildSchemaMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 sm:mr-2 animate-spin" />
+                  ) : (
+                    <Wrench className="w-4 h-4 sm:mr-2" />
+                  )}
+                  Собрать
+                </Button>
+                <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setIsFullScreen(false)}
@@ -890,7 +1044,7 @@ export default function ConnectionSchemas() {
                 </Button>
               </div>
             </div>
-            <div className="flex-1 min-h-0">
+            <div className="flex-1 min-h-0 relative">
               <SchemaCanvas
                 ref={schemaCanvasRef}
                 schemaId={selectedSchema}
@@ -909,7 +1063,18 @@ export default function ConnectionSchemas() {
                 onZoneSelect={setSelectedZoneId}
                 selectedZoneId={selectedZoneId}
                 onDeviceDelete={handleDeleteComponent}
+                validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
               />
+              {((buildViolations && buildViolations.length > 0) || buildSuccess) && (
+                <div className="absolute top-14 right-4 z-50 w-[min(420px,calc(100vw-2rem))]">
+                  <ValidationPanel
+                    violations={buildViolations ?? []}
+                    success={buildSuccess}
+                    onClose={dismissBuild}
+                    onJumpToDevice={(deviceId) => setSelectedDeviceId(deviceId)}
+                  />
+                </div>
+              )}
             </div>
             {/* Редактирование зоны или устройства в полноэкранном режиме */}
             {(selectedZoneId || selectedDeviceId) && (
@@ -1126,37 +1291,55 @@ export default function ConnectionSchemas() {
                       >
                         <Maximize2 className="w-4 h-4" />
                       </Button>
-                      <Button size="sm" variant="outline" className="h-9 touch-manipulation hidden md:inline-flex">
-                        <Type className="w-4 h-4 mr-2" />
-                        Текст
-                      </Button>
-                      <Button size="sm" variant="outline" className="h-9 touch-manipulation hidden md:inline-flex">
-                        <Wrench className="w-4 h-4 mr-2" />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-9 touch-manipulation"
+                        onClick={handleBuild}
+                        disabled={buildSchemaMutation.isPending}
+                        title="Проверить целостность схемы"
+                      >
+                        {buildSchemaMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Wrench className="w-4 h-4 mr-2" />
+                        )}
                         Собрать
                       </Button>
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="flex-1 min-h-0 p-0 overflow-hidden">
-                  <SchemaCanvas
-                    ref={schemaCanvasRef}
-                    schemaId={selectedSchema}
-                    devices={devices}
-                    zones={zones}
-                    cables={cables}
-                    onDeviceUpdate={handleDeviceUpdate}
-                    onDeviceSelect={setSelectedDeviceId}
-                    selectedDeviceId={selectedDeviceId}
-                    fullScreen={false}
-                    drawZoneMode={drawZoneMode}
-                    onZoneDrawn={handleZoneDrawn}
-                    onCancelDrawZone={() => setDrawZoneMode(false)}
-                    onAddConnection={handleAddConnection}
-                    onDeleteConnection={handleDeleteConnection}
-                    onZoneSelect={setSelectedZoneId}
-                    selectedZoneId={selectedZoneId}
-                    onDeviceDelete={handleDeleteComponent}
-                  />
+                <CardContent className="flex-1 min-h-0 p-0 overflow-hidden flex flex-col">
+                  {((buildViolations && buildViolations.length > 0) || buildSuccess) && (
+                    <ValidationPanel
+                      violations={buildViolations ?? []}
+                      success={buildSuccess}
+                      onClose={dismissBuild}
+                      onJumpToDevice={(deviceId) => setSelectedDeviceId(deviceId)}
+                    />
+                  )}
+                  <div className="flex-1 min-h-0">
+                    <SchemaCanvas
+                      ref={schemaCanvasRef}
+                      schemaId={selectedSchema}
+                      devices={devices}
+                      zones={zones}
+                      cables={cables}
+                      onDeviceUpdate={handleDeviceUpdate}
+                      onDeviceSelect={setSelectedDeviceId}
+                      selectedDeviceId={selectedDeviceId}
+                      fullScreen={false}
+                      drawZoneMode={drawZoneMode}
+                      onZoneDrawn={handleZoneDrawn}
+                      onCancelDrawZone={() => setDrawZoneMode(false)}
+                      onAddConnection={handleAddConnection}
+                      onDeleteConnection={handleDeleteConnection}
+                      onZoneSelect={setSelectedZoneId}
+                      selectedZoneId={selectedZoneId}
+                      onDeviceDelete={handleDeleteComponent}
+                      validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
+                    />
+                  </div>
                 </CardContent>
               </Card>
             ) : (
