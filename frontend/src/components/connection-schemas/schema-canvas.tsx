@@ -900,7 +900,6 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               <pattern id="grid" width={GRID_STEP} height={GRID_STEP} patternUnits="userSpaceOnUse">
                 <path d={`M ${GRID_STEP} 0 L 0 0 0 ${GRID_STEP}`} fill="none" stroke="rgba(148, 163, 184, 0.2)" strokeWidth="0.5" />
               </pattern>
-<<<<<<< Updated upstream
               <style>{`
                 @keyframes cable-signal { to { stroke-dashoffset: -24; } }
                 @keyframes schema-error-pulse {
@@ -908,8 +907,6 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                   50% { opacity: 0.35; }
                 }
               `}</style>
-=======
-              <style>{`@keyframes cable-signal { to { stroke-dashoffset: -24; } }`}</style>
               <ConnectorIconDefs />
               <symbol id="port-state-free" viewBox="0 0 64 64">
                 <g fill="none" stroke="#94A3B8" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -931,7 +928,6 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                   <path d="M27.4 36.6 L36.6 27.4"/>
                 </g>
               </symbol>
->>>>>>> Stashed changes
             </defs>
             <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="url(#grid)" />
             <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="transparent" style={{ pointerEvents: "none" }} />
