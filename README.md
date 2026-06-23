@@ -116,21 +116,21 @@ StreamDesk должен помогать менеджеру, инженеру и
 
 ### Backend
 
-- Node.js
-- Express
-- TypeScript
-- WebSocket (`ws`)
-- Passport / Passport Local
-- Express Session
-- Multer для загрузки файлов
-- Zod для валидации
-- Drizzle ORM
+- Java 21
+- Spring Boot 3.4 (Spring Web, Spring Security, Spring Data JPA)
+- Hibernate ORM (PostgreSQL, jsonb)
+- Maven (`backend-java/`, сборка через `./mvnw`)
+- Сессии и cookie-аутентификация (совместимы с фронтом — кука `streamdesk.sid`)
+- DeepSeek (OpenAI-совместимый API) для AI-генерации схем и поиска портов
+
+> Бэкенд переведён с Node/Express на Java/Spring Boot. Каталог `backend/` (Node) удалён, актуальный код — в `backend-java/`.
 
 ### Database
 
 - PostgreSQL
-- Drizzle schema в `shared/schema.ts`
-- Миграции и серверные SQL-исправления в `tmp-drizzle/`
+- JPA-сущности в `backend-java/src/main/java/...` (схема существующая)
+- `ddl-auto=validate` (по умолчанию): Hibernate не меняет схему. Для свежей БД в dev можно `SPRING_JPA_HIBERNATE_DDL_AUTO=update`
+- SQL-миграции в корне: `create_connection_schemas_tables.sql`, `create_equipment_ports_tables.sql` (порты оборудования, Задача 2)
 
 ### Интеграции
 
@@ -146,70 +146,116 @@ frontend/                клиентское приложение (Vite + React
 frontend/src/pages/      страницы StreamDesk
 frontend/src/components/ переиспользуемые компоненты
 frontend/src/lib/        клиентские утилиты
-backend/                 API, авторизация, интеграции, мониторинг
-shared/                  общие схемы и типы
-scripts/                 деплой, удаленные команды, служебные скрипты
-docs/                    документация и руководства
-tmp-drizzle/             служебные снапшоты Drizzle
+backend-java/            бэкенд на Java/Spring Boot (API, авторизация, AI, интеграции)
+shared/                  общие схемы и типы (фронт)
+docs/                    документация (вкл. справочник разъёмов connector_types.json)
+docker-compose.yml       Postgres + бэкенд для локального запуска
+Dockerfile               сборка одного образа (фронт + Java-бэк, отдаёт SPA и /api)
+create_*_tables.sql      SQL-миграции (схемы подключения, порты оборудования)
 ```
 
 ## Переменные окружения
 
-Основные переменные задаются в `.env`. Секреты нельзя коммитить в репозиторий.
+Основные переменные читает Spring Boot из окружения (или `.env` для docker compose). Секреты нельзя коммитить в репозиторий.
 
 ```env
-DATABASE_URL=postgres://user:password@host:5432/streamdesk
-SESSION_SECRET=change-me
-PORT=5000
+# БД (любой из вариантов; SPRING_DATASOURCE_* имеет приоритет)
+JDBC_DATABASE_URL=jdbc:postgresql://localhost:5432/streamdesk
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=streamdesk
 
-HUGGINGFACE_API_KEY=hf_...
-HUGGINGFACE_MODEL=...
+# Схема БД: validate (по умолчанию) либо update для свежей dev-БД
+SPRING_JPA_HIBERNATE_DDL_AUTO=validate
 
-YOUGILE_API_KEY=...
-YOUGILE_COMPANY_ID=...
+# Порт бэкенда
+SERVER_PORT=8080
 
-SSL_CERT_PATH=/path/to/fullchain.pem
-SSL_KEY_PATH=/path/to/privkey.pem
+# AI (Задача 2: поиск портов и генерация схем). Без ключа AI-эндпоинты вернут 503.
+DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_MODEL=deepseek-chat
+
+# Fallback-админ для локального теста (в проде false)
+ALLOW_FALLBACK_ADMIN=true
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin123
+
+# Фронт (dev): базовый URL API
+VITE_API_BASE=http://localhost:8080
 ```
 
-## Локальный запуск
+## Запуск
+
+Нужны: **JDK 21**, **Maven** (или `./mvnw`), **Node 20+**, **PostgreSQL** (или Docker).
+
+### Вариант A — Docker Compose (быстрее всего)
+
+Один образ собирает фронт (Vite) и Java-бэк и отдаёт SPA + `/api` на 8080.
 
 ```bash
+# .env с POSTGRES_*, DEEPSEEK_API_KEY и (для свежей БД) SPRING_JPA_HIBERNATE_DDL_AUTO=update
+docker compose up --build
+```
+
+Откроется на `http://localhost:8080`. На свежей БД с `ddl-auto=update` Hibernate сам создаст таблицы из сущностей. Для боевой БД используйте `validate` и применяйте SQL-миграции вручную (см. ниже).
+
+### Вариант B — вручную (бэк и фронт отдельно)
+
+```bash
+# 1. Поднять PostgreSQL и применить миграции (если ddl-auto=validate)
+psql "$JDBC_DATABASE_URL" -f create_connection_schemas_tables.sql
+psql "$JDBC_DATABASE_URL" -f create_equipment_ports_tables.sql   # порты, Задача 2
+
+# 2. Бэкенд (Java/Spring, порт 8080)
+cd backend-java
+DEEPSEEK_API_KEY=sk-... ./mvnw spring-boot:run
+
+# 3. Фронтенд (Vite, порт 5173) — в другом терминале
 npm install
-npm run db:push
 npm run dev
 ```
 
-Проверка типов:
+Фронт на `http://localhost:5173`, обращается к бэку по `VITE_API_BASE`.
+
+## Проверка
 
 ```bash
-npm run check
-```
+# Бэкенд: тесты (вкл. валидацию связей и поиск портов Задачи 2)
+cd backend-java && ./mvnw test
 
-Сборка:
-
-```bash
+# Фронтенд: сборка
 npm run build
 ```
+
+Здоровье и базовый сценарий:
+
+- `GET http://localhost:8080/api/health` отвечает 200;
+- логин (fallback-админ `admin` / `admin123`, если `ALLOW_FALLBACK_ADMIN=true`);
+- склад, задачи, сметы открываются и изолированы по компании.
+
+Проверка Задачи 2 (склад → нода с портами) — нужен `DEEPSEEK_API_KEY`:
+
+1. «Схемы подключения» → открыть/создать схему → «Добавить оборудование».
+2. Вкладка «Поиск в интернете»: ввести производителя и модель → ИИ опознаёт устройство и предлагает порты → проверить/поправить → «Одобрить и добавить» (устройство ложится на холст прямоугольником с портами).
+3. Вкладка «Мой склад»: устройство без портов → ИИ ищет порты по `производитель+модель` → подтвердить.
+4. Кнопка «Очередь разъёмов» (`/connection-schemas/port-review`): разъёмы не из справочника — сопоставить код или отклонить.
+5. Подтверждённые порты кэшируются: повторный выбор той же модели возвращается мгновенно, без обращения к ИИ.
 
 ## Деплой
 
-Production-сборка формируется командой:
+Production-образ собирается из `Dockerfile` (фронт + Java-бэк в одном образе, JRE-рантайм):
 
 ```bash
-npm run build
+docker build -t streamdesk .
 ```
 
-После загрузки на сервер приложение запускается через PM2. Перед обновлением production нужно сохранить существующую базу данных и не перетирать пользовательские данные.
+Чек-лист деплоя:
 
-Минимальный чек-лист деплоя:
-
-- собрать frontend и backend;
-- загрузить runtime bundle на сервер;
-- применить только безопасные миграции;
-- перезапустить PM2-процесс;
-- проверить `/api/health`;
-- открыть интерфейс и проверить логин, компанию, склад, задачи и сметы.
+- собрать образ (фронт + бэк);
+- на рабочей БД держать `ddl-auto=validate` и применять только проверенные SQL-миграции, не перетирая пользовательские данные;
+- задать секреты окружения (`DEEPSEEK_API_KEY`, доступ к БД, `ALLOW_FALLBACK_ADMIN=false`);
+- запустить контейнер, проверить `/api/health`;
+- открыть интерфейс и проверить логин, компанию, склад, задачи, сметы и схемы.
 
 ## Критерии качества
 

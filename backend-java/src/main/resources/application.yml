@@ -21,16 +21,18 @@ spring:
     # Та же база, что и у TS-бэкенда. JDBC-формат отличается от postgresql://...,
     # поэтому задаём JDBC_DATABASE_URL отдельно, например:
     #   jdbc:postgresql://localhost:5432/streamdesk
-    url: ${JDBC_DATABASE_URL:jdbc:postgresql://localhost:5432/streamdesk}
-    username: ${POSTGRES_USER:postgres}
-    password: ${POSTGRES_PASSWORD:postgres}
+    url: ${SPRING_DATASOURCE_URL:${JDBC_DATABASE_URL:jdbc:postgresql://localhost:5432/streamdesk}}
+    username: ${SPRING_DATASOURCE_USERNAME:${POSTGRES_USER:postgres}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:postgres}}
     driver-class-name: org.postgresql.Driver
 
   jpa:
     hibernate:
-      # ВАЖНО: validate/none, чтобы Hibernate НЕ менял уже существующую схему,
-      # созданную Drizzle. Никогда не ставь здесь create/update на рабочей БД.
-      ddl-auto: validate
+      # По умолчанию validate/none — Hibernate НЕ меняет уже существующую схему.
+      # Управляется переменной SPRING_JPA_HIBERNATE_DDL_AUTO: для локального dev/compose
+      # можно задать update (Hibernate сам создаст таблицы из сущностей на свежей БД).
+      # На рабочей БД оставляй validate и применяй SQL-миграции вручную.
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
     properties:
       hibernate:
         format_sql: true
