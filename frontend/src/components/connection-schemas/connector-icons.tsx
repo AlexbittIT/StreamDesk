@@ -389,8 +389,8 @@ export function ConnectorIconUse({ code, x = 0, y = 0, size = 14 }: {
   size?: number;
 }) {
   return (
-    <svg x={x} y={y} width={size} height={size} viewBox="0 0 64 64" overflow="visible" pointerEvents="none">
-      <use href={`#ci-${code}`} />
+    <svg x={x} y={y} width={size} height={size} viewBox="0 0 64 64" overflow="visible" pointerEvents="none" style={{ color: "#ffffff" }}>
+      <use href={`#ci-${code}`} stroke="#ffffff" fill="none" />
     </svg>
   );
 }

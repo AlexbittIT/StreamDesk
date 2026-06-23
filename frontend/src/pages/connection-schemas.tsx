@@ -405,19 +405,26 @@ export default function ConnectionSchemas() {
   // Преобразование соединений в кабели (нормализуем connections — с сервера может прийти строка JSON)
   const cables: Cable[] = useMemo(() => {
     if (!selectedSchemaData?.components) return [];
-    
+
     const cableList: Cable[] = [];
     selectedSchemaData.components.forEach(comp => {
       const conns = normalizeConnections(comp.connections);
       if (conns && Array.isArray(conns)) {
-        conns.forEach((conn: { componentId?: string; port?: string; fromPortId?: string; cableType?: string; protocol?: string }, index: number) => {
-          if (conn.componentId && conn.port) {
+        conns.forEach((conn: any, index: number) => {
+          // Поддерживаем оба формата:
+          // 1) Оптимистичный (фронтенд): { componentId, port, fromPortId }
+          // 2) Серверный: { fromDeviceId, fromPortId, toDeviceId, toPortId, id }
+          const toDeviceId = conn.toDeviceId || conn.componentId;
+          const toPortId = conn.toPortId || conn.port;
+          const fromDeviceId = conn.fromDeviceId || comp.id;
+          const fromPortId = conn.fromPortId ?? toPortId;
+          if (toDeviceId && toPortId) {
             cableList.push({
-              id: `${comp.id}-${conn.componentId}-${index}`,
-              fromDeviceId: comp.id,
-              fromPortId: conn.fromPortId ?? conn.port,
-              toDeviceId: conn.componentId,
-              toPortId: conn.port,
+              id: conn.id || `${comp.id}-${toDeviceId}-${index}`,
+              fromDeviceId,
+              fromPortId,
+              toDeviceId,
+              toPortId,
               cableType: conn.cableType,
               protocol: conn.protocol,
             });
@@ -425,7 +432,7 @@ export default function ConnectionSchemas() {
         });
       }
     });
-    
+
     return cableList;
   }, [selectedSchemaData]);
 

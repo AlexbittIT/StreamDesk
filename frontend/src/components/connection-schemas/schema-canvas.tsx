@@ -243,10 +243,17 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   }, [devices.length, autoFitted, stageSize.w, stageSize.h]);
 
   const handleDeviceDragEnd = useCallback((deviceId: string, newPosition: { x: number; y: number }) => {
-    setLocalPositions((prev) => ({ ...prev, [deviceId]: newPosition }));
-    const updatedDevices = devices.map((d) => (d.id === deviceId ? { ...d, position: newPosition } : d));
+    const device = devices.find((d) => d.id === deviceId);
+    const w = device ? getDeviceWidth(device) : DEVICE_WIDTH_DEFAULT;
+    const h = device ? calculateDeviceHeight(device) : DEVICE_HEIGHT_BASE;
+    const clamped = {
+      x: Math.max(0, Math.min(SCENE_WIDTH - w, newPosition.x)),
+      y: Math.max(0, Math.min(SCENE_HEIGHT - h, newPosition.y)),
+    };
+    setLocalPositions((prev) => ({ ...prev, [deviceId]: clamped }));
+    const updatedDevices = devices.map((d) => (d.id === deviceId ? { ...d, position: clamped } : d));
     saveToHistory(updatedDevices);
-    onDeviceUpdate(deviceId, newPosition);
+    onDeviceUpdate(deviceId, clamped);
   }, [devices, onDeviceUpdate, saveToHistory]);
 
   useEffect(() => {
@@ -386,11 +393,14 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
         const state = dragStateRef.current;
         if (!state) return;
         const scene = screenToSceneRef.current(e.clientX, e.clientY);
+        const device = devices.find((d) => d.id === state.deviceId);
+        const w = device ? getDeviceWidth(device) : DEVICE_WIDTH_DEFAULT;
+        const h = device ? calculateDeviceHeight(device) : DEVICE_HEIGHT_BASE;
         setLocalPositions((prev) => ({
           ...prev,
           [state.deviceId]: {
-            x: scene.x - state.offset.x,
-            y: scene.y - state.offset.y,
+            x: Math.max(0, Math.min(SCENE_WIDTH - w, scene.x - state.offset.x)),
+            y: Math.max(0, Math.min(SCENE_HEIGHT - h, scene.y - state.offset.y)),
           },
         }));
       });
@@ -765,24 +775,32 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       return { x: 0, y: 0, width: stageSize.w || 1920, height: stageSize.h || 1080 };
     }
 
-    const deviceLeft = devices.map((d) => getDevicePosition(d).x);
-    const deviceTop = devices.map((d) => getDevicePosition(d).y);
-    const deviceRight = devices.map((d) => getDevicePosition(d).x + getDeviceWidth(d));
-    const deviceBottom = devices.map((d) => getDevicePosition(d).y + calculateDeviceHeight(d));
+    const padding = 80;
+    const allLeft = [
+      ...devices.map((d) => getDevicePosition(d).x),
+      ...zones.map((z) => z.position.x),
+    ];
+    const allTop = [
+      ...devices.map((d) => getDevicePosition(d).y),
+      ...zones.map((z) => z.position.y),
+    ];
+    const allRight = [
+      ...devices.map((d) => getDevicePosition(d).x + getDeviceWidth(d)),
+      ...zones.map((z) => z.position.x + z.width),
+    ];
+    const allBottom = [
+      ...devices.map((d) => getDevicePosition(d).y + calculateDeviceHeight(d)),
+      ...zones.map((z) => z.position.y + z.height),
+    ];
 
-    const zoneLeft = zones.map((z) => z.position.x);
-    const zoneTop = zones.map((z) => z.position.y);
-    const zoneRight = zones.map((z) => z.position.x + z.width);
-    const zoneBottom = zones.map((z) => z.position.y + z.height);
-
-    const minX = Math.min(...deviceLeft, ...zoneLeft, 0) - 80;
-    const minY = Math.min(...deviceTop, ...zoneTop, 0) - 80;
-    const maxX = Math.max(...deviceRight, ...zoneRight, stageSize.w || 0) + 80;
-    const maxY = Math.max(...deviceBottom, ...zoneBottom, stageSize.h || 0) + 80;
+    const minX = Math.min(...allLeft) - padding;
+    const minY = Math.min(...allTop) - padding;
+    const maxX = Math.max(...allRight) + padding;
+    const maxY = Math.max(...allBottom) + padding;
 
     return {
-      x: Math.max(0, minX),
-      y: Math.max(0, minY),
+      x: minX,
+      y: minY,
       width: Math.max(800, maxX - minX),
       height: Math.max(450, maxY - minY),
     };
@@ -1061,7 +1079,6 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                     OUT
                   </text>
                   {getPortLayout(device, "in").map(({ port, x: portX, width: portWidth, centerX }, index) => {
-                    const fill = getPortColor(port.portType);
                     const portCode = normalizeConnectionType(port.portType);
                     const showIcon = portCode !== "DEFAULT";
                     const isHovered = hoveredPort?.deviceId === device.id && hoveredPort?.portId === port.id && hoveredPort?.type === "in";
@@ -1100,7 +1117,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                         style={{ cursor: cableDrag ? "crosshair" : "default" }}
                       >
                         <title>{port.name}{port.portType ? ` (${port.portType})` : ""}</title>
-                        <rect width={portWidth} height={PORT_HEIGHT} fill={fill} fillOpacity={portDragState === "incompatible" ? 0.2 : 0.85} stroke="#fff" strokeWidth={1} rx={2} />
+                        <rect width={portWidth} height={PORT_HEIGHT} fill="#C0C0C0" fillOpacity={portDragState === "incompatible" ? 0.2 : 1} stroke="#fff" strokeWidth={1} rx={2} />
                         {!portDragState && (showIcon
                           ? <ConnectorIconUse code={portCode} x={(portWidth - PORT_HEIGHT) / 2} y={0} size={PORT_HEIGHT} />
                           : <text x={portWidth / 2} y={PORT_HEIGHT / 2} textAnchor="middle" dominantBaseline="middle" fontSize={7} fill="#fff" pointerEvents="none">{port.name || ""}</text>
@@ -1120,7 +1137,6 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                   })}
                   {getPortLayout(device, "out").map(({ port, x: portX, width: portWidth, centerX }, index) => {
                     const portY = deviceHeight - PORT_HEIGHT;
-                    const fill = getPortColor(port.portType);
                     const portCode = normalizeConnectionType(port.portType);
                     const showIcon = portCode !== "DEFAULT";
                     const isHovered = hoveredPort?.deviceId === device.id && hoveredPort?.portId === port.id && hoveredPort?.type === "out";
@@ -1159,7 +1175,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                         style={{ cursor: "crosshair" }}
                       >
                         <title>{port.name}{port.portType ? ` (${port.portType})` : ""} — потяните для соединения</title>
-                        <rect width={portWidth} height={PORT_HEIGHT} fill={fill} fillOpacity={portDragState === "incompatible" ? 0.2 : 0.85} stroke="#fff" strokeWidth={1} rx={2} />
+                        <rect width={portWidth} height={PORT_HEIGHT} fill="#C0C0C0" fillOpacity={portDragState === "incompatible" ? 0.2 : 1} stroke="#fff" strokeWidth={1} rx={2} />
                         {!portDragState && (showIcon
                           ? <ConnectorIconUse code={portCode} x={(portWidth - PORT_HEIGHT) / 2} y={0} size={PORT_HEIGHT} />
                           : <text x={portWidth / 2} y={PORT_HEIGHT / 2} textAnchor="middle" dominantBaseline="middle" fontSize={7} fill="#fff" pointerEvents="none">{port.name || ""}</text>
