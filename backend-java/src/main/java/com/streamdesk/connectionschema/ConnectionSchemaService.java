@@ -1,6 +1,9 @@
 package com.streamdesk.connectionschema;
 
+import com.streamdesk.ai.DeepSeekClient;
 import com.streamdesk.config.ApiException;
+import com.streamdesk.connectionschema.dto.AiSchemaRequest;
+import com.streamdesk.connectionschema.dto.AiSchemaResponse;
 import com.streamdesk.connectionschema.dto.ComponentRequest;
 import com.streamdesk.connectionschema.dto.ConnectionRequest;
 import com.streamdesk.connectionschema.dto.SchemaRequest;
@@ -31,11 +34,17 @@ public class ConnectionSchemaService {
 
     private final ConnectionSchemaRepository schemaRepository;
     private final ConnectionSchemaComponentRepository componentRepository;
+    private final AiSchemaService aiSchemaService;
+    private final DeepSeekClient deepSeek;
 
     public ConnectionSchemaService(ConnectionSchemaRepository schemaRepository,
-                                   ConnectionSchemaComponentRepository componentRepository) {
+                                   ConnectionSchemaComponentRepository componentRepository,
+                                   AiSchemaService aiSchemaService,
+                                   DeepSeekClient deepSeek) {
         this.schemaRepository = schemaRepository;
         this.componentRepository = componentRepository;
+        this.aiSchemaService = aiSchemaService;
+        this.deepSeek = deepSeek;
     }
 
     public List<ConnectionSchema> list() {
@@ -146,6 +155,19 @@ public class ConnectionSchemaService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Схема не найдена"));
 
         String prompt = firstNonBlank(promptInput, schema.getDescription(), schema.getName(), "").trim();
+
+        // Умная генерация через DeepSeek: понимает количество и связи («4 камеры» -> 4 ноды).
+        // Эвристика ниже — фолбэк, когда ключ ИИ не задан.
+        if (deepSeek.isConfigured()) {
+            AiSchemaResponse ai = aiSchemaService.generate(new AiSchemaRequest(prompt, null));
+            List<ConnectionSchemaComponent> created = persistAiNodes(schemaId, ai);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("created", created);
+            result.put("connections", ai.connections());
+            result.put("aiAvailable", true);
+            return result;
+        }
+
         List<String> searchTerms = Arrays.stream(prompt.split("[,;\\n]+"))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
@@ -189,6 +211,52 @@ public class ConnectionSchemaService {
         result.put("created", created);
         result.put("aiAvailable", aiAvailable);
         return result;
+    }
+
+    /** Сохраняет ноды AI-схемы как компоненты и раскладывает связи по источникам. */
+    private List<ConnectionSchemaComponent> persistAiNodes(String schemaId, AiSchemaResponse ai) {
+        Map<String, ConnectionSchemaComponent> byNodeId = new LinkedHashMap<>();
+        for (Map<String, Object> node : ai.nodes()) {
+            ConnectionSchemaComponent c = new ConnectionSchemaComponent();
+            c.setId(UUID.randomUUID().toString());
+            c.setSchemaId(schemaId);
+            c.setType(String.valueOf(node.getOrDefault("type", "computer")));
+            c.setName(String.valueOf(node.getOrDefault("name", "Узел")));
+            if (node.get("position") instanceof Map<?, ?> pos) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> posMap = (Map<String, Object>) pos;
+                c.setPosition(new LinkedHashMap<>(posMap));
+            }
+            Map<String, Object> props = new LinkedHashMap<>();
+            props.put("source", "ai-assistant");
+            props.put("portsIn", node.getOrDefault("portsIn", new ArrayList<>()));
+            props.put("portsOut", node.getOrDefault("portsOut", new ArrayList<>()));
+            c.setProperties(props);
+            c.setConnections(new ArrayList<>());
+            byNodeId.put(String.valueOf(node.get("id")), c);
+        }
+
+        // Связи кладём на компонент-источник в формате фронта (ремап id ноды -> id компонента).
+        for (Map<String, Object> conn : ai.connections()) {
+            ConnectionSchemaComponent src = byNodeId.get(String.valueOf(conn.get("fromDeviceId")));
+            ConnectionSchemaComponent dst = byNodeId.get(String.valueOf(conn.get("toDeviceId")));
+            if (src == null || dst == null) {
+                continue;
+            }
+            Map<String, Object> link = new LinkedHashMap<>();
+            link.put("componentId", dst.getId());
+            link.put("port", conn.get("toPortId"));
+            link.put("fromPortId", conn.get("fromPortId"));
+            link.put("cableType", conn.get("cableType"));
+            link.put("protocol", conn.get("protocol"));
+            src.getConnections().add(link);
+        }
+
+        List<ConnectionSchemaComponent> created = new ArrayList<>();
+        for (ConnectionSchemaComponent c : byNodeId.values()) {
+            created.add(componentRepository.save(c));
+        }
+        return created;
     }
 
     private String detectType(String lower) {
