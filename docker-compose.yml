@@ -41,6 +41,9 @@ services:
       # Без ключей стек поднимется, но AI-эндпоинты вернут 503 — задай в .env при необходимости.
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_MODEL: "${DEEPSEEK_MODEL:-deepseek-chat}"
+      # Базовый URL и протокол шлюза (для OpenModel: base-url .../v1, protocol anthropic)
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_PROTOCOL: "${DEEPSEEK_PROTOCOL:-openai}"
       HUGGINGFACE_API_KEY: "${HUGGINGFACE_API_KEY:-}"
       HF_TOKEN: "${HF_TOKEN:-}"
     ports:

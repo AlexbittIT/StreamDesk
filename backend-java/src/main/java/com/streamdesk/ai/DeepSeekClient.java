@@ -37,16 +37,21 @@ public class DeepSeekClient {
     private final String baseUrl;
     private final String model;
     private final int maxAttempts;
+    // openai — стандартный DeepSeek (/chat/completions); anthropic — шлюзы вроде
+    // OpenModel (/messages, протокол Anthropic Messages).
+    private final String protocol;
 
     public DeepSeekClient(ObjectMapper objectMapper,
                           @Value("${app.ai.deepseek.api-key:}") String apiKey,
                           @Value("${app.ai.deepseek.base-url:https://api.deepseek.com}") String baseUrl,
                           @Value("${app.ai.deepseek.model:deepseek-chat}") String model,
+                          @Value("${app.ai.deepseek.protocol:openai}") String protocol,
                           @Value("${app.ai.deepseek.max-attempts:3}") int maxAttempts) {
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
         this.baseUrl = baseUrl == null ? "https://api.deepseek.com" : baseUrl.replaceAll("/+$", "");
         this.model = model;
+        this.protocol = protocol == null ? "openai" : protocol.trim().toLowerCase();
         this.maxAttempts = Math.max(1, maxAttempts);
     }
 
@@ -91,6 +96,14 @@ public class DeepSeekClient {
     }
 
     private String callOnce(String systemPrompt, String userPrompt) throws Exception {
+        if ("anthropic".equals(protocol)) {
+            return callAnthropic(systemPrompt, userPrompt);
+        }
+        return callOpenAi(systemPrompt, userPrompt);
+    }
+
+    /** Стандартный DeepSeek / OpenAI-совместимый шлюз: POST /chat/completions. */
+    private String callOpenAi(String systemPrompt, String userPrompt) throws Exception {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", model);
         payload.put("messages", List.of(
@@ -118,6 +131,46 @@ public class DeepSeekClient {
             throw new ApiException(HttpStatus.BAD_GATEWAY, "Пустой ответ AI");
         }
         return content.asText();
+    }
+
+    /** Шлюз с протоколом Anthropic Messages (OpenModel и т.п.): POST /messages. */
+    private String callAnthropic(String systemPrompt, String userPrompt) throws Exception {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("model", model);
+        payload.put("max_tokens", 8192);
+        payload.put("temperature", 0.2);
+        payload.put("system", systemPrompt);
+        payload.put("messages", List.of(Map.of("role", "user", "content", userPrompt)));
+
+        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/messages"))
+                .timeout(Duration.ofSeconds(120))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + apiKey)
+                .header("anthropic-version", "2023-06-01")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() / 100 != 2) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "AI-шлюз вернул статус " + response.statusCode());
+        }
+        JsonNode root = objectMapper.readTree(response.body());
+        // Ответ Anthropic: content[] из блоков; берём только текстовые (thinking пропускаем).
+        StringBuilder sb = new StringBuilder();
+        JsonNode content = root.path("content");
+        if (content.isArray()) {
+            for (JsonNode block : content) {
+                if ("text".equals(block.path("type").asText())) {
+                    sb.append(block.path("text").asText());
+                }
+            }
+        }
+        String text = sb.toString();
+        if (text.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "Пустой ответ AI");
+        }
+        return text;
     }
 
     private JsonNode parseJson(String content) {
