@@ -1,5 +1,5 @@
 import { Switch, Route, useLocation } from "wouter";
-import { queryClient } from "./lib/queryClient";
+import { queryClient, apiUrl } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -278,11 +278,19 @@ function App() {
   }, []);
 
   const handleLogin = (userData: any) => {
+    // Сбрасываем кэш предыдущего пользователя, чтобы не показывать его данные новому.
+    queryClient.clear();
     setUser(userData);
     localStorage.setItem('streamstudio_user', JSON.stringify(userData));
   };
 
   const handleLogout = () => {
+    // Гасим серверную сессию (а не только локальные данные), иначе cookie остаётся
+    // валидным и запросы продолжают выполняться от имени вышедшего пользователя.
+    try {
+      fetch(apiUrl('/api/auth/logout'), { method: 'POST', credentials: 'include' }).catch(() => {});
+    } catch { /* ignore */ }
+    queryClient.clear();
     setUser(null);
     localStorage.removeItem('streamstudio_user');
     // Перенаправляем на страницу логина
