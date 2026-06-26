@@ -46,7 +46,7 @@ public class EventController {
         if (!companyService.hasWorkspaceAccess(user)) {
             return List.of();
         }
-        return eventService.listEvents(userId, start, end);
+        return eventService.listEvents(user, userId, start, end);
     }
 
     // POST /api/events
@@ -57,28 +57,34 @@ public class EventController {
 
     // PUT /api/events/{id}
     @PutMapping("/{id}")
-    public Event update(@PathVariable String id, @RequestBody EventRequest req) {
+    public Event update(@PathVariable String id, @RequestBody EventRequest req,
+                        @AuthenticationPrincipal AuthenticatedUser user) {
+        eventService.getAccessibleEvent(id, user);
         return eventService.updateEvent(id, req);
     }
 
     // DELETE /api/events/{id}
     @DeleteMapping("/{id}")
-    public Map<String, Boolean> delete(@PathVariable String id) {
+    public Map<String, Boolean> delete(@PathVariable String id, @AuthenticationPrincipal AuthenticatedUser user) {
+        eventService.getAccessibleEvent(id, user);
         eventService.deleteEvent(id);
         return Map.of("success", true);
     }
 
     // GET /api/events/{eventId}/participants
     @GetMapping("/{eventId}/participants")
-    public List<ParticipantResponse> participants(@PathVariable String eventId) {
-        return eventService.getParticipants(eventId);
+    public List<ParticipantResponse> participants(@PathVariable String eventId,
+                                                  @AuthenticationPrincipal AuthenticatedUser user) {
+        return eventService.getParticipants(eventId, user);
     }
 
     // PATCH /api/events/{eventId}/participants/{participantId}
     @PatchMapping("/{eventId}/participants/{participantId}")
     public EventParticipant updateParticipant(@PathVariable String eventId,
                                               @PathVariable String participantId,
-                                              @RequestBody Map<String, String> body) {
+                                              @RequestBody Map<String, String> body,
+                                              @AuthenticationPrincipal AuthenticatedUser user) {
+        eventService.getAccessibleEvent(eventId, user);
         return eventService.updateParticipantStatus(participantId, body != null ? body.get("status") : null);
     }
 }

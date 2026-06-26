@@ -101,7 +101,8 @@ attached_assets/
 *.sqlite3
 *.sql
 !create_connection_schemas_tables.sql
-!create_connection_schemas_tables.sql
+!create_equipment_ports_tables.sql
+!add_role_data_scope.sql
 *.db-journal
 *.db-shm
 *.db-wal

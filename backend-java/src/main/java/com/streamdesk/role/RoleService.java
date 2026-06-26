@@ -1,5 +1,6 @@
 package com.streamdesk.role;
 
+import com.streamdesk.access.DataScope;
 import com.streamdesk.config.ApiException;
 import com.streamdesk.role.dto.RoleRequest;
 import org.springframework.http.HttpStatus;
@@ -44,6 +45,9 @@ public class RoleService {
         if (!isBlank(req.color())) {
             role.setColor(req.color());
         }
+        if (!isBlank(req.dataScope())) {
+            role.setDataScope(DataScope.parse(req.dataScope()).dbValue());
+        }
         if (req.isSystem() != null) {
             role.setIsSystem(req.isSystem());
         }
@@ -53,9 +57,24 @@ public class RoleService {
     @Transactional
     public Role update(String id, RoleRequest req) {
         Role role = getById(id);
-        if (Boolean.TRUE.equals(role.getIsSystem())) {
-            throw ApiException.forbidden("Cannot modify system role");
+        boolean system = Boolean.TRUE.equals(role.getIsSystem());
+
+        // Уровень видимости разрешено менять и у системных ролей — это безопасное поле,
+        // именно через него настраивается область данных «свои/отдел/все».
+        if (!isBlank(req.dataScope())) {
+            role.setDataScope(DataScope.parse(req.dataScope()).dbValue());
         }
+
+        // Остальные поля у системных ролей менять нельзя (как и раньше).
+        boolean changesOtherFields = req.name() != null || req.displayName() != null
+                || req.description() != null || req.permissions() != null || req.color() != null;
+        if (system) {
+            if (changesOtherFields) {
+                throw ApiException.forbidden("Cannot modify system role");
+            }
+            return repository.save(role);
+        }
+
         if (req.name() != null) {
             role.setName(req.name());
         }

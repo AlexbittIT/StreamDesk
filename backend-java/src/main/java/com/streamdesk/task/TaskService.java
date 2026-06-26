@@ -2,12 +2,13 @@ package com.streamdesk.task;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.streamdesk.access.DataScope;
+import com.streamdesk.access.DataScopeService;
 import com.streamdesk.auth.AuthenticatedUser;
 import com.streamdesk.company.CompanyService;
 import com.streamdesk.config.ApiException;
 import com.streamdesk.config.TimeParse;
 import com.streamdesk.notification.NotificationService;
-import com.streamdesk.project.Project;
 import com.streamdesk.project.ProjectService;
 import com.streamdesk.task.dto.CommentRequest;
 import com.streamdesk.task.dto.TaskRequest;
@@ -23,7 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Логика задач, комментариев и истории — перенос /api/tasks из backend/routes.ts.
@@ -41,6 +41,7 @@ public class TaskService {
     private final CompanyService companyService;
     private final NotificationService notificationService;
     private final ProjectService projectService;
+    private final DataScopeService dataScopeService;
     private final ObjectMapper objectMapper;
     private final YougileTaskIntegration yougileTaskIntegration;
 
@@ -50,6 +51,7 @@ public class TaskService {
                        CompanyService companyService,
                        NotificationService notificationService,
                        ProjectService projectService,
+                       DataScopeService dataScopeService,
                        ObjectMapper objectMapper,
                        YougileTaskIntegration yougileTaskIntegration) {
         this.taskRepository = taskRepository;
@@ -58,6 +60,7 @@ public class TaskService {
         this.companyService = companyService;
         this.notificationService = notificationService;
         this.projectService = projectService;
+        this.dataScopeService = dataScopeService;
         this.objectMapper = objectMapper;
         this.yougileTaskIntegration = yougileTaskIntegration;
     }
@@ -82,25 +85,36 @@ public class TaskService {
         }
 
         // «Мои задачи»: только локальные (без привязки к доске YouGile), чтобы не дублировать.
-        Set<String> companyIds = new HashSet<>(companyService.getUserCompanyIds(user));
-        List<String> permissions = user != null && user.permissions() != null ? user.permissions() : List.of();
-        boolean unrestricted = user != null && ("admin".equals(user.role()) || permissions.contains("tasks:view_all"));
-
-        // Проекты, доступные пользователю (для доступа к задачам этих проектов) — как в Express.
-        Set<String> accessibleProjectIds = (!unrestricted && user != null)
-                ? projectService.listProjects(user).stream().map(Project::getId).collect(Collectors.toSet())
-                : Set.of();
-
+        // Доступ к каждой задаче определяется уровнем видимости роли (свои/отдел/все) + барьером компании.
+        if (user == null) {
+            return List.of();
+        }
+        TaskAccessContext ctx = buildAccessContext(user);
         return tasks.stream()
                 .filter(t -> isBlank(t.getYougileBoardId()))
-                .filter(t -> unrestricted || user == null
-                        || hasTaskAccess(t, user, companyIds, permissions, accessibleProjectIds))
+                .filter(t -> canAccessTask(t, user, ctx))
                 .toList();
     }
 
+    /** Получение задачи с проверкой доступа — закрывает обход по прямой ссылке (GET /api/tasks/{id}). */
+    public Task getTask(String id, AuthenticatedUser user) {
+        Task task = taskRepository.findById(id)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Task not found"));
+        requireAccess(task, user);
+        return task;
+    }
+
+    /** Внутренний доступ без проверки прав (для интеграций/служебных вызовов). */
     public Task getTask(String id) {
         return taskRepository.findById(id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Task not found"));
+    }
+
+    /** Бросает 403, если задача вне области видимости пользователя. */
+    public void requireAccess(Task task, AuthenticatedUser user) {
+        if (!canAccessTask(task, user, buildAccessContext(user))) {
+            throw ApiException.forbidden("Нет доступа к этой задаче");
+        }
     }
 
     @Transactional
@@ -334,13 +348,51 @@ public class TaskService {
 
     // --- helpers ---
 
-    private boolean hasTaskAccess(Task task, AuthenticatedUser user, Set<String> companyIds,
-                                  List<String> permissions, Set<String> accessibleProjectIds) {
-        return user.id().equals(task.getCreatorId())
-                || user.id().equals(task.getAssigneeId())
-                || (task.getCompanyId() != null && companyIds.contains(task.getCompanyId()))
-                || (task.getProjectId() != null && accessibleProjectIds.contains(task.getProjectId()))
-                || permissions.contains("tasks:view");
+    /**
+     * Предрасчёт контекста доступа один раз на запрос (компании, отдел, уровень), чтобы не
+     * дёргать БД на каждую задачу при фильтрации списка.
+     */
+    private TaskAccessContext buildAccessContext(AuthenticatedUser user) {
+        DataScope scope = dataScopeService.resolveScope(user);
+        Set<String> companyIds = new HashSet<>(companyService.getUserCompanyIds(user));
+        // Множество «своих по отделу» нужно только на уровне DEPARTMENT — иначе не считаем.
+        Set<String> departmentPeers = scope == DataScope.DEPARTMENT
+                ? dataScopeService.departmentPeerUserIds(user)
+                : Set.of();
+        return new TaskAccessContext(scope, companyIds, departmentPeers);
+    }
+
+    private boolean canAccessTask(Task task, AuthenticatedUser user, TaskAccessContext ctx) {
+        if (task == null || user == null) {
+            return false;
+        }
+        // Свои задачи (создатель/исполнитель) видны всегда, на любом уровне.
+        boolean own = user.id().equals(task.getCreatorId()) || user.id().equals(task.getAssigneeId());
+        if (own) {
+            return true;
+        }
+        // Админ видит всё, поверх барьера компаний (в т.ч. задачи без company_id).
+        if (user.isAdmin()) {
+            return true;
+        }
+        if (ctx.scope() == DataScope.OWN) {
+            return false;
+        }
+        // Барьер компании действует всегда (даже на уровне «все»).
+        boolean inCompany = task.getCompanyId() != null && ctx.companyIds().contains(task.getCompanyId());
+        if (!inCompany) {
+            return false;
+        }
+        if (ctx.scope() == DataScope.ALL) {
+            return true;
+        }
+        // DEPARTMENT: создатель или исполнитель должен быть в одном отделе с пользователем.
+        return ctx.departmentPeers().contains(task.getCreatorId())
+                || ctx.departmentPeers().contains(task.getAssigneeId());
+    }
+
+    /** Снимок параметров доступа на время одного запроса. */
+    private record TaskAccessContext(DataScope scope, Set<String> companyIds, Set<String> departmentPeers) {
     }
 
     private void recordHistory(String taskId, String userId, String action,
