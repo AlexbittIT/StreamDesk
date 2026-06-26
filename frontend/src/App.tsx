@@ -1,5 +1,5 @@
 import { Switch, Route, useLocation } from "wouter";
-import { queryClient } from "./lib/queryClient";
+import { queryClient, apiUrl } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -30,6 +30,7 @@ import VmixScheduler from "@/pages/vmix-scheduler";
 import ManagerDashboard from "@/pages/manager-dashboard";
 import Terminal from "@/pages/terminal";
 import ConnectionSchemas from "@/pages/connection-schemas";
+import EquipmentPortsReview from "@/pages/equipment-ports-review";
 import OtisOnAir from "@/pages/otis-onair";
 import Maps from "@/pages/maps";
 import RoomBooking from "@/pages/room-booking";
@@ -50,7 +51,19 @@ function StubModeBanner() {
     retry: false,
     refetchInterval: false,
   });
-  if (!data?.stubMode) return null;
+  const [isFullscreenActive, setIsFullscreenActive] = useState(
+    () => document.body.classList.contains('fullscreen-overlay-active')
+  );
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsFullscreenActive(document.body.classList.contains('fullscreen-overlay-active'));
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  if (!data?.stubMode || isFullscreenActive) return null;
   return (
     <div className="bg-amber-500/90 text-amber-950 text-center py-1 px-2 sm:px-3 text-xs font-medium flex items-center justify-center gap-1.5 shrink-0">
       <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
@@ -131,6 +144,11 @@ function Router({ user }: { user: any }) {
       <Route path="/vmix-scheduler">
         <ProtectedRoute user={user}>
           <VmixScheduler />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/connection-schemas/port-review">
+        <ProtectedRoute user={user}>
+          <EquipmentPortsReview />
         </ProtectedRoute>
       </Route>
       <Route path="/connection-schemas">
@@ -260,11 +278,19 @@ function App() {
   }, []);
 
   const handleLogin = (userData: any) => {
+    // Сбрасываем кэш предыдущего пользователя, чтобы не показывать его данные новому.
+    queryClient.clear();
     setUser(userData);
     localStorage.setItem('streamstudio_user', JSON.stringify(userData));
   };
 
   const handleLogout = () => {
+    // Гасим серверную сессию (а не только локальные данные), иначе cookie остаётся
+    // валидным и запросы продолжают выполняться от имени вышедшего пользователя.
+    try {
+      fetch(apiUrl('/api/auth/logout'), { method: 'POST', credentials: 'include' }).catch(() => {});
+    } catch { /* ignore */ }
+    queryClient.clear();
     setUser(null);
     localStorage.removeItem('streamstudio_user');
     // Перенаправляем на страницу логина

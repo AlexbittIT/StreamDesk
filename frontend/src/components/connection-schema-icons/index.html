@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Визуальный алфавит схем · StreamDesk</title>
+<style>
+  :root { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; color:#0F172A; }
+  body { margin:0; padding:32px; background:#F1F5F9; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  h2 { font-size:18px; margin:36px 0 8px; border-bottom:2px solid #E2E8F0; padding-bottom:6px; }
+  h3 { font-size:14px; margin:20px 0 10px; text-transform:uppercase; letter-spacing:.04em; }
+  .muted { color:#94A3B8; font-weight:400; text-transform:none; letter-spacing:0; }
+  .sub { color:#64748B; margin:0 0 8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(108px,1fr)); gap:12px; }
+  .card { margin:0; background:#fff; border:1px solid #E2E8F0; border-radius:12px; padding:12px 8px; text-align:center; }
+  .card img { display:block; margin:0 auto 6px; }
+  figcaption { font-size:11px; line-height:1.3; }
+  figcaption b { display:block; font-family:ui-monospace,monospace; font-size:11px; }
+  figcaption span { display:block; color:#64748B; }
+  .legend img { max-width:100%; height:auto; border-radius:12px; }
+</style></head>
+<body>
+  <h1>Визуальный алфавит схем подключения</h1>
+  <p class="sub">StreamDesk · словарь типов schema v1.0 · сгенерировано 2026-06-23. Все иконки — SVG (вектор).</p>
+
+  <h2>1. Иконки оборудования (категории)</h2>
+  <div class="grid">
+  <figure class="card">
+    <img src="categories/video.svg" width="64" height="64" alt="Видео"/>
+    <figcaption><b>Видео</b><span>video</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="categories/audio.svg" width="64" height="64" alt="Аудио"/>
+    <figcaption><b>Аудио</b><span>audio</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="categories/network.svg" width="64" height="64" alt="Сеть"/>
+    <figcaption><b>Сеть</b><span>network</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="categories/data.svg" width="64" height="64" alt="Данные"/>
+    <figcaption><b>Данные</b><span>data</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="categories/control.svg" width="64" height="64" alt="Управление"/>
+    <figcaption><b>Управление</b><span>control</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="categories/power.svg" width="64" height="64" alt="Питание"/>
+    <figcaption><b>Питание</b><span>power</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="categories/wireless.svg" width="64" height="64" alt="Беспроводное"/>
+    <figcaption><b>Беспроводное</b><span>wireless</span></figcaption>
+  </figure></div>
+
+  <h2>2. Иконки разъёмов / кабелей (42 типов)</h2>
+  
+  <h3>Видео <span class="muted">video</span></h3>
+  <div class="grid">
+  <figure class="card">
+    <img src="connectors/HDMI.svg" width="64" height="64" alt="HDMI"/>
+    <figcaption><b>HDMI</b><span>HDMI</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/SDI.svg" width="64" height="64" alt="SDI"/>
+    <figcaption><b>SDI</b><span>SDI</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/DISPLAYPORT.svg" width="64" height="64" alt="DISPLAYPORT"/>
+    <figcaption><b>DISPLAYPORT</b><span>DisplayPort</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/DVI.svg" width="64" height="64" alt="DVI"/>
+    <figcaption><b>DVI</b><span>DVI</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/VGA.svg" width="64" height="64" alt="VGA"/>
+    <figcaption><b>VGA</b><span>VGA</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/GENLOCK.svg" width="64" height="64" alt="GENLOCK"/>
+    <figcaption><b>GENLOCK</b><span>Генлок</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/NDI.svg" width="64" height="64" alt="NDI"/>
+    <figcaption><b>NDI</b><span>NDI</span></figcaption>
+  </figure></div>
+  <h3>Данные <span class="muted">data</span></h3>
+  <div class="grid">
+  <figure class="card">
+    <img src="connectors/FIBER.svg" width="64" height="64" alt="FIBER"/>
+    <figcaption><b>FIBER</b><span>Оптика</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/USB.svg" width="64" height="64" alt="USB"/>
+    <figcaption><b>USB</b><span>USB</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/USB_C.svg" width="64" height="64" alt="USB_C"/>
+    <figcaption><b>USB_C</b><span>USB-C</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/THUNDERBOLT.svg" width="64" height="64" alt="THUNDERBOLT"/>
+    <figcaption><b>THUNDERBOLT</b><span>Thunderbolt</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/FIREWIRE.svg" width="64" height="64" alt="FIREWIRE"/>
+    <figcaption><b>FIREWIRE</b><span>FireWire</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/LIGHTNING.svg" width="64" height="64" alt="LIGHTNING"/>
+    <figcaption><b>LIGHTNING</b><span>Lightning</span></figcaption>
+  </figure></div>
+  <h3>Аудио <span class="muted">audio</span></h3>
+  <div class="grid">
+  <figure class="card">
+    <img src="connectors/XLR.svg" width="64" height="64" alt="XLR"/>
+    <figcaption><b>XLR</b><span>XLR</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/RCA.svg" width="64" height="64" alt="RCA"/>
+    <figcaption><b>RCA</b><span>RCA (тюльпан)</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/JACK.svg" width="64" height="64" alt="JACK"/>
+    <figcaption><b>JACK</b><span>Джек</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/XLR_JACK.svg" width="64" height="64" alt="XLR_JACK"/>
+    <figcaption><b>XLR_JACK</b><span>XLR/Джек комбо</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/MINI_JACK.svg" width="64" height="64" alt="MINI_JACK"/>
+    <figcaption><b>MINI_JACK</b><span>Мини-джек</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/AES_EBU.svg" width="64" height="64" alt="AES_EBU"/>
+    <figcaption><b>AES_EBU</b><span>AES/EBU</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/TOSLINK.svg" width="64" height="64" alt="TOSLINK"/>
+    <figcaption><b>TOSLINK</b><span>Тослинк</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/SPDIF_COAX.svg" width="64" height="64" alt="SPDIF_COAX"/>
+    <figcaption><b>SPDIF_COAX</b><span>S/PDIF (коакс)</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/SPEAKON.svg" width="64" height="64" alt="SPEAKON"/>
+    <figcaption><b>SPEAKON</b><span>Спикон</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/DANTE.svg" width="64" height="64" alt="DANTE"/>
+    <figcaption><b>DANTE</b><span>Dante</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/AES67.svg" width="64" height="64" alt="AES67"/>
+    <figcaption><b>AES67</b><span>AES67</span></figcaption>
+  </figure></div>
+  <h3>Управление <span class="muted">control</span></h3>
+  <div class="grid">
+  <figure class="card">
+    <img src="connectors/MIDI.svg" width="64" height="64" alt="MIDI"/>
+    <figcaption><b>MIDI</b><span>MIDI</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/DMX.svg" width="64" height="64" alt="DMX"/>
+    <figcaption><b>DMX</b><span>DMX</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/ARTNET.svg" width="64" height="64" alt="ARTNET"/>
+    <figcaption><b>ARTNET</b><span>Art-Net</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/SACN.svg" width="64" height="64" alt="SACN"/>
+    <figcaption><b>SACN</b><span>sACN</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/RS232.svg" width="64" height="64" alt="RS232"/>
+    <figcaption><b>RS232</b><span>RS-232</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/RS485.svg" width="64" height="64" alt="RS485"/>
+    <figcaption><b>RS485</b><span>RS-485</span></figcaption>
+  </figure></div>
+  <h3>Сеть <span class="muted">network</span></h3>
+  <div class="grid">
+  <figure class="card">
+    <img src="connectors/ETHERNET.svg" width="64" height="64" alt="ETHERNET"/>
+    <figcaption><b>ETHERNET</b><span>Ethernet</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/ETHERCON.svg" width="64" height="64" alt="ETHERCON"/>
+    <figcaption><b>ETHERCON</b><span>Эзеркон</span></figcaption>
+  </figure></div>
+  <h3>Питание <span class="muted">power</span></h3>
+  <div class="grid">
+  <figure class="card">
+    <img src="connectors/POWER.svg" width="64" height="64" alt="POWER"/>
+    <figcaption><b>POWER</b><span>Питание (общее)</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/POWERCON.svg" width="64" height="64" alt="POWERCON"/>
+    <figcaption><b>POWERCON</b><span>Пауэркон</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/IEC.svg" width="64" height="64" alt="IEC"/>
+    <figcaption><b>IEC</b><span>IEC разъём</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/SCHUKO.svg" width="64" height="64" alt="SCHUKO"/>
+    <figcaption><b>SCHUKO</b><span>Шуко</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/EDISON.svg" width="64" height="64" alt="EDISON"/>
+    <figcaption><b>EDISON</b><span>Эдисон</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/BANANA.svg" width="64" height="64" alt="BANANA"/>
+    <figcaption><b>BANANA</b><span>Банан</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/TERMINAL_BLOCK.svg" width="64" height="64" alt="TERMINAL_BLOCK"/>
+    <figcaption><b>TERMINAL_BLOCK</b><span>Терминальный блок</span></figcaption>
+  </figure></div>
+  <h3>Беспроводное <span class="muted">wireless</span></h3>
+  <div class="grid">
+  <figure class="card">
+    <img src="connectors/WIRELESS.svg" width="64" height="64" alt="WIRELESS"/>
+    <figcaption><b>WIRELESS</b><span>Беспроводное</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/WIFI.svg" width="64" height="64" alt="WIFI"/>
+    <figcaption><b>WIFI</b><span>Wi-Fi</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="connectors/BLUETOOTH.svg" width="64" height="64" alt="BLUETOOTH"/>
+    <figcaption><b>BLUETOOTH</b><span>Bluetooth</span></figcaption>
+  </figure></div>
+
+  <h2>3. Состояния портов</h2>
+  <div class="grid">
+  <figure class="card">
+    <img src="port-states/free.svg" width="64" height="64" alt="Свободен"/>
+    <figcaption><b>Свободен</b><span>Free</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="port-states/occupied.svg" width="64" height="64" alt="Занят"/>
+    <figcaption><b>Занят</b><span>Occupied</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="port-states/incompatible.svg" width="64" height="64" alt="Несовместим"/>
+    <figcaption><b>Несовместим</b><span>Incompatible</span></figcaption>
+  </figure></div>
+
+  <h2>4. Состояния валидации соединения</h2>
+  <div class="grid">
+  <figure class="card">
+    <img src="validation/valid.svg" width="64" height="64" alt="Корректно"/>
+    <figcaption><b>Корректно</b><span>Valid</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="validation/warning.svg" width="64" height="64" alt="Предупреждение"/>
+    <figcaption><b>Предупреждение</b><span>Warning</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="validation/invalid.svg" width="64" height="64" alt="Ошибка"/>
+    <figcaption><b>Ошибка</b><span>Invalid</span></figcaption>
+  </figure>
+  <figure class="card">
+    <img src="validation/pending.svg" width="64" height="64" alt="Не проверено"/>
+    <figcaption><b>Не проверено</b><span>Pending</span></figcaption>
+  </figure></div>
+
+  <h2>5. Легенда цветов</h2>
+  <div class="legend"><img src="legend.svg" alt="Легенда цветов кабелей"/></div>
+</body></html>

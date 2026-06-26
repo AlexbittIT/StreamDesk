@@ -166,6 +166,20 @@ export default function Admin() {
     },
   });
 
+  const updateRoleScopeMutation = useMutation({
+    mutationFn: async ({ roleId, dataScope }: { roleId: string; dataScope: string }) => {
+      const response = await apiRequest("PUT", `/api/roles/${roleId}`, { dataScope });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/roles"] });
+      toast({ title: "Успешно", description: "Уровень видимости роли обновлён" });
+    },
+    onError: () => {
+      toast({ title: "Ошибка", description: "Не удалось обновить уровень видимости", variant: "destructive" });
+    },
+  });
+
   const deleteUserMutation = useMutation({
     mutationFn: (userId: string) => apiRequest("DELETE", `/api/users/${userId}`),
     onSuccess: () => {
@@ -230,6 +244,14 @@ export default function Admin() {
     return roleObj?.displayName || role;
   };
 
+  const scopeHint = (scope: string) => {
+    switch (scope) {
+      case "own": return "только свои записи и назначенные ему";
+      case "department": return "записи своего отдела";
+      default: return "все записи по своей компании";
+    }
+  };
+
   const handleEditPermissions = (user: User) => {
     setSelectedUser(user);
     setUserPermissions((user.permissions as string[]) || []);
@@ -275,6 +297,9 @@ export default function Admin() {
   };
 
   const currentPermissions = Array.isArray(currentUser?.permissions) ? currentUser.permissions : [];
+  const canManageRoles =
+    currentUser?.role === "admin" ||
+    currentPermissions.includes(PERMISSIONS.ROLES_MANAGE);
   const canOpenAdmin =
     currentUser?.role === "admin" ||
     currentUser?.role === "manager" ||
@@ -574,7 +599,7 @@ export default function Admin() {
                     <div className="text-sm text-gray-500 mb-2">
                       {(role.permissions as string[])?.length || 0} разрешений
                     </div>
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1 mb-4">
                       {(role.permissions as string[])?.slice(0, 5).map(perm => (
                         <Badge key={perm} variant="outline" className="text-xs">
                           {perm.split(':')[1]}
@@ -585,6 +610,26 @@ export default function Admin() {
                           +{(role.permissions as string[]).length - 5}
                         </Badge>
                       )}
+                    </div>
+                    <div className="border-t pt-3">
+                      <Label className="text-xs text-gray-500 mb-1.5 block">Область видимости данных</Label>
+                      <Select
+                        value={(role as any).dataScope || "all"}
+                        onValueChange={(value) => updateRoleScopeMutation.mutate({ roleId: role.id, dataScope: value })}
+                        disabled={!canManageRoles || updateRoleScopeMutation.isPending}
+                      >
+                        <SelectTrigger className="h-9" data-testid={`select-role-scope-${role.id}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="own">Только свои</SelectItem>
+                          <SelectItem value="department">Свой отдел</SelectItem>
+                          <SelectItem value="all">Все по компании</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-gray-400 mt-1.5">
+                        Сотрудник видит {scopeHint((role as any).dataScope || "all")}.
+                      </p>
                     </div>
                   </CardContent>
                 </Card>

@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHand
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { ZoomIn, ZoomOut, Maximize2, Undo2, Redo2, FileImage, FileText } from "lucide-react";
-import { SIGNAL_COLOR_PRESET } from "./signal-colors";
+import { CONNECTOR_STYLES } from "./signal-colors";
+import { ConnectorIconDefs, ConnectorIconUse } from "./connector-icons";
 
 interface Port {
   id: string;
@@ -61,8 +62,12 @@ interface SchemaCanvasProps {
   selectedZoneId?: string | null;
   /** Создание кабеля: от выходного порта к входному */
   onAddConnection?: (from: { deviceId: string; portId: string }, to: { deviceId: string; portId: string }, protocol?: string) => void;
+  /** Удаление кабеля (двойной клик по связи) */
+  onDeleteConnection?: (cable: Cable) => void;
   /** Удаление устройства (правый клик → Удалить) */
   onDeviceDelete?: (deviceId: string) => void;
+  /** ID компонентов с ошибками валидации — для красной подсветки на холсте. */
+  validationComponentIds?: string[];
 }
 
 export interface SchemaCanvasRef {
@@ -99,7 +104,9 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   onZoneSelect,
   selectedZoneId,
   onAddConnection,
+  onDeleteConnection,
   onDeviceDelete,
+  validationComponentIds,
 }, ref) {
   const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -236,10 +243,17 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   }, [devices.length, autoFitted, stageSize.w, stageSize.h]);
 
   const handleDeviceDragEnd = useCallback((deviceId: string, newPosition: { x: number; y: number }) => {
-    setLocalPositions((prev) => ({ ...prev, [deviceId]: newPosition }));
-    const updatedDevices = devices.map((d) => (d.id === deviceId ? { ...d, position: newPosition } : d));
+    const device = devices.find((d) => d.id === deviceId);
+    const w = device ? getDeviceWidth(device) : DEVICE_WIDTH_DEFAULT;
+    const h = device ? calculateDeviceHeight(device) : DEVICE_HEIGHT_BASE;
+    const clamped = {
+      x: Math.max(0, Math.min(SCENE_WIDTH - w, newPosition.x)),
+      y: Math.max(0, Math.min(SCENE_HEIGHT - h, newPosition.y)),
+    };
+    setLocalPositions((prev) => ({ ...prev, [deviceId]: clamped }));
+    const updatedDevices = devices.map((d) => (d.id === deviceId ? { ...d, position: clamped } : d));
     saveToHistory(updatedDevices);
-    onDeviceUpdate(deviceId, newPosition);
+    onDeviceUpdate(deviceId, clamped);
   }, [devices, onDeviceUpdate, saveToHistory]);
 
   useEffect(() => {
@@ -280,13 +294,21 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       let connected = false;
 
       const applyConnection = (targetDeviceId: string, targetPortId: string, targetType: "in" | "out") => {
-        if (targetDeviceId === cableDrag.fromDeviceId) return;
+        if (targetDeviceId === cableDrag.fromDeviceId) {
+          toast({ title: "Связь не создана", description: "Нельзя соединить устройство с самим собой.", variant: "destructive" });
+          connected = true;
+          return;
+        }
         let from = { deviceId: cableDrag.fromDeviceId, portId: cableDrag.fromPortId };
         let to = { deviceId: targetDeviceId, portId: targetPortId };
         if (cableDrag.fromType === "in" && targetType === "out") {
           from = { deviceId: targetDeviceId, portId: targetPortId };
           to = { deviceId: cableDrag.fromDeviceId, portId: cableDrag.fromPortId };
         } else if (!(cableDrag.fromType === "out" && targetType === "in")) {
+          const dirFrom = cableDrag.fromType === "in" ? "вход" : "выход";
+          const dirTo = targetType === "in" ? "вход" : "выход";
+          toast({ title: "Связь не создана", description: `Нельзя соединять ${dirFrom} с ${dirTo}. Сигнал должен идти от выхода ко входу.`, variant: "destructive" });
+          connected = true;
           return;
         }
         onAddConnection(from, to);
@@ -371,11 +393,14 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
         const state = dragStateRef.current;
         if (!state) return;
         const scene = screenToSceneRef.current(e.clientX, e.clientY);
+        const device = devices.find((d) => d.id === state.deviceId);
+        const w = device ? getDeviceWidth(device) : DEVICE_WIDTH_DEFAULT;
+        const h = device ? calculateDeviceHeight(device) : DEVICE_HEIGHT_BASE;
         setLocalPositions((prev) => ({
           ...prev,
           [state.deviceId]: {
-            x: scene.x - state.offset.x,
-            y: scene.y - state.offset.y,
+            x: Math.max(0, Math.min(SCENE_WIDTH - w, scene.x - state.offset.x)),
+            y: Math.max(0, Math.min(SCENE_HEIGHT - h, scene.y - state.offset.y)),
           },
         }));
       });
@@ -476,44 +501,88 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
     const pos = localPositions[device.id] ?? device.position;
     const layout = getPortLayout(device, port.type);
     const item = layout[index];
-    const portY = port.type === "in" ? pos.y : pos.y + deviceHeight - PORT_HEIGHT;
-    const portX = pos.x + (item?.x ?? 0);
-    return { x: portX, y: portY };
+    const centerY = port.type === "in"
+      ? pos.y + PORT_HEIGHT / 2
+      : pos.y + deviceHeight - PORT_HEIGHT / 2;
+    const centerX = pos.x + (item?.x ?? 0) + (item?.width ?? 0) / 2;
+    return { x: centerX, y: centerY };
   };
 
   const normalizeConnectionType = (value?: string): string => {
     const raw = (value || "").trim().toUpperCase();
-    if (!raw) return "";
+    if (!raw) return "DEFAULT";
+    if (CONNECTOR_STYLES[raw]) return raw;
     const cleaned = raw
       .replace(/\b(INPUT|OUTPUT|IN|OUT|PORT|ПОРТ|ВХОД|ВЫХОД)\b/g, " ")
       .replace(/[#:()[\],]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-
-    if (cleaned.includes("USB C") || cleaned.includes("USBC") || cleaned.includes("TYPE C")) return "USB-C";
-    if (cleaned.includes("DISPLAYPORT") || cleaned === "DP") return "DP";
+    if (CONNECTOR_STYLES[cleaned]) return cleaned;
+    // Video
     if (cleaned.includes("HDMI")) return "HDMI";
-    if (cleaned.includes("SDI")) return "SDI";
-    if (cleaned.includes("RJ45")) return "RJ45";
-    if (cleaned.includes("ETHERNET") || cleaned.includes("ETHERNET")) return "ETH";
-    if (cleaned.includes("LAN")) return "LAN";
-    if (cleaned.includes("USB")) return "USB";
-    if (cleaned.includes("BNC")) return "BNC";
-    if (cleaned.includes("XLR")) return "XLR";
-    if (cleaned.includes("TRS") || cleaned.includes("JACK")) return "TRS";
-    if (cleaned.includes("RCA")) return "RCA";
-    if (cleaned.includes("WIRELESS") || cleaned.includes("WIFI") || cleaned.includes("RF")) return "WIRELESS";
+    if (cleaned.includes("SDI") || cleaned.includes("BNC VIDEO")) return "SDI";
+    if (cleaned.includes("DISPLAYPORT") || cleaned === "DP" || cleaned.includes("MINI DP")) return "DISPLAYPORT";
+    if (cleaned.includes("DVI")) return "DVI";
+    if (cleaned === "VGA" || cleaned.includes("D-SUB")) return "VGA";
+    if (cleaned.includes("GENLOCK") || cleaned.includes("BLACK BURST") || cleaned.includes("REFERENCE SYNC")) return "GENLOCK";
+    if (cleaned.includes("FIBER") || cleaned.includes("OPTICAL FIBER") || cleaned.includes("ОПТИК")) return "FIBER";
     if (cleaned.includes("NDI")) return "NDI";
-    if (cleaned.includes("AES")) return "AES";
-    if (cleaned.includes("MADI")) return "MADI";
-    if (cleaned === "AC" || cleaned.includes("220V")) return "AC";
-    if (cleaned.includes("DC")) return "DC";
-    return cleaned;
+    // Audio
+    if (cleaned.includes("XLR") && (cleaned.includes("JACK") || cleaned.includes("COMBO"))) return "XLR_JACK";
+    if (cleaned.includes("AES") && (cleaned.includes("EBU") || cleaned.includes("3") || cleaned.includes("/EBU"))) return "AES_EBU";
+    if (cleaned === "XLR" || (cleaned.includes("XLR") && !cleaned.includes("JACK"))) return "XLR";
+    if (cleaned.includes("MINI") && cleaned.includes("JACK")) return "MINI_JACK";
+    if (cleaned.includes("3.5") || cleaned === "AUX") return "MINI_JACK";
+    if (cleaned === "JACK" || cleaned.includes("6.35") || cleaned.includes("TRS") || cleaned.includes(" TS ") || cleaned === "TS") return "JACK";
+    if (cleaned.includes("RCA") || cleaned.includes("ТЮЛЬП") || cleaned.includes("PHONO")) return "RCA";
+    if (cleaned.includes("TOSLINK") || cleaned.includes("OPTICAL DIGITAL")) return "TOSLINK";
+    if (cleaned.includes("SPDIF") || cleaned.includes("S/PDIF") || cleaned.includes("DIGITAL COAX")) return "SPDIF_COAX";
+    if (cleaned.includes("SPEAKON") || cleaned.includes("NL2") || cleaned.includes("NL4") || cleaned.includes("СПИКОН")) return "SPEAKON";
+    if (cleaned.includes("DANTE")) return "DANTE";
+    if (cleaned.includes("AES67")) return "AES67";
+    // Control
+    if (cleaned === "MIDI" || cleaned.includes("5-PIN DIN") || cleaned.includes("MIDI DIN")) return "MIDI";
+    if (cleaned.includes("ARTNET") || cleaned.includes("ART-NET") || cleaned.includes("ART NET")) return "ARTNET";
+    if (cleaned.includes("SACN") || cleaned.includes("E1.31")) return "SACN";
+    if (cleaned.includes("DMX")) return "DMX";
+    if (cleaned.includes("RS232") || cleaned.includes("RS-232") || cleaned.includes("COM PORT") || cleaned.includes("DB9")) return "RS232";
+    if (cleaned.includes("RS485") || cleaned.includes("RS-485")) return "RS485";
+    // Network
+    if (cleaned.includes("ETHERCON")) return "ETHERCON";
+    if (cleaned === "ETH" || cleaned === "LAN" || cleaned === "RJ45" || cleaned.includes("ETHERNET") || cleaned.includes("CAT5") || cleaned.includes("CAT6")) return "ETHERNET";
+    // Data
+    if (cleaned.includes("USB") && (cleaned.includes("TYPE-C") || cleaned.includes("TYPE C") || cleaned.includes("-C") || cleaned.includes("_C"))) return "USB_C";
+    if (cleaned.includes("THUNDERBOLT") || cleaned.includes("TB3") || cleaned.includes("TB4")) return "THUNDERBOLT";
+    if (cleaned.includes("FIREWIRE") || cleaned.includes("IEEE 1394")) return "FIREWIRE";
+    if (cleaned.includes("LIGHTNING") && !cleaned.includes("BOLT")) return "LIGHTNING";
+    if (cleaned.includes("USB")) return "USB";
+    // Power
+    if (cleaned.includes("POWERCON") || cleaned.includes("ПАУЭРКОН")) return "POWERCON";
+    if (cleaned.includes("IEC") || cleaned.includes("C13") || cleaned.includes("C14") || cleaned.includes("KETTLE")) return "IEC";
+    if (cleaned.includes("SCHUKO") || cleaned.includes("ШУКО") || cleaned.includes("CEE 7")) return "SCHUKO";
+    if (cleaned.includes("EDISON") || cleaned.includes("NEMA")) return "EDISON";
+    if (cleaned.includes("BANANA")) return "BANANA";
+    if (cleaned.includes("TERMINAL") || cleaned.includes("PHOENIX") || cleaned.includes("SCREW TERM")) return "TERMINAL_BLOCK";
+    if (cleaned.includes("POWER") || cleaned.includes("MAINS") || cleaned.includes("ПИТАН") || cleaned === "AC") return "POWER";
+    // Wireless
+    if (cleaned.includes("BLUETOOTH") || cleaned === "BT") return "BLUETOOTH";
+    if (cleaned.includes("WIFI") || cleaned.includes("WI-FI") || cleaned.includes("WLAN") || cleaned.includes("802.11")) return "WIFI";
+    if (cleaned.includes("WIRELESS") || cleaned.includes("RF") || cleaned.includes("RADIO")) return "WIRELESS";
+    // Legacy fallbacks
+    if (cleaned === "BNC") return "SDI";
+    if (cleaned === "AES" || cleaned === "MADI") return "AES_EBU";
+    if (cleaned === "DC") return "POWER";
+    return "DEFAULT";
   };
 
   const getSignalColor = (signal?: string): string => {
-    const normalized = normalizeConnectionType(signal);
-    return SIGNAL_COLOR_PRESET[normalized] || SIGNAL_COLOR_PRESET.DEFAULT;
+    const code = normalizeConnectionType(signal);
+    return (CONNECTOR_STYLES[code] ?? CONNECTOR_STYLES.DEFAULT).color;
+  };
+
+  const getSignalLineStyle = (signal?: string): "solid" | "dashed" => {
+    const code = normalizeConnectionType(signal);
+    return (CONNECTOR_STYLES[code] ?? CONNECTOR_STYLES.DEFAULT).lineStyle;
   };
 
   const getCableEndpoints = (
@@ -534,17 +603,11 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
     };
   };
 
-  /**
-   * Ортогональный маршрут кабеля с одним углом.
-   * Адаптивно: если устройства расположены более горизонтально — сначала горизонталь, потом вертикаль;
-   * если более вертикально — сначала вертикаль, потом горизонталь. Линия всегда ровная (без диагоналей).
-   */
   const getCablePath = (from: { x: number; y: number }, to: { x: number; y: number }, laneOffset = 0) => {
     const dx = Math.abs(to.x - from.x);
     const dy = Math.abs(to.y - from.y);
     const midX = (from.x + to.x) / 2 + laneOffset;
     const midY = (from.y + to.y) / 2 + laneOffset;
-    // Горизонтально далеко — первый отрезок горизонтальный; иначе вертикальный
     if (dx >= dy) {
       return `M ${from.x} ${from.y} L ${midX} ${from.y} L ${midX} ${to.y} L ${to.x} ${to.y}`;
     }
@@ -552,42 +615,26 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   };
 
   const getPortColor = (portType?: string): string => {
-    const colors: Record<string, string> = {
-      HDMI: "#1a1a1a",
-      SDI: "#808080",
-      USB: "#0066cc",
-      ETH: "#ffd700",
-      LAN: "#ffd700",
-      "USB-C": "#0066cc",
-      BNC: "#808080",
-      Wireless: "#7c3aed",
-      DC: "#4a5568",
-      XLR: "#4b5563",
-      TRS: "#4b5563",
-      RCA: "#4b5563",
-      DP: "#2563eb",
-    };
-    return colors[normalizeConnectionType(portType)] || "#666666";
-  };
-
-  const getSignalCategory = (portType?: string): "video" | "audio" | "network" | "power" | "control" | "other" => {
-    const t = normalizeConnectionType(portType);
-    if (["HDMI", "SDI", "DP", "DISPLAYPORT"].includes(t)) return "video";
-    if (["XLR", "TRS", "RCA", "JACK"].includes(t)) return "audio";
-    if (["ETH", "LAN", "RJ45"].includes(t)) return "network";
-    if (["DC", "AC"].includes(t)) return "power";
-    if (["USB", "USB-C"].includes(t)) return "control";
-    return "other";
+    const code = normalizeConnectionType(portType);
+    return (CONNECTOR_STYLES[code] ?? CONNECTOR_STYLES.DEFAULT).color;
   };
 
   const isConnectionValid = (fromPort: Port, toPort: Port): boolean => {
     if (!(fromPort.type === "out" && toPort.type === "in")) return false;
-    const catFrom = getSignalCategory(fromPort.portType);
-    const catTo = getSignalCategory(toPort.portType);
-    if (catFrom === "other" || catTo === "other") return true;
-    if (catFrom === catTo) return true;
-    // Допускаем USB как универсальный (часто управление/захват)
-    if (catFrom === "control" || catTo === "control") return true;
+    const fromCode = normalizeConnectionType(fromPort.portType);
+    const toCode = normalizeConnectionType(toPort.portType);
+    if (fromCode === "DEFAULT" || toCode === "DEFAULT") return true;
+    if (fromCode === toCode) return true;
+    const fromCat = (CONNECTOR_STYLES[fromCode] ?? CONNECTOR_STYLES.DEFAULT).category;
+    const toCat = (CONNECTOR_STYLES[toCode] ?? CONNECTOR_STYLES.DEFAULT).category;
+    if (fromCat === "other" || toCat === "other") return true;
+    if (fromCat === toCat) return true;
+    // ETHERCON ↔ ETHERNET совместимы
+    const ethGroup = new Set(["ETHERNET", "ETHERCON"]);
+    if (ethGroup.has(fromCode) && ethGroup.has(toCode)) return true;
+    // IP-протоколы (Dante, AES67, NDI, Art-Net, sACN) ↔ Ethernet / друг с другом
+    const ipProtos = new Set(["DANTE", "AES67", "NDI", "ARTNET", "SACN"]);
+    if ((ipProtos.has(fromCode) || fromCat === "network") && (ipProtos.has(toCode) || toCat === "network")) return true;
     return false;
   };
 
@@ -728,28 +775,44 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       return { x: 0, y: 0, width: stageSize.w || 1920, height: stageSize.h || 1080 };
     }
 
-    const deviceLeft = devices.map((d) => getDevicePosition(d).x);
-    const deviceTop = devices.map((d) => getDevicePosition(d).y);
-    const deviceRight = devices.map((d) => getDevicePosition(d).x + getDeviceWidth(d));
-    const deviceBottom = devices.map((d) => getDevicePosition(d).y + calculateDeviceHeight(d));
+    const padding = 80;
+    const allLeft = [
+      ...devices.map((d) => getDevicePosition(d).x),
+      ...zones.map((z) => z.position.x),
+    ];
+    const allTop = [
+      ...devices.map((d) => getDevicePosition(d).y),
+      ...zones.map((z) => z.position.y),
+    ];
+    const allRight = [
+      ...devices.map((d) => getDevicePosition(d).x + getDeviceWidth(d)),
+      ...zones.map((z) => z.position.x + z.width),
+    ];
+    const allBottom = [
+      ...devices.map((d) => getDevicePosition(d).y + calculateDeviceHeight(d)),
+      ...zones.map((z) => z.position.y + z.height),
+    ];
 
-    const zoneLeft = zones.map((z) => z.position.x);
-    const zoneTop = zones.map((z) => z.position.y);
-    const zoneRight = zones.map((z) => z.position.x + z.width);
-    const zoneBottom = zones.map((z) => z.position.y + z.height);
-
-    const minX = Math.min(...deviceLeft, ...zoneLeft, 0) - 80;
-    const minY = Math.min(...deviceTop, ...zoneTop, 0) - 80;
-    const maxX = Math.max(...deviceRight, ...zoneRight, stageSize.w || 0) + 80;
-    const maxY = Math.max(...deviceBottom, ...zoneBottom, stageSize.h || 0) + 80;
+    const minX = Math.min(...allLeft) - padding;
+    const minY = Math.min(...allTop) - padding;
+    const maxX = Math.max(...allRight) + padding;
+    const maxY = Math.max(...allBottom) + padding;
 
     return {
-      x: Math.max(0, minX),
-      y: Math.max(0, minY),
+      x: minX,
+      y: minY,
       width: Math.max(800, maxX - minX),
       height: Math.max(450, maxY - minY),
     };
   };
+
+  const dragFromPort: Port | null = (() => {
+    if (!cableDrag) return null;
+    const fromDev = devices.find((d) => d.id === cableDrag.fromDeviceId);
+    if (!fromDev) return null;
+    return [...(fromDev.portsOut || []), ...(fromDev.portsIn || [])].find((p) => p.id === cableDrag.fromPortId) ?? null;
+  })();
+  const dragColor = dragFromPort ? getSignalColor(dragFromPort.portType) : "#60a5fa";
 
   return (
     <div className="flex flex-col h-full">
@@ -855,7 +918,34 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               <pattern id="grid" width={GRID_STEP} height={GRID_STEP} patternUnits="userSpaceOnUse">
                 <path d={`M ${GRID_STEP} 0 L 0 0 0 ${GRID_STEP}`} fill="none" stroke="rgba(148, 163, 184, 0.2)" strokeWidth="0.5" />
               </pattern>
-              <style>{`@keyframes cable-signal { to { stroke-dashoffset: -24; } }`}</style>
+              <style>{`
+                @keyframes cable-signal { to { stroke-dashoffset: -24; } }
+                @keyframes schema-error-pulse {
+                  0%, 100% { opacity: 1; }
+                  50% { opacity: 0.35; }
+                }
+              `}</style>
+              <ConnectorIconDefs />
+              <symbol id="port-state-free" viewBox="0 0 64 64">
+                <g fill="none" stroke="#94A3B8" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="15" y="21" width="34" height="22" rx="5"/>
+                  <rect x="22" y="27" width="20" height="10" rx="2.5"/>
+                </g>
+              </symbol>
+              <symbol id="port-state-occupied" viewBox="0 0 64 64">
+                <g fill="none" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="15" y="21" width="34" height="22" rx="5"/>
+                  <rect x="20" y="27" width="15" height="10" rx="2" fill="#2563EB" stroke="none"/>
+                  <path d="M35 32 H55"/>
+                </g>
+              </symbol>
+              <symbol id="port-state-incompatible" viewBox="0 0 64 64">
+                <g fill="none" stroke="#DC2626" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="15" y="21" width="34" height="22" rx="5"/>
+                  <circle cx="32" cy="32" r="6.5"/>
+                  <path d="M27.4 36.6 L36.6 27.4"/>
+                </g>
+              </symbol>
             </defs>
             <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="url(#grid)" />
             <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="transparent" style={{ pointerEvents: "none" }} />
@@ -912,6 +1002,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               const deviceHeight = calculateDeviceHeight(device);
               const pos = getDevicePosition(device);
               const isSelected = selectedDeviceId === device.id;
+              const hasError = !!(validationComponentIds && validationComponentIds.includes(device.id));
               return (
                 <g
                   key={device.id}
@@ -936,12 +1027,27 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
+                  {hasError && (
+                    <rect
+                      width={deviceWidth + 12}
+                      height={deviceHeight + 12}
+                      x={-6}
+                      y={-6}
+                      fill="none"
+                      stroke="#dc2626"
+                      strokeWidth={3}
+                      strokeDasharray="6 4"
+                      rx={11}
+                      style={{ animation: "schema-error-pulse 1.1s ease-in-out infinite" }}
+                      pointerEvents="none"
+                    />
+                  )}
                   <rect
                     width={deviceWidth}
                     height={deviceHeight}
                     fill={isSelected ? "#2563eb" : "#1e293b"}
-                    stroke={isSelected ? "#60a5fa" : "#475569"}
-                    strokeWidth={isSelected ? 3 : 2}
+                    stroke={hasError ? "#dc2626" : isSelected ? "#60a5fa" : "#475569"}
+                    strokeWidth={hasError ? 3 : isSelected ? 3 : 2}
                     rx={8}
                   />
                   <text
@@ -973,8 +1079,17 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                     OUT
                   </text>
                   {getPortLayout(device, "in").map(({ port, x: portX, width: portWidth, centerX }, index) => {
-                    const fill = getPortColor(port.portType);
+                    const portCode = normalizeConnectionType(port.portType);
+                    const showIcon = portCode !== "DEFAULT";
                     const isHovered = hoveredPort?.deviceId === device.id && hoveredPort?.portId === port.id && hoveredPort?.type === "in";
+                    const portDragState: "source" | "compatible" | "incompatible" | null = (() => {
+                      if (!cableDrag) return null;
+                      if (device.id === cableDrag.fromDeviceId && port.id === cableDrag.fromPortId) return "source";
+                      if (port.type === cableDrag.fromType || device.id === cableDrag.fromDeviceId) return "incompatible";
+                      if (!dragFromPort) return "compatible";
+                      if (cableDrag.fromType === "out") return isConnectionValid(dragFromPort, port) ? "compatible" : "incompatible";
+                      return isConnectionValid(port, dragFromPort) ? "compatible" : "incompatible";
+                    })();
                     return (
                       <g
                         key={port.id}
@@ -992,7 +1107,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                           setCableDrag({
                             fromDeviceId: device.id,
                             fromPortId: port.id,
-                            fromPos: { x: portCenterScene.x - portWidth / 2, y: portCenterScene.y - PORT_HEIGHT / 2 },
+                            fromPos: portCenterScene,
                             fromType: "in",
                           });
                           setCableDragCurrent(portCenterScene);
@@ -1001,24 +1116,42 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                         onPointerLeave={() => setHoveredPort((p) => (p?.portId === port.id ? null : p))}
                         style={{ cursor: cableDrag ? "crosshair" : "default" }}
                       >
-                        <rect width={portWidth} height={PORT_HEIGHT} fill={fill} stroke="#fff" strokeWidth={1} rx={2} />
-                        {isHovered && !cableDrag && (
-                          <circle cx={portWidth / 2} cy={PORT_HEIGHT / 2} r={6} fill="none" stroke="#3b82f6" strokeWidth={2} strokeDasharray="3 2" />
+                        <title>{port.name}{port.portType ? ` (${port.portType})` : ""}</title>
+                        <rect width={portWidth} height={PORT_HEIGHT} fill="#C0C0C0" fillOpacity={portDragState === "incompatible" ? 0.2 : 1} stroke="#fff" strokeWidth={1} rx={2} />
+                        {!portDragState && (showIcon
+                          ? <ConnectorIconUse code={portCode} x={(portWidth - PORT_HEIGHT) / 2} y={0} size={PORT_HEIGHT} />
+                          : <text x={portWidth / 2} y={PORT_HEIGHT / 2} textAnchor="middle" dominantBaseline="middle" fontSize={7} fill="#fff" pointerEvents="none">{port.name || ""}</text>
                         )}
-                        <text x={portWidth / 2} y={PORT_HEIGHT / 2} textAnchor="middle" dominantBaseline="middle" fontSize={7} fill="#fff" pointerEvents="none" title={port.name}>
-                          {port.name || ""}
-                        </text>
+                        {portDragState && (
+                          <use
+                            href={portDragState === "compatible" ? "#port-state-free" : portDragState === "source" ? "#port-state-occupied" : "#port-state-incompatible"}
+                            x={(portWidth - PORT_HEIGHT) / 2} y={0} width={PORT_HEIGHT} height={PORT_HEIGHT}
+                            pointerEvents="none"
+                          />
+                        )}
+                        {isHovered && !cableDrag && (
+                          <circle cx={portWidth / 2} cy={PORT_HEIGHT / 2} r={6} fill="none" stroke="#fff" strokeWidth={2} strokeDasharray="3 2" />
+                        )}
                       </g>
                     );
                   })}
                   {getPortLayout(device, "out").map(({ port, x: portX, width: portWidth, centerX }, index) => {
                     const portY = deviceHeight - PORT_HEIGHT;
-                    const fill = getPortColor(port.portType);
+                    const portCode = normalizeConnectionType(port.portType);
+                    const showIcon = portCode !== "DEFAULT";
                     const isHovered = hoveredPort?.deviceId === device.id && hoveredPort?.portId === port.id && hoveredPort?.type === "out";
                     const portCenterScene = {
                       x: pos.x + centerX,
                       y: pos.y + deviceHeight - PORT_HEIGHT / 2,
                     };
+                    const portDragState: "source" | "compatible" | "incompatible" | null = (() => {
+                      if (!cableDrag) return null;
+                      if (device.id === cableDrag.fromDeviceId && port.id === cableDrag.fromPortId) return "source";
+                      if (port.type === cableDrag.fromType || device.id === cableDrag.fromDeviceId) return "incompatible";
+                      if (!dragFromPort) return "compatible";
+                      if (cableDrag.fromType === "out") return isConnectionValid(dragFromPort, port) ? "compatible" : "incompatible";
+                      return isConnectionValid(port, dragFromPort) ? "compatible" : "incompatible";
+                    })();
                     return (
                       <g
                         key={port.id}
@@ -1032,23 +1165,31 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                           setCableDrag({
                             fromDeviceId: device.id,
                             fromPortId: port.id,
-                            fromPos: { x: portCenterScene.x - portWidth / 2, y: portCenterScene.y - PORT_HEIGHT / 2 },
+                            fromPos: portCenterScene,
                             fromType: "out",
                           });
                           setCableDragCurrent(portCenterScene);
                         }}
                         onPointerEnter={() => setHoveredPort({ deviceId: device.id, portId: port.id, type: "out" })}
                         onPointerLeave={() => setHoveredPort((p) => (p?.portId === port.id ? null : p))}
-                        style={{ cursor: cableDrag ? "crosshair" : "crosshair" }}
-                        title="Потяните для соединения с входом"
+                        style={{ cursor: "crosshair" }}
                       >
-                        <rect width={portWidth} height={PORT_HEIGHT} fill={fill} stroke="#fff" strokeWidth={1} rx={2} />
-                        {isHovered && !cableDrag && (
-                          <circle cx={portWidth / 2} cy={PORT_HEIGHT / 2} r={6} fill="none" stroke="#3b82f6" strokeWidth={2} strokeDasharray="3 2" />
+                        <title>{port.name}{port.portType ? ` (${port.portType})` : ""} — потяните для соединения</title>
+                        <rect width={portWidth} height={PORT_HEIGHT} fill="#C0C0C0" fillOpacity={portDragState === "incompatible" ? 0.2 : 1} stroke="#fff" strokeWidth={1} rx={2} />
+                        {!portDragState && (showIcon
+                          ? <ConnectorIconUse code={portCode} x={(portWidth - PORT_HEIGHT) / 2} y={0} size={PORT_HEIGHT} />
+                          : <text x={portWidth / 2} y={PORT_HEIGHT / 2} textAnchor="middle" dominantBaseline="middle" fontSize={7} fill="#fff" pointerEvents="none">{port.name || ""}</text>
                         )}
-                        <text x={portWidth / 2} y={PORT_HEIGHT / 2} textAnchor="middle" dominantBaseline="middle" fontSize={7} fill="#fff" pointerEvents="none" title={port.name}>
-                          {port.name || ""}
-                        </text>
+                        {portDragState && (
+                          <use
+                            href={portDragState === "compatible" ? "#port-state-free" : portDragState === "source" ? "#port-state-occupied" : "#port-state-incompatible"}
+                            x={(portWidth - PORT_HEIGHT) / 2} y={0} width={PORT_HEIGHT} height={PORT_HEIGHT}
+                            pointerEvents="none"
+                          />
+                        )}
+                        {isHovered && !cableDrag && (
+                          <circle cx={portWidth / 2} cy={PORT_HEIGHT / 2} r={6} fill="none" stroke="#fff" strokeWidth={2} strokeDasharray="3 2" />
+                        )}
                       </g>
                     );
                   })}
@@ -1059,34 +1200,28 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
             {/* Кабели поверх устройств — линия и анимация сигнала видны */}
             {cableDrag && cableDragCurrent && (
               (() => {
-                const startPoint = {
-                  x: cableDrag.fromPos.x + 15,
-                  y: cableDrag.fromPos.y + PORT_HEIGHT / 2,
-                };
-                const endPoint = {
-                  x: cableDragCurrent.x,
-                  y: cableDragCurrent.y,
-                };
+                const startPoint = cableDrag.fromPos;
+                const endPoint = cableDragCurrent;
                 const endpoints = getCableEndpoints(startPoint, endPoint, cableDrag.fromType);
                 return (
                   <>
                     <path
                       d={`M ${startPoint.x} ${startPoint.y} L ${endpoints.start.x} ${endpoints.start.y}`}
-                      stroke="#60a5fa"
+                      stroke={dragColor}
                       strokeWidth={4}
                       strokeLinecap="round"
                       fill="none"
                     />
                     <path
                       d={getCablePath(endpoints.start, endpoints.end)}
-                      stroke="#60a5fa"
+                      stroke={dragColor}
                       strokeWidth={4}
                       strokeLinecap="round"
                       fill="none"
                     />
                     <path
                       d={`M ${endpoints.end.x} ${endpoints.end.y} L ${endPoint.x} ${endPoint.y}`}
-                      stroke="#60a5fa"
+                      stroke={dragColor}
                       strokeWidth={4}
                       strokeLinecap="round"
                       fill="none"
@@ -1112,27 +1247,50 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               const toIdx = (toPort.type === "in" ? toDevice.portsIn : toDevice.portsOut)?.findIndex((p) => p.id === toPort.id) ?? 0;
               const fromPos = getPortPosition(fromDevice, fromPort, fromIdx);
               const toPos = getPortPosition(toDevice, toPort, toIdx);
-              const isWireless = cable.cableType === "wireless" || fromPort.portType === "Wireless" || toPort.portType === "Wireless";
-              const startPoint = { x: fromPos.x + 15, y: fromPos.y + PORT_HEIGHT / 2 };
-              const endPoint = { x: toPos.x + 15, y: toPos.y + PORT_HEIGHT / 2 };
+              const protocolLabel = cable.protocol || cable.cableType || fromPort.portType;
+              const lineStyle = getSignalLineStyle(protocolLabel || fromPort.portType || toPort.portType);
+              const isDashed = lineStyle === "dashed";
+              const dashArray = isDashed ? "8 6" : undefined;
+              const startPoint = fromPos;
+              const endPoint = toPos;
               const endpoints = getCableEndpoints(startPoint, endPoint, fromPort.type, toPort.type);
               const laneOffset = ((cableIndex % 11) - 5) * 18;
               const pathD = getCablePath(endpoints.start, endpoints.end, laneOffset);
-              const dx = Math.abs(endpoints.end.x - endpoints.start.x);
-              const dy = Math.abs(endpoints.end.y - endpoints.start.y);
-              const midX = dx >= dy ? (endpoints.start.x + endpoints.end.x) / 2 + laneOffset : (startPoint.x + endPoint.x) / 2;
-              const midY = dx >= dy ? (startPoint.y + endPoint.y) / 2 : (endpoints.start.y + endpoints.end.y) / 2 + laneOffset;
-              const protocolLabel = cable.protocol || cable.cableType || fromPort.portType;
+              const eDx = Math.abs(endpoints.end.x - endpoints.start.x);
+              const eDy = Math.abs(endpoints.end.y - endpoints.start.y);
+              const eMidX = (endpoints.start.x + endpoints.end.x) / 2 + laneOffset;
+              const eMidY = (endpoints.start.y + endpoints.end.y) / 2 + laneOffset;
+              // True midpoint along path length: on the bend segment
+              const labelX = eDx >= eDy ? eMidX : (endpoints.start.x + endpoints.end.x) / 2;
+              const labelY = eDx >= eDy ? (endpoints.start.y + endpoints.end.y) / 2 : eMidY;
               const signalColor = getSignalColor(protocolLabel || fromPort.portType || toPort.portType);
               const stroke = valid ? signalColor : "#dc2626";
               return (
-                <g key={cable.id}>
+                <g
+                  key={cable.id}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteConnection?.(cable);
+                  }}
+                  style={{ cursor: onDeleteConnection ? "pointer" : undefined }}
+                >
+                  {onDeleteConnection && (
+                    <path
+                      d={pathD}
+                      stroke="transparent"
+                      strokeWidth={18}
+                      fill="none"
+                      style={{ pointerEvents: "stroke" }}
+                    >
+                      <title>Двойной клик — удалить связь</title>
+                    </path>
+                  )}
                   <path
                     d={`M ${startPoint.x} ${startPoint.y} L ${endpoints.start.x} ${endpoints.start.y}`}
                     stroke={stroke}
                     strokeWidth={3.5}
                     strokeLinecap="round"
-                    strokeDasharray={isWireless ? "8 6" : undefined}
+                    strokeDasharray={dashArray}
                     fill="none"
                   />
                   <path
@@ -1140,7 +1298,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                     stroke={stroke}
                     strokeWidth={3.5}
                     strokeLinecap="round"
-                    strokeDasharray={isWireless ? "8 6" : undefined}
+                    strokeDasharray={dashArray}
                     fill="none"
                   />
                   <path
@@ -1148,10 +1306,10 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                     stroke={stroke}
                     strokeWidth={3.5}
                     strokeLinecap="round"
-                    strokeDasharray={isWireless ? "8 6" : undefined}
+                    strokeDasharray={dashArray}
                     fill="none"
                   />
-                  {valid && !isWireless && (
+                  {valid && !isDashed && (
                     <path
                       d={pathD}
                       stroke={signalColor}
@@ -1166,8 +1324,8 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                   )}
                   {protocolLabel && (
                     <text
-                      x={midX}
-                      y={midY - CABLE_LABEL_OFFSET}
+                      x={labelX}
+                      y={labelY - CABLE_LABEL_OFFSET}
                       textAnchor="middle"
                       dominantBaseline="middle"
                       fontSize={10}

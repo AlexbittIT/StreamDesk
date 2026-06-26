@@ -52,18 +52,16 @@ if (!rootEl) {
   }
 }
 
-// Регистрация Service Worker только если приложение не установлено как PWA (в установленном PWA — не нужен)
+// Service Worker отключён: его staleWhileRevalidate отдавал устаревший бандл
+// (страница «работала только с F12»). Снимаем регистрацию и чистим кэши —
+// это лечит и уже «застрявшие» браузеры при первой свежей загрузке.
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    try {
-      const isStandalone = window.matchMedia('(display-mode: standalone)').matches
-        || (window.navigator as any).standalone === true
-        || document.referrer.includes('android-app://');
-      if (!isStandalone && localStorage.getItem('streamstudio_user')) {
-        navigator.serviceWorker.register('/sw.js').catch(() => {});
-      }
-    } catch (_) {}
-  });
+  navigator.serviceWorker.getRegistrations()
+    .then((regs) => regs.forEach((r) => r.unregister()))
+    .catch(() => {});
+  if (typeof caches !== 'undefined') {
+    caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
+  }
 }
 
 if (typeof window !== "undefined") {
