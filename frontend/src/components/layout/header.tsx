@@ -44,7 +44,8 @@ const pageTitles: Record<string, string> = {
   "/chatgpt": "ChatGPT",
   "/vmix-scheduler": "vMix",
   "/connection-schemas": "Схемы подключения",
-  "/otis-onair": "Эфир ОТИС",
+  "/otis-onair": "MediaMTX",
+  "/mediamtx": "MediaMTX",
   "/manager-dashboard": "Дашборд менеджера",
 };
 
