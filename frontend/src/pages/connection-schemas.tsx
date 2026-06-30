@@ -938,15 +938,6 @@ export default function ConnectionSchemas() {
       const violations = Array.isArray(data?.violations) ? data.violations : [];
       setBuildViolations(violations);
       setBuildSuccess(data?.ok === true);
-      if (data?.ok) {
-        toast({ title: "Схема целостна", description: data.summary || "Проверка пройдена успешно." });
-      } else {
-        toast({
-          title: `Найдено нарушений: ${violations.length}`,
-          description: "Проблемные элементы подсвечены на схеме.",
-          variant: "destructive",
-        });
-      }
     },
     onError: (error: any) => {
       setBuildSuccess(false);
@@ -1144,6 +1135,13 @@ export default function ConnectionSchemas() {
                 onDeleteConnection={handleDeleteConnection}
                 onZoneSelect={setSelectedZoneId}
                 selectedZoneId={selectedZoneId}
+                onZoneDelete={(zoneId) => {
+                  const zone = zones.find((z) => z.id === zoneId);
+                  const name = zone?.name || "зону";
+                  if (window.confirm(`Удалить зону "${name}"?`)) {
+                    handleDeleteComponent(zoneId);
+                  }
+                }}
                 onDeviceDelete={handleDeleteComponent}
                 validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
               />
@@ -1419,6 +1417,13 @@ export default function ConnectionSchemas() {
                       onDeleteConnection={handleDeleteConnection}
                       onZoneSelect={setSelectedZoneId}
                       selectedZoneId={selectedZoneId}
+                      onZoneDelete={(zoneId) => {
+                        const zone = zones.find((z) => z.id === zoneId);
+                        const name = zone?.name || "зону";
+                        if (window.confirm(`Удалить зону "${name}"?`)) {
+                          handleDeleteComponent(zoneId);
+                        }
+                      }}
                       onDeviceDelete={handleDeleteComponent}
                       validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
                     />

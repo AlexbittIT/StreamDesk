@@ -60,6 +60,8 @@ interface SchemaCanvasProps {
   onCancelDrawZone?: () => void;
   onZoneSelect?: (zoneId: string | null) => void;
   selectedZoneId?: string | null;
+  /** Удаление зоны (правый клик → Удалить) */
+  onZoneDelete?: (zoneId: string) => void;
   /** Создание кабеля: от выходного порта к входному */
   onAddConnection?: (from: { deviceId: string; portId: string }, to: { deviceId: string; portId: string }, protocol?: string) => void;
   /** Удаление кабеля (двойной клик по связи) */
@@ -104,6 +106,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   onCancelDrawZone,
   onZoneSelect,
   selectedZoneId,
+  onZoneDelete,
   onAddConnection,
   onDeleteConnection,
   onDeviceDelete,
@@ -133,7 +136,9 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   const [hoveredPort, setHoveredPort] = useState<{ deviceId: string; portId: string; type: "in" | "out" } | null>(null);
   const [autoFitted, setAutoFitted] = useState(false);
   const [deviceContextMenu, setDeviceContextMenu] = useState<{ x: number; y: number; deviceId: string } | null>(null);
+  const [zoneContextMenu, setZoneContextMenu] = useState<{ x: number; y: number; zoneId: string } | null>(null);
   const deviceContextMenuRef = useRef<HTMLDivElement>(null);
+  const zoneContextMenuRef = useRef<HTMLDivElement>(null);
   const [stageReady, setStageReady] = useState(false);
 
   const cancelCableDrag = useCallback(() => {
@@ -167,6 +172,20 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       document.removeEventListener("click", onDocClick, true);
     };
   }, [deviceContextMenu]);
+
+  useEffect(() => {
+    if (!zoneContextMenu) return;
+    const close = () => setZoneContextMenu(null);
+    const onDocClick = (e: MouseEvent) => {
+      if (zoneContextMenuRef.current?.contains(e.target as Node)) return;
+      close();
+    };
+    const t = setTimeout(() => document.addEventListener("click", onDocClick, true), 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("click", onDocClick, true);
+    };
+  }, [zoneContextMenu]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -1036,6 +1055,12 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                     e.stopPropagation();
                     if (!drawZoneMode) onZoneSelect?.(zone.id);
                   }}
+                  onContextMenu={(e) => {
+                    if (drawZoneMode) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setZoneContextMenu({ x: e.clientX, y: e.clientY, zoneId: zone.id });
+                  }}
                 >
                   <rect
                     x={zone.position.x}
@@ -1493,11 +1518,6 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               const stroke = valid ? signalColor : "#dc2626";
               return (
                 <g
-                  key={cable.id}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteConnection?.(cable);
-                  }}
                   style={{ cursor: onDeleteConnection ? "pointer" : undefined }}
                 >
                   {onDeleteConnection && (
@@ -1507,6 +1527,10 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                       strokeWidth={18}
                       fill="none"
                       style={{ pointerEvents: "stroke" }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteConnection?.(cable);
+                      }}
                     >
                       <title>Двойной клик — удалить связь</title>
                     </path>
@@ -1597,6 +1621,27 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               }}
             >
               Удалить устройство
+            </button>
+          )}
+        </div>
+      )}
+      {zoneContextMenu && (
+        <div
+          ref={zoneContextMenuRef}
+          className="fixed z-[100] min-w-[180px] rounded-lg border border-slate-600 bg-slate-800 py-1 shadow-xl"
+          style={{ left: zoneContextMenu.x, top: zoneContextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {onZoneDelete && (
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-slate-700"
+              onClick={() => {
+                onZoneDelete(zoneContextMenu.zoneId);
+                setZoneContextMenu(null);
+              }}
+            >
+              Удалить зону
             </button>
           )}
         </div>

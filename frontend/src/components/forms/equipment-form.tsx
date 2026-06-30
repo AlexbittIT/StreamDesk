@@ -86,6 +86,10 @@ interface EquipmentFormProps {
   equipment?: any;
   mode?: "full" | "take_return";
   companyManager?: boolean;
+  /** Разрешено ли редактировать оборудование (пользователь — создатель или админ) */
+  canEdit?: boolean;
+  /** Режим редактирования только названия и описания (для создателей оборудования) */
+  creatorEditMode?: boolean;
 }
 
 function getCurrentUser() {
@@ -162,7 +166,7 @@ function getInventoryPrefix(type: unknown) {
   return "eqp";
 }
 
-export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", companyManager = false }: EquipmentFormProps) {
+export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", companyManager = false, canEdit, creatorEditMode = false }: EquipmentFormProps) {
   const [photos, setPhotos] = useState<string[]>(equipment?.photos || []);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [barcodeValue, setBarcodeValue] = useState("");
@@ -265,7 +269,9 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", compa
   const userCanCreate = canCreateEquipment(currentUser) || companyManager;
   const userCanEdit = canEditEquipment(currentUser) || companyManager;
   const userCanReserve = canReserveEquipment(currentUser) || companyManager;
-  const canManageBarcode = userCanEdit || (!equipment && userCanCreate);
+  // Если canEdit передан явно (для создателей), используем его; иначе — стандартная проверка
+  const canEditItem = canEdit !== undefined ? canEdit : (userCanEdit || (!equipment && userCanCreate));
+  const canManageBarcode = canEditItem || (!equipment && userCanCreate);
 
   const buildGeneratedInventoryNumber = (data: z.infer<typeof equipmentFormSchema>) => {
     const prefix = getInventoryPrefix(data.type);
@@ -282,6 +288,8 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", compa
       specifications: {
         ...parseSpecifications(specificationsText),
         ...(estimatePrice.trim() ? { estimatePrice: estimatePrice.trim(), estimateCurrency: "RUB" } : {}),
+        // Сохраняем ID создателя для проверки прав редактирования
+        createdByUserId: currentUser?.id || null,
       },
       notes: String(data.notes ?? "").trim(),
       photos,
@@ -355,6 +363,33 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", compa
     },
   });
 
+  // Мутация для обновления только названия и примечаний (для создателей оборудования)
+  const updateNameAndNotesMutation = useMutation({
+    mutationFn: async (data: { name: string; notes: string }) => {
+      const response = await apiRequest("PUT", `/api/equipment/${equipment.id}`, {
+        name: data.name,
+        notes: data.notes,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/equipment"] });
+      queryClient.refetchQueries({ queryKey: ["/api/equipment"] });
+      toast({
+        title: "Сохранено",
+        description: "Название и примечания обновлены",
+      });
+      onClose();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Ошибка",
+        description: error.message || "Не удалось сохранить",
+        variant: "destructive",
+      });
+    },
+  });
+
   const takeReturnMutation = useMutation({
     mutationFn: async (data: { location: string; action: 'take' | 'return' }) => {
       const response = await apiRequest("PUT", `/api/equipment/${equipment.id}`, {
@@ -384,7 +419,10 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", compa
   });
 
   const onSubmit = (data: z.infer<typeof equipmentFormSchema>) => {
-    if (equipment) {
+    // Если режим редактирования создателя — обновляем только название и примечания
+    if (creatorEditMode) {
+      updateNameAndNotesMutation.mutate({ name: data.name, notes: data.notes || "" });
+    } else if (equipment) {
       updateMutation.mutate(data);
     } else {
       createMutation.mutate(data);
@@ -783,23 +821,67 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", compa
               onPhotosChange={setPhotos}
             />
 
+            {/* Режим редактирования названия и примечаний для создателей оборудования */}
+            {creatorEditMode && (
+              <div className="p-4 bg-amber-50 dark:bg-amber-950/30 rounded-lg border border-amber-200 dark:border-amber-800">
+                <p className="text-sm text-amber-700 dark:text-amber-300 mb-3">
+                  Вы можете редактировать только название и примечания этого оборудования.
+                </p>
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem className="mb-3">
+                      <FormLabel className="text-slate-700 dark:text-slate-300">Название</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Sony FX3 Camera #1"
+                          className="bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="notes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-slate-700 dark:text-slate-300">Примечания</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Дополнительная информация..."
+                          className="min-h-[80px] bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600"
+                          {...field}
+                          value={field.value || ""}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
             <div className="flex justify-end space-x-4">
-              <Button 
-                type="button" 
-                variant="outline" 
+              <Button
+                type="button"
+                variant="outline"
                 onClick={onClose}
                 className="border-slate-300 dark:border-slate-600"
               >
                 Отмена
               </Button>
-              <Button 
-                type="submit" 
-                disabled={createMutation.isPending || updateMutation.isPending}
+              <Button
+                type="submit"
+                disabled={createMutation.isPending || updateMutation.isPending || updateNameAndNotesMutation.isPending}
                 className="bg-primary hover:bg-primary/90 text-white"
               >
-                {createMutation.isPending || updateMutation.isPending
-                  ? "Сохранение..." 
-                  : equipment ? "Обновить" : "Добавить"
+                {createMutation.isPending || updateMutation.isPending || updateNameAndNotesMutation.isPending
+                  ? "Сохранение..."
+                  : creatorEditMode ? "Сохранить" : (equipment ? "Обновить" : "Добавить")
                 }
               </Button>
             </div>
