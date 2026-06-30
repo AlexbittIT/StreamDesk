@@ -8,6 +8,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Network,
   Plus,
   Trash2,
@@ -87,10 +97,17 @@ interface Cable {
   protocol?: string;
 }
 
+// Связь хранится на компоненте-источнике в одном из двух форматов:
+//  - оптимистичный (фронтенд): { componentId, port, fromPortId }
+//  - серверный (persistConnection): { id, fromDeviceId, fromPortId, toDeviceId, toPortId }
 type ComponentConnection = {
+  id?: string;
   componentId?: string;
   port?: string;
+  fromDeviceId?: string;
   fromPortId?: string;
+  toDeviceId?: string;
+  toPortId?: string;
   cableType?: string;
   protocol?: string;
 };
@@ -332,6 +349,9 @@ export default function ConnectionSchemas() {
 
   const [buildViolations, setBuildViolations] = useState<Violation[] | null>(null);
   const [buildSuccess, setBuildSuccess] = useState(false);
+  // Внутреннее окно подтверждения (вместо window.confirm — в части окружений нативные
+  // диалоги заблокированы и удаление молча не срабатывало).
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; description?: string; onConfirm: () => void } | null>(null);
   useEffect(() => {
     setBuildViolations(null);
     setBuildSuccess(false);
@@ -786,14 +806,25 @@ export default function ConnectionSchemas() {
 
   // Удаление кабеля (двойной клик по связи): убираем запись из connections источника.
   const deleteConnectionMutation = useMutation({
-    mutationFn: async (cable: { fromDeviceId: string; fromPortId: string; toDeviceId: string; toPortId: string }) => {
+    mutationFn: async (cable: Cable) => {
       const component = selectedSchemaData?.components?.find(c => c.id === cable.fromDeviceId);
       if (!component) throw new Error("Устройство не найдено");
-      const connections = normalizeConnections(component.connections).filter((conn) =>
-        !(conn.componentId === cable.toDeviceId &&
-          conn.port === cable.toPortId &&
-          (conn.fromPortId ?? conn.port) === cable.fromPortId)
-      );
+      // Связь матчим в обоих форматах хранения (серверный/оптимистичный),
+      // иначе серверные связи не удалялись (фильтр по componentId/port не совпадал).
+      const isTarget = (conn: ComponentConnection) => {
+        if (conn.id && cable.id && conn.id === cable.id) return true;
+        const toDeviceId = conn.toDeviceId ?? conn.componentId;
+        const toPortId = conn.toPortId ?? conn.port;
+        const fromPortId = conn.fromPortId ?? conn.port;
+        return toDeviceId === cable.toDeviceId &&
+          toPortId === cable.toPortId &&
+          fromPortId === cable.fromPortId;
+      };
+      const all = normalizeConnections(component.connections);
+      const connections = all.filter((conn) => !isTarget(conn));
+      if (connections.length === all.length) {
+        throw new Error("Связь не найдена");
+      }
       const response = await apiRequest("PUT", `/api/connection-schemas/components/${cable.fromDeviceId}`, {
         position: component.position,
         properties: component.properties,
@@ -814,7 +845,7 @@ export default function ConnectionSchemas() {
     },
   });
 
-  const handleDeleteConnection = (cable: { fromDeviceId: string; fromPortId: string; toDeviceId: string; toPortId: string }) => {
+  const handleDeleteConnection = (cable: Cable) => {
     deleteConnectionMutation.mutate(cable);
   };
 
@@ -881,9 +912,10 @@ export default function ConnectionSchemas() {
   const handleDeleteComponent = (id: string) => {
     const component = selectedSchemaData?.components?.find((item) => item.id === id);
     const name = component?.name || "элемент";
-    if (window.confirm(`Удалить "${name}" из схемы?`)) {
-      deleteComponentMutation.mutate(id);
-    }
+    setConfirmDialog({
+      title: `Удалить "${name}" из схемы?`,
+      onConfirm: () => deleteComponentMutation.mutate(id),
+    });
   };
 
   const handleAddZone = (zone: Omit<Zone, "id">) => {
@@ -1135,13 +1167,7 @@ export default function ConnectionSchemas() {
                 onDeleteConnection={handleDeleteConnection}
                 onZoneSelect={setSelectedZoneId}
                 selectedZoneId={selectedZoneId}
-                onZoneDelete={(zoneId) => {
-                  const zone = zones.find((z) => z.id === zoneId);
-                  const name = zone?.name || "зону";
-                  if (window.confirm(`Удалить зону "${name}"?`)) {
-                    handleDeleteComponent(zoneId);
-                  }
-                }}
+                onZoneDelete={handleDeleteComponent}
                 onDeviceDelete={handleDeleteComponent}
                 validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
               />
@@ -1295,9 +1321,11 @@ export default function ConnectionSchemas() {
                           size="sm"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm("Удалить схему?")) {
-                              deleteSchemaMutation.mutate(schema.id);
-                            }
+                            setConfirmDialog({
+                              title: `Удалить схему "${schema.name}"?`,
+                              description: "Схема и все её элементы будут удалены без возможности восстановления.",
+                              onConfirm: () => deleteSchemaMutation.mutate(schema.id),
+                            });
                           }}
                         >
                           <Trash2 className="w-4 h-4 text-red-500" />
@@ -1417,13 +1445,7 @@ export default function ConnectionSchemas() {
                       onDeleteConnection={handleDeleteConnection}
                       onZoneSelect={setSelectedZoneId}
                       selectedZoneId={selectedZoneId}
-                      onZoneDelete={(zoneId) => {
-                        const zone = zones.find((z) => z.id === zoneId);
-                        const name = zone?.name || "зону";
-                        if (window.confirm(`Удалить зону "${name}"?`)) {
-                          handleDeleteComponent(zoneId);
-                        }
-                      }}
+                      onZoneDelete={handleDeleteComponent}
                       onDeviceDelete={handleDeleteComponent}
                       validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
                     />
@@ -1441,6 +1463,29 @@ export default function ConnectionSchemas() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={!!confirmDialog} onOpenChange={(open) => { if (!open) setConfirmDialog(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmDialog?.title}</AlertDialogTitle>
+            {confirmDialog?.description && (
+              <AlertDialogDescription>{confirmDialog.description}</AlertDialogDescription>
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => {
+                confirmDialog?.onConfirm();
+                setConfirmDialog(null);
+              }}
+            >
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
