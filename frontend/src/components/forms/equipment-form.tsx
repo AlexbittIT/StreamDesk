@@ -556,7 +556,9 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", compa
         
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Скрываем основную форму в режиме создателя (показываем только блок редактирования) */}
+            {!creatorEditMode && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <FormField
                 control={form.control}
                 name="name"
@@ -564,10 +566,10 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", compa
                   <FormItem>
                     <FormLabel className="text-slate-700 dark:text-slate-300">Название *</FormLabel>
                     <FormControl>
-                      <Input 
-                        placeholder="Sony FX3 Camera #1" 
+                      <Input
+                        placeholder="Sony FX3 Camera #1"
                         className="bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600"
-                        {...field} 
+                        {...field}
                       />
                     </FormControl>
                     <FormMessage />
@@ -747,7 +749,11 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", compa
                 )}
               />
             </div>
+            )}
 
+            {/* Скрываем остальные поля в режиме создателя */}
+            {!creatorEditMode && (
+              <>
             {barcodeValue && barcodeValue.length >= 3 && (
               <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between mb-3">
@@ -803,11 +809,11 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", compa
                 <FormItem>
                   <FormLabel className="text-slate-700 dark:text-slate-300">Примечания</FormLabel>
                   <FormControl>
-                    <Textarea 
+                    <Textarea
                       placeholder="Дополнительная информация об оборудовании..."
                       className="min-h-[80px] bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600"
                       {...field}
-                      value={field.value || ""} 
+                      value={field.value || ""}
                     />
                   </FormControl>
                   <FormMessage />
@@ -820,6 +826,8 @@ export function EquipmentForm({ isOpen, onClose, equipment, mode = "full", compa
               existingPhotos={photos}
               onPhotosChange={setPhotos}
             />
+              </>
+            )}
 
             {/* Режим редактирования названия и примечаний для создателей оборудования */}
             {creatorEditMode && (

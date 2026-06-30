@@ -1516,25 +1516,12 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               const labelY = eDx >= eDy ? (endpoints.start.y + endpoints.end.y) / 2 : eMidY;
               const signalColor = getSignalColor(protocolLabel || fromPort.portType || toPort.portType);
               const stroke = valid ? signalColor : "#dc2626";
+              // Полный путь кабеля для невидимого слоя (чтобы ловить клики)
+              const fullCablePath = `M ${startPoint.x} ${startPoint.y} L ${endpoints.start.x} ${endpoints.start.y} ${pathD.replace(/^M [^L]+L /, '')} M ${endpoints.end.x} ${endpoints.end.y} L ${endPoint.x} ${endPoint.y}`;
               return (
                 <g
                   style={{ cursor: onDeleteConnection ? "pointer" : undefined }}
                 >
-                  {onDeleteConnection && (
-                    <path
-                      d={pathD}
-                      stroke="transparent"
-                      strokeWidth={18}
-                      fill="none"
-                      style={{ pointerEvents: "stroke" }}
-                      onDoubleClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteConnection?.(cable);
-                      }}
-                    >
-                      <title>Двойной клик — удалить связь</title>
-                    </path>
-                  )}
                   <path
                     d={`M ${startPoint.x} ${startPoint.y} L ${endpoints.start.x} ${endpoints.start.y}`}
                     stroke={stroke}
@@ -1587,6 +1574,22 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                     >
                       {protocolLabel}
                     </text>
+                  )}
+                  {/* Невидимый слой для обработки кликов — должен быть последним */}
+                  {onDeleteConnection && (
+                    <path
+                      d={fullCablePath}
+                      stroke="transparent"
+                      strokeWidth={20}
+                      fill="none"
+                      style={{ pointerEvents: "stroke" }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteConnection?.(cable);
+                      }}
+                    >
+                      <title>Двойной клик — удалить связь</title>
+                    </path>
                   )}
                 </g>
               );
