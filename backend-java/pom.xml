@@ -93,6 +93,13 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- In-memory БД для E2E-тестов: PostgreSQL-режим + домен JSONB поверх JSON,
+             чтобы поднять полный контекст без внешнего Postgres (см. application-test.yml). -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

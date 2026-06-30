@@ -2,9 +2,8 @@
 # Значения берутся из переменных окружения; в скобках — дефолт для локального запуска.
 
 server:
-  # У текущего бэкенда порт 5000 (PORT в .env). Чтобы запускать оба рядом,
-  # Java-версию временно держим на 8080. Поменяй на 5000, когда переедешь полностью.
-  port: ${SERVER_PORT:8080}
+  # Node убран — Java стал основным бэком. Порт по умолчанию 5050.
+  port: ${SERVER_PORT:5050}
   servlet:
     session:
       # Срок жизни сессии — как maxAge куки в Express (7 дней).
@@ -63,6 +62,18 @@ app:
       # openai — стандартный DeepSeek; anthropic — шлюз OpenModel (/messages)
       protocol: ${DEEPSEEK_PROTOCOL:openai}
       max-attempts: ${DEEPSEEK_MAX_ATTEMPTS:3}
+  # MediaMTX — внешний медиасервер (SRT/RTMP → HLS). Бэкенд управляет путями
+  # через его Control API и строит URL публикации/чтения. Без запущенного
+  # MediaMTX эндпоинты /api/mediamtx отвечают 503; /health вернёт reachable=false.
+  mediamtx:
+    api-url: ${MEDIAMTX_API_URL:http://localhost:9997}
+    host: ${MEDIAMTX_HOST:localhost}
+    srt-port: ${MEDIAMTX_SRT_PORT:8890}
+    rtmp-port: ${MEDIAMTX_RTMP_PORT:1935}
+    hls-port: ${MEDIAMTX_HLS_PORT:8888}
+    webrtc-port: ${MEDIAMTX_WEBRTC_PORT:8889}
+    rtsp-port: ${MEDIAMTX_RTSP_PORT:8554}
+    hls-scheme: ${MEDIAMTX_HLS_SCHEME:http}
 
 logging:
   level:

@@ -1,0 +1,35 @@
+name: CI
+
+# Гоняем сборку и тесты на пуш и на PR в основные ветки спринта.
+# Падение любого теста роняет job → PR с красными тестами нельзя смержить,
+# если в Settings → Branches включить Required status checks на этот workflow.
+on:
+  push:
+    branches:
+      - feat/s2-ports
+      - main
+  pull_request:
+    branches:
+      - feat/s2-ports
+      - main
+
+jobs:
+  backend-verify:
+    name: backend-java • mvn verify
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-java
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build and test (mvn verify)
+        run: mvn -B verify

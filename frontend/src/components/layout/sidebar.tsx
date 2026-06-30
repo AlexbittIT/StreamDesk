@@ -55,7 +55,7 @@ const navigation = [
   { tabKey: "monitoring", name: "Мониторинг", href: "/monitoring", icon: Monitor },
   { tabKey: "streams", name: "Стриминг", href: "/streams", icon: Video },
   { tabKey: "connection-schemas", name: "Схемы подключения", href: "/connection-schemas", icon: Network },
-  { tabKey: "otis-onair", name: "Эфир ОТИС", href: "/otis-onair", icon: Radio },
+  { tabKey: "otis-onair", name: "MediaMTX", href: "/otis-onair", icon: Radio },
   { tabKey: "chatgpt", name: "ChatGPT", href: "/chatgpt", icon: MessageSquare },
   { tabKey: "notifications", name: "Уведомления", href: "/notifications", icon: Bell },
   { tabKey: "settings", name: "Настройки", href: "/settings", icon: Settings },
