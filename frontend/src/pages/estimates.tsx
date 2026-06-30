@@ -552,7 +552,7 @@ function buildEstimatePdfHtml(estimate: EstimateResult, opts: EstimatePdfOptions
     ? `Техническое оснащение ${branding.displayName}`
     : "Смета на техническое оснащение";
 
-  const cell = "border:1px solid #cbd5e1;padding:3px 6px;";
+  const cell = "border:1px solid #cbd5e1;padding:3px 6px;word-break:break-word;overflow-wrap:break-word;";
   const metaRows = [
     ["Дата проведения", meta.eventDates],
     ["Дата монтажа / Репетиция", meta.setupDates],
@@ -606,7 +606,10 @@ function buildEstimatePdfHtml(estimate: EstimateResult, opts: EstimatePdfOptions
       </div>
     </div>
     <table style="border-collapse:collapse;width:100%;margin-bottom:12px;">${metaRows}</table>
-    <table style="border-collapse:collapse;width:100%;">
+    <table style="border-collapse:collapse;width:100%;table-layout:fixed;">
+      <colgroup>
+        <col style="width:6%;" /><col style="width:40%;" /><col style="width:12%;" /><col style="width:16%;" /><col style="width:11%;" /><col style="width:15%;" />
+      </colgroup>
       <thead>
         <tr>
           <th style="${th}">№</th>
@@ -754,7 +757,7 @@ export default function EstimatesPage() {
 
   // Активная компания и её реквизиты для шапки PDF (settings.branding).
   const { data: onboarding } = useQuery<any>({ queryKey: ["/api/auth/onboarding-state"] });
-  const activeCompany = onboarding?.activeCompanies?.[0]?.company || null;
+  const activeCompany = onboarding?.companies?.[0]?.company || null;
   const companyId: string = activeCompany?.id || "";
 
   useEffect(() => {
