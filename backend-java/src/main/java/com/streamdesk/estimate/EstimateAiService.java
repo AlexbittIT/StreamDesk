@@ -20,7 +20,7 @@ import java.util.Set;
  *       {@link EstimateMatchingService#filterForPrompt});</li>
  *   <li>при сбое ИИ {@link DeepSeekClient} кидает {@link com.streamdesk.config.ApiException} —
  *       без молчаливого фолбэка. Решение «глушить или пробрасывать» по requireAi
- *       принимает {@code EstimateService}.</li>
+ *       принимает {@code EstimateAnalysisService}.</li>
  * </ul>
  */
 @Service

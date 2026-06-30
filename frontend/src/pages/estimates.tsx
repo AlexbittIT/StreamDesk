@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BrainCircuit, Clock3, FileSpreadsheet, Loader2, Network, Package, Plus, Search, Trash2, Upload, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "wouter";
+import { AlertTriangle, BrainCircuit, Clock3, ExternalLink, FileSpreadsheet, FolderKanban, Loader2, Network, Package, Plus, Search, Trash2, Upload, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -95,12 +96,28 @@ type EstimateResult = {
   } | null;
 };
 
-type EstimateHistoryEntry = {
+type EstimateVersionDto = {
+  id: string;
+  estimateId: string;
+  versionNo: number;
+  title: string;
+  subtotal: number;
+  itemsCount: number;
+  data: EstimateResult;
+  savedAt: string;
+};
+
+type EstimateDto = {
   id: string;
   title: string;
-  savedAt: string;
-  estimate: EstimateResult;
-  deliveryDistanceKm: string;
+  projectId: string | null;
+  status: string;
+  data: EstimateResult | Record<string, never>;
+};
+
+type ProjectOption = {
+  id: string;
+  name: string;
 };
 
 type CatalogItem = {
@@ -197,7 +214,6 @@ function getTypeText(type: string) {
     case "power": return "Питание";
     case "cable": return "Коммутация";
     case "labor": return "Персонал";
-    case "transport": return "Доставка";
     default: return type || "Другое";
   }
 }
@@ -208,12 +224,11 @@ function getEstimateGroup(type: string) {
   if (type === "lighting") return { key: "lighting", title: "Световое оборудование" };
   if (["network", "power", "cable"].includes(type)) return { key: "technical", title: "Коммутация, сеть и питание" };
   if (type === "labor") return { key: "labor", title: "Персонал" };
-  if (type === "transport") return { key: "transport", title: "Доставка" };
   return { key: "other", title: "Дополнительно" };
 }
 
 function groupEstimateItems(items: EstimateLine[]) {
-  const order = ["audio", "video", "lighting", "technical", "labor", "transport", "other"];
+  const order = ["audio", "video", "lighting", "technical", "labor", "other"];
   const groups = new Map<string, { key: string; title: string; items: EstimateLine[]; total: number }>();
   for (const item of items) {
     const group = getEstimateGroup(item.type);
@@ -308,20 +323,6 @@ function buildLineFromCatalog(item: CatalogItem, index: number, shiftFactor = 1)
     locations: item.locations.slice(0, 5),
     source: "local",
   };
-}
-
-function calculateDelivery(items: EstimateLine[], distanceKmText: string) {
-  const distanceKm = Math.max(0, Number(distanceKmText) || 0);
-  const quantity = items.reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0), 0);
-  const vehicles = quantity > 0 ? Math.max(1, Math.ceil(quantity / 14)) : 0;
-  const loadHours = vehicles ? Math.max(2, Math.ceil(quantity / 10)) : 0;
-  const driveHours = vehicles ? Math.max(1, Math.ceil((distanceKm * 2) / 45)) : 0;
-  const hours = vehicles ? loadHours + driveHours : 0;
-  const basePerVehicle = 4500;
-  const kmRate = 55;
-  const hourlyRate = 1200;
-  const total = vehicles ? Math.round((vehicles * basePerVehicle + vehicles * distanceKm * 2 * kmRate + hours * hourlyRate) * 100) / 100 : 0;
-  return { distanceKm, quantity, vehicles, hours, total };
 }
 
 function inferPortsForEstimateLine(line: EstimateLine) {
@@ -430,24 +431,7 @@ function safeFilePart(value: string) {
   return value.replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_").slice(0, 80) || "estimate";
 }
 
-const ESTIMATE_HISTORY_KEY = "streamdesk_estimate_history_v1";
-
-function loadEstimateHistory(): EstimateHistoryEntry[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(ESTIMATE_HISTORY_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed.slice(0, 40) : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistEstimateHistory(entries: EstimateHistoryEntry[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(ESTIMATE_HISTORY_KEY, JSON.stringify(entries.slice(0, 40)));
-}
-
-function exportEstimateToExcel(estimate: EstimateResult, delivery?: ReturnType<typeof calculateDelivery>) {
+function exportEstimateToExcel(estimate: EstimateResult) {
   const rows = groupEstimateItems(estimate.items).map((group) => `
     <tr style="background:#e8eef8;font-weight:bold">
       <td colspan="10">${escapeHtml(group.title)}</td>
@@ -486,10 +470,6 @@ function exportEstimateToExcel(estimate: EstimateResult, delivery?: ReturnType<t
         <h2>${escapeHtml(estimate.title)}</h2>
         <p>Дата: ${new Date().toLocaleString("ru-RU")}</p>
         <p>Итого: ${estimate.totals.subtotal}</p>
-        ${delivery && delivery.total > 0 ? `
-          <p>Доставка: ${delivery.vehicles} авто, ${delivery.distanceKm} км, ${delivery.hours} ч, ${delivery.total}</p>
-          <p>Итого с доставкой: ${Math.round((estimate.totals.subtotal + delivery.total) * 100) / 100}</p>
-        ` : ""}
         ${estimate.shiftCalculation ? `
           <p>Смены: ${estimate.shiftCalculation.chargeableShifts}; коэффициент: ${estimate.shiftCalculation.chargeFactor}; часы: ${estimate.shiftCalculation.actualHours}</p>
           <table border="1" cellspacing="0" cellpadding="6">
@@ -553,18 +533,73 @@ export default function EstimatesPage() {
   const [weekendNightCoefficient, setWeekendNightCoefficient] = useState("2");
   const [holidayDates, setHolidayDates] = useState("");
   const [workdayDates, setWorkdayDates] = useState("");
-  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState("0");
-  const [estimateHistory, setEstimateHistory] = useState<EstimateHistoryEntry[]>([]);
+  // Смета привязана к проекту (двусторонняя связь). projectId берём из ?projectId= в URL.
+  const [linkedProjectId, setLinkedProjectId] = useState<string | null>(null);
+  // id сметы на бэкенде (создаётся при первом сохранении версии).
+  const [currentEstimateId, setCurrentEstimateId] = useState<string | null>(null);
+  // Тик пересчёта смен на сервере: бампается при изменении строк/параметров смен.
+  const [recalcTick, setRecalcTick] = useState(0);
+  const scheduleRecalc = () => setRecalcTick((t) => t + 1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    setEstimateHistory(loadEstimateHistory());
-  }, []);
+  // Актуальная смета для отложенного серверного пересчёта (без перезапуска эффекта).
+  const estimateRef = useRef<EstimateResult | null>(estimate);
+  estimateRef.current = estimate;
 
   const { data: equipment = [], isLoading: equipmentLoading } = useQuery<Equipment[]>({
     queryKey: ["/api/equipment"],
   });
+
+  // Список проектов для привязки сметы и перехода в карточку проекта.
+  const { data: projects = [] } = useQuery<ProjectOption[]>({
+    queryKey: ["/api/projects"],
+  });
+  const linkedProject = projects.find((p) => p.id === linkedProjectId) || null;
+
+  // Версии текущей сметы из БД (раньше — localStorage). Создаются и просматриваются.
+  const { data: estimateVersions = [] } = useQuery<EstimateVersionDto[]>({
+    queryKey: ["/api/estimates", currentEstimateId, "versions"],
+    queryFn: async () => {
+      if (!currentEstimateId) return [];
+      const res = await apiRequest("GET", `/api/estimates/${currentEstimateId}/versions`);
+      return res.json();
+    },
+    enabled: !!currentEstimateId,
+  });
+
+  const hydrateFromEstimate = (dto: EstimateDto) => {
+    setCurrentEstimateId(dto.id);
+    setLinkedProjectId(dto.projectId || null);
+    if (dto.title) setTitle(dto.title);
+    if (dto.data && Array.isArray((dto.data as EstimateResult).items)) {
+      setEstimate(dto.data as EstimateResult);
+    }
+  };
+
+  // На входе: ?estimateId= открывает конкретную смету, ?projectId= — смету проекта.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const estimateId = params.get("estimateId");
+    const projectId = params.get("projectId");
+    if (estimateId) {
+      apiRequest("GET", `/api/estimates/${estimateId}`)
+        .then((r) => r.json())
+        .then((dto: EstimateDto) => hydrateFromEstimate(dto))
+        .catch(() => {});
+      return;
+    }
+    if (projectId) {
+      setLinkedProjectId(projectId);
+      apiRequest("GET", `/api/estimates?projectId=${encodeURIComponent(projectId)}`)
+        .then((r) => r.json())
+        .then((list: EstimateDto[]) => {
+          if (Array.isArray(list) && list.length > 0) hydrateFromEstimate(list[0]);
+        })
+        .catch(() => {});
+    }
+  }, []);
 
   const catalog = useMemo(() => buildCatalog(equipment), [equipment]);
   const pricedCount = catalog.filter((item) => item.unitPrice > 0).length;
@@ -576,38 +611,79 @@ export default function EstimatesPage() {
       return normalizeText([item.name, item.model, item.type].join(" ")).includes(query);
     })
     .slice(0, 12);
-  const delivery = useMemo(() => calculateDelivery(estimate?.items || [], deliveryDistanceKm), [estimate?.items, deliveryDistanceKm]);
-  const estimateGrandTotal = Math.round(((estimate?.totals.subtotal || 0) + delivery.total) * 100) / 100;
+  const estimateGrandTotal = Math.round((estimate?.totals.subtotal || 0) * 100) / 100;
   const estimateGroups = useMemo(() => groupEstimateItems(estimate?.items || []), [estimate?.items]);
+
+  const invalidateVersions = () =>
+    queryClient.invalidateQueries({ queryKey: ["/api/estimates"] });
+
+  // Сохранить версию: гарантируем существование сметы в БД (создаём/обновляем),
+  // привязываем к проекту и пишем неизменяемый снимок-версию.
+  const saveVersionMutation = useMutation({
+    mutationFn: async (entryEstimate: EstimateResult) => {
+      const payload = {
+        title: entryEstimate.title || title || "Смета",
+        projectId: linkedProjectId ?? "",
+        data: entryEstimate,
+      };
+      let id = currentEstimateId;
+      if (!id) {
+        const res = await apiRequest("POST", "/api/estimates", payload);
+        const created = await res.json();
+        id = created.id as string;
+        setCurrentEstimateId(id);
+      } else {
+        await apiRequest("PUT", `/api/estimates/${id}`, payload);
+      }
+      const versionRes = await apiRequest("POST", `/api/estimates/${id}/versions`, {
+        title: entryEstimate.title || title || "Смета",
+        subtotal: entryEstimate.totals?.subtotal ?? 0,
+        itemsCount: entryEstimate.items?.length ?? 0,
+        data: entryEstimate,
+      });
+      return versionRes.json();
+    },
+    onSuccess: () => invalidateVersions(),
+  });
 
   const saveEstimateVersion = (entryEstimate = estimate) => {
     if (!entryEstimate) return;
-    const entry: EstimateHistoryEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      title: entryEstimate.title || title || "Смета",
-      savedAt: new Date().toISOString(),
-      estimate: entryEstimate,
-      deliveryDistanceKm,
-    };
-    setEstimateHistory((current) => {
-      const next = [entry, ...current].slice(0, 40);
-      persistEstimateHistory(next);
-      return next;
-    });
+    saveVersionMutation.mutate(entryEstimate);
   };
 
-  const openEstimateVersion = (entry: EstimateHistoryEntry) => {
-    setEstimate(entry.estimate);
-    setTitle(entry.estimate.title || entry.title);
-    setDeliveryDistanceKm(entry.deliveryDistanceKm || "0");
+  const openEstimateVersion = (entry: EstimateVersionDto) => {
+    setEstimate(entry.data);
+    setTitle(entry.data?.title || entry.title);
   };
 
-  const deleteEstimateVersion = (entryId: string) => {
-    setEstimateHistory((current) => {
-      const next = current.filter((entry) => entry.id !== entryId);
-      persistEstimateHistory(next);
-      return next;
-    });
+  const deleteVersionMutation = useMutation({
+    mutationFn: async (versionId: string) => {
+      await apiRequest("DELETE", `/api/estimates/versions/${versionId}`);
+    },
+    onSuccess: () => invalidateVersions(),
+  });
+
+  const deleteEstimateVersion = (versionId: string) => {
+    deleteVersionMutation.mutate(versionId);
+  };
+
+  // Привязать/отвязать смету к проекту (двусторонняя связь).
+  const linkProjectMutation = useMutation({
+    mutationFn: async (projectId: string) => {
+      if (currentEstimateId) {
+        await apiRequest("PUT", `/api/estimates/${currentEstimateId}`, { projectId });
+      }
+      return projectId;
+    },
+    onSuccess: (projectId) => {
+      setLinkedProjectId(projectId || null);
+      invalidateVersions();
+    },
+  });
+
+  const handleSelectProject = (projectId: string) => {
+    setLinkedProjectId(projectId || null);
+    linkProjectMutation.mutate(projectId);
   };
 
   const analyzeMutation = useMutation({
@@ -655,7 +731,7 @@ export default function EstimatesPage() {
       if (!estimate) throw new Error("Смета не собрана");
       const schemaResponse = await apiRequest("POST", "/api/connection-schemas", {
         name: estimate.title,
-        description: `Создано из сметы. Доставка: ${delivery.vehicles} авто, ${delivery.distanceKm} км, ${formatMoney(delivery.total)}.`,
+        description: `Создано из сметы «${estimate.title}». Позиций: ${estimate.totals.lines}, итог ${formatMoney(estimate.totals.subtotal)}.`,
       });
       const schema = await schemaResponse.json();
       if (!schema?.id) throw new Error("Схема не создана");
@@ -787,6 +863,66 @@ export default function EstimatesPage() {
     },
   });
 
+  const buildShiftParams = () => ({
+    startAt,
+    endAt,
+    manualShiftCount,
+    shiftHours,
+    roundingStep,
+    dayStartHour,
+    nightStartHour,
+    weekdayDayCoefficient,
+    weekdayNightCoefficient,
+    weekendDayCoefficient,
+    weekendNightCoefficient,
+    holidayDates,
+    workdayDates,
+  });
+
+  // Серверный расчёт смен/итогов — источник истины. Фронт показывает числа сервера,
+  // поэтому итоги на сервере и на фронте совпадают по построению.
+  const recalcMutation = useMutation({
+    mutationFn: async (items: EstimateLine[]) => {
+      const res = await apiRequest("POST", "/api/estimates/calculate", { ...buildShiftParams(), items });
+      return res.json() as Promise<{
+        shiftCalculation: EstimateShiftCalculation;
+        items: EstimateLine[];
+        totals: EstimateResult["totals"];
+      }>;
+    },
+    onSuccess: (data) => {
+      setEstimate((cur) =>
+        cur ? { ...cur, items: data.items, totals: data.totals, shiftCalculation: data.shiftCalculation } : cur,
+      );
+    },
+  });
+
+  // Пересчитываем на сервере при изменении строк (recalcTick) или параметров смен.
+  useEffect(() => {
+    const current = estimateRef.current;
+    if (!current) return;
+    const handle = setTimeout(() => {
+      recalcMutation.mutate(current.items);
+    }, 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    recalcTick,
+    startAt,
+    endAt,
+    manualShiftCount,
+    shiftHours,
+    roundingStep,
+    dayStartHour,
+    nightStartHour,
+    weekdayDayCoefficient,
+    weekdayNightCoefficient,
+    weekendDayCoefficient,
+    weekendNightCoefficient,
+    holidayDates,
+    workdayDates,
+  ]);
+
   const updateLine = (lineId: string, patch: Partial<Pick<EstimateLine, "quantity" | "unitPrice" | "reason">>) => {
     setEstimate((current) => {
       if (!current) return current;
@@ -816,6 +952,7 @@ export default function EstimatesPage() {
       });
       return { ...current, items, totals: recalculateTotals(items) };
     });
+    scheduleRecalc();
   };
 
   const removeLine = (lineId: string) => {
@@ -824,6 +961,7 @@ export default function EstimatesPage() {
       const items = current.items.filter((item) => item.lineId !== lineId);
       return { ...current, items, totals: recalculateTotals(items) };
     });
+    scheduleRecalc();
   };
 
   const addCatalogLine = (item: CatalogItem) => {
@@ -841,6 +979,7 @@ export default function EstimatesPage() {
       const items = [...base.items, buildLineFromCatalog(item, base.items.length, shiftFactor)];
       return { ...base, title, items, totals: recalculateTotals(items) };
     });
+    scheduleRecalc();
   };
 
   const canAnalyze = Boolean(tzText.trim() || file) && !analyzeMutation.isPending;
@@ -883,12 +1022,43 @@ export default function EstimatesPage() {
             variant="outline"
             className="shrink-0"
             disabled={!estimate?.items.length}
-            onClick={() => estimate && exportEstimateToExcel(estimate, delivery)}
+            onClick={() => estimate && exportEstimateToExcel(estimate)}
           >
             <FileSpreadsheet className="mr-2 h-4 w-4" />
             Excel
           </Button>
         </div>
+      </div>
+
+      {/* Двусторонняя связь смета↔проект: привязка сметы и переход в карточку проекта. */}
+      <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <FolderKanban className="h-4 w-4 text-primary" />
+          <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Проект</label>
+          <select
+            value={linkedProjectId ?? ""}
+            onChange={(event) => handleSelectProject(event.target.value)}
+            className="h-9 min-w-[12rem] rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+          >
+            <option value="">Без проекта</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>{project.name}</option>
+            ))}
+          </select>
+          {linkProjectMutation.isPending && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+        </div>
+        {linkedProject ? (
+          <Link href={`/projects?projectId=${linkedProject.id}`}>
+            <Button type="button" variant="outline" size="sm" className="shrink-0">
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Открыть проект: {linkedProject.name}
+            </Button>
+          </Link>
+        ) : (
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            Привяжите смету к проекту, чтобы открывать её из карточки проекта и обратно.
+          </span>
+        )}
       </div>
 
       <div className="grid gap-4">
@@ -949,30 +1119,43 @@ export default function EstimatesPage() {
         <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="font-semibold text-slate-900 dark:text-white">История смет</h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Откройте прошлую версию, поправьте строки и сохраните новую.</p>
+              <h2 className="font-semibold text-slate-900 dark:text-white">История версий</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Версии хранятся на сервере. Откройте прошлую версию, поправьте строки и сохраните новую.</p>
             </div>
-            <Badge variant="secondary">{estimateHistory.length} версий</Badge>
+            <Badge variant="secondary">{estimateVersions.length} версий</Badge>
           </div>
-          {estimateHistory.length === 0 ? (
+          {!currentEstimateId ? (
             <div className="mt-3 rounded-md border border-dashed border-slate-300 px-3 py-6 text-center text-sm text-slate-500 dark:border-slate-700">
-              История появится после первой сборки сметы или ручного сохранения версии.
+              Соберите смету и нажмите «Сохранить версию» — она появится здесь и будет привязана к проекту.
+            </div>
+          ) : estimateVersions.length === 0 ? (
+            <div className="mt-3 rounded-md border border-dashed border-slate-300 px-3 py-6 text-center text-sm text-slate-500 dark:border-slate-700">
+              У этой сметы пока нет сохранённых версий.
             </div>
           ) : (
             <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-              {estimateHistory.slice(0, 9).map((entry) => (
+              {estimateVersions.slice(0, 9).map((entry) => (
                 <div key={entry.id} className="rounded-md border border-slate-200 p-3 dark:border-slate-800">
                   <div className="min-w-0">
-                    <div className="truncate font-medium text-slate-900 dark:text-white">{entry.title}</div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="shrink-0">v{entry.versionNo}</Badge>
+                      <div className="truncate font-medium text-slate-900 dark:text-white">{entry.title}</div>
+                    </div>
                     <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {new Date(entry.savedAt).toLocaleString("ru-RU")} · {entry.estimate.items.length} поз. · {formatMoney(entry.estimate.totals.subtotal)}
+                      {new Date(entry.savedAt).toLocaleString("ru-RU")} · {entry.itemsCount} поз. · {formatMoney(entry.subtotal)}
                     </div>
                   </div>
                   <div className="mt-3 flex gap-2">
                     <Button type="button" size="sm" variant="outline" onClick={() => openEstimateVersion(entry)}>
                       Открыть
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => deleteEstimateVersion(entry.id)}>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={deleteVersionMutation.isPending}
+                      onClick={() => deleteEstimateVersion(entry.id)}
+                    >
                       Удалить
                     </Button>
                   </div>
@@ -983,7 +1166,7 @@ export default function EstimatesPage() {
         </section>
 
         <aside className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)_minmax(320px,420px)]">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,460px)]">
           <div className="border-b border-slate-200 pb-4 dark:border-slate-800 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-4">
             <div className="flex items-center gap-2">
               <Clock3 className="h-5 w-5 text-primary" />
@@ -1045,30 +1228,6 @@ export default function EstimatesPage() {
             </div>
           </div>
 
-          <div className="border-b border-slate-200 pb-4 dark:border-slate-800 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-4">
-            <div className="flex items-center gap-2">
-              <Network className="h-5 w-5 text-primary" />
-              <h2 className="font-semibold text-slate-900 dark:text-white">Доставка</h2>
-            </div>
-            <div className="mt-3 space-y-2">
-              <label className="text-xs text-slate-500 dark:text-slate-400">Дальность, км в одну сторону</label>
-              <Input type="number" min="0" step="1" value={deliveryDistanceKm} onChange={(event) => setDeliveryDistanceKm(event.target.value)} className="h-9" />
-              <div className="grid grid-cols-3 gap-2 text-sm">
-                <div className="rounded-md bg-slate-50 p-2 dark:bg-slate-800">
-                  <div className="text-xs text-slate-500">Авто</div>
-                  <div className="font-semibold">{delivery.vehicles}</div>
-                </div>
-                <div className="rounded-md bg-slate-50 p-2 dark:bg-slate-800">
-                  <div className="text-xs text-slate-500">Время</div>
-                  <div className="font-semibold">{delivery.hours} ч</div>
-                </div>
-                <div className="rounded-md bg-slate-50 p-2 dark:bg-slate-800">
-                  <div className="text-xs text-slate-500">Сумма</div>
-                  <div className="font-semibold">{formatMoney(delivery.total)}</div>
-                </div>
-              </div>
-            </div>
-          </div>
           <div>
           <div className="flex items-center gap-2">
             <Package className="h-5 w-5 text-primary" />
@@ -1154,7 +1313,6 @@ export default function EstimatesPage() {
               <div className="rounded-md bg-slate-50 p-3 dark:bg-slate-800">
                 <div className="text-xs text-slate-500 dark:text-slate-400">Итого</div>
                 <div className="mt-1 font-semibold">{formatMoney(estimateGrandTotal)}</div>
-                {delivery.total > 0 && <div className="mt-1 text-[11px] text-slate-500">оборудование {formatMoney(estimate.totals.subtotal)} + доставка</div>}
               </div>
               <div className="rounded-md bg-slate-50 p-3 dark:bg-slate-800">
                 <div className="text-xs text-slate-500 dark:text-slate-400">Смены</div>

@@ -4,6 +4,7 @@ import com.streamdesk.auth.AuthenticatedUser;
 import com.streamdesk.company.CompanyService;
 import com.streamdesk.config.ApiException;
 import com.streamdesk.config.TimeParse;
+import com.streamdesk.estimate.EstimateService;
 import com.streamdesk.project.dto.ColumnRequest;
 import com.streamdesk.project.dto.ProjectRequest;
 import com.streamdesk.task.Task;
@@ -41,17 +42,20 @@ public class ProjectService {
     private final TaskRepository taskRepository;
     private final UserService userService;
     private final CompanyService companyService;
+    private final EstimateService estimateService;
 
     public ProjectService(ProjectRepository projectRepository,
                           ProjectColumnRepository columnRepository,
                           TaskRepository taskRepository,
                           UserService userService,
-                          CompanyService companyService) {
+                          CompanyService companyService,
+                          EstimateService estimateService) {
         this.projectRepository = projectRepository;
         this.columnRepository = columnRepository;
         this.taskRepository = taskRepository;
         this.userService = userService;
         this.companyService = companyService;
+        this.estimateService = estimateService;
     }
 
     /** GET /api/projects — фильтр по доступу (компания/владелец/исполнитель/участник). */
@@ -185,8 +189,9 @@ public class ProjectService {
 
     @Transactional
     public void deleteProject(String id) {
-        // Как deleteProject в Express: отвязать задачи, удалить столбцы, затем проект (без 404).
+        // Как deleteProject в Express: отвязать задачи и сметы, удалить столбцы, затем проект (без 404).
         taskRepository.clearProjectReferences(id);
+        estimateService.clearProjectReferences(id);
         columnRepository.deleteByProjectId(id);
         if (projectRepository.existsById(id)) {
             projectRepository.deleteById(id);

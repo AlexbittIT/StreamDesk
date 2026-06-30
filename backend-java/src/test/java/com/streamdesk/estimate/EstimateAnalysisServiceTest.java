@@ -27,15 +27,15 @@ import static org.mockito.Mockito.when;
  * Интеграция сборки сметы: индикатор source на строках, ветка «без цены» → дефицит,
  * различие смет на разных ТЗ и типизированная ошибка при requireAi + сбое ИИ.
  */
-class EstimateServiceTest {
+class EstimateAnalysisServiceTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private EstimateService service(DeepSeekClient client) {
+    private EstimateAnalysisService service(DeepSeekClient client) {
         CatalogService catalog = new CatalogService();
         EstimateMatchingService matching = new EstimateMatchingService();
         EstimateAiService ai = new EstimateAiService(client, matching);
-        return new EstimateService(catalog, matching, ai,
+        return new EstimateAnalysisService(catalog, matching, ai,
                 new LocalRequirementPlanner(), new ShiftCalculator(), new FileTextExtractor());
     }
 
@@ -97,7 +97,7 @@ class EstimateServiceTest {
         // ИИ выключен — различия дают локальный планировщик и текст ТЗ.
         DeepSeekClient client = mock(DeepSeekClient.class);
         when(client.isConfigured()).thenReturn(false);
-        EstimateService svc = service(client);
+        EstimateAnalysisService svc = service(client);
 
         EstimateResult party = svc.analyze(
                 request("Вечеринка, диджей, концерт на сцене, мощный звук, сабвуферы, свет и дым", "вечеринка", false),
@@ -130,7 +130,7 @@ class EstimateServiceTest {
         when(client.generateJson(anyString(), anyString()))
                 .thenThrow(new ApiException(HttpStatus.BAD_GATEWAY, "AI не ответил"));
 
-        EstimateService svc = service(client);
+        EstimateAnalysisService svc = service(client);
         assertThrows(ApiException.class, () -> svc.analyze(
                 request("Конференция", "конференция", true), null, List.of()),
                 "requireAi=true и сбой ИИ → ApiException без фолбэка");
