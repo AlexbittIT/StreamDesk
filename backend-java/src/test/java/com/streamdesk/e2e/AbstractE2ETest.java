@@ -47,7 +47,7 @@ public abstract class AbstractE2ETest {
     /** Строит principal-пользователя — то же, что AuthenticatedUser.fromEntity, но без БД. */
     protected static AuthenticatedUser user(String id, String role, List<String> permissions) {
         return new AuthenticatedUser(
-                id, id, id, id + "@test.local", null, role,
+                id, id, id, id + "@test.local", null, role, null,
                 permissions != null ? permissions : new ArrayList<>(),
                 true, true, "company_member", false);
     }
