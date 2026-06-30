@@ -30,6 +30,8 @@ type EstimateLine = {
   confidence: number;
   reason: string;
   locations: string[];
+  // Индикатор происхождения строки: "ai" — предложено ИИ, "local" — локальный подбор.
+  source?: "ai" | "local";
 };
 
 type EstimateMissingLine = {
@@ -304,6 +306,7 @@ function buildLineFromCatalog(item: CatalogItem, index: number, shiftFactor = 1)
     confidence: 1,
     reason: "Добавлено вручную",
     locations: item.locations.slice(0, 5),
+    source: "local",
   };
 }
 
@@ -1234,7 +1237,17 @@ export default function EstimatesPage() {
                       {group.items.map((line) => (
                     <tr key={line.lineId} className="align-top">
                       <td className="px-4 py-3">
-                        <div className="font-medium text-slate-900 dark:text-white">{line.name}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-slate-900 dark:text-white">{line.name}</span>
+                          {line.source && (
+                            <Badge
+                              variant={line.source === "ai" ? "default" : "secondary"}
+                              className="shrink-0 text-[10px] px-1.5 py-0"
+                            >
+                              {line.source === "ai" ? "ИИ" : "Локально"}
+                            </Badge>
+                          )}
+                        </div>
                         <div className="mt-1 flex flex-wrap gap-1.5 text-xs text-slate-500 dark:text-slate-400">
                           <span>{getTypeText(line.type)}</span>
                           {line.model && <span>· {line.model}</span>}
