@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 
 type Reader = { type: string; id: string };
@@ -385,7 +384,14 @@ function Stat({ label, value, bold }: { label: string; value: string; bold?: boo
 export default function MediaMtxPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { user } = useAuth();
+  // Текущий пользователь — из localStorage (в приложении нет AuthProvider; useAuth ронял страницу).
+  const user = (() => {
+    try {
+      return JSON.parse(localStorage.getItem("streamstudio_user") || "null");
+    } catch {
+      return null;
+    }
+  })();
   const isAdmin = user?.role === "admin";
 
   const [muted, setMuted] = useState(true);
