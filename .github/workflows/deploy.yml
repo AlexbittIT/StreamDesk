@@ -1,0 +1,60 @@
+name: CD (deploy to VM)
+
+# Continuous Deployment: после успешного прохождения CI на main заходим на VM
+# по SSH и пересобираем стек через docker compose. Деплой не стартует, если CI красный.
+#
+# Требуются секреты репозитория (Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST     — IP/домен VM
+#   DEPLOY_USER     — пользователь SSH
+#   DEPLOY_SSH_KEY  — приватный SSH-ключ (с доступом к VM)
+#   DEPLOY_PATH     — путь к клонированному репозиторию на VM (где лежит docker-compose.yml)
+#   DEPLOY_PORT     — (опционально) SSH-порт, по умолчанию 22
+#
+# Предусловия на VM: установлены docker и docker compose; репозиторий склонирован в
+# DEPLOY_PATH; рядом лежит .env с прод-секретами (AI-шлюз, MEDIAMTX_*, БД и т.п.).
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  # Ручной запуск из вкладки Actions при необходимости.
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vm
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy via docker compose
+    runs-on: ubuntu-latest
+    # Только при зелёном CI (для workflow_run) либо при ручном запуске.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Check deploy config
+        id: cfg
+        run: |
+          if [ -z "${{ secrets.DEPLOY_HOST }}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Секреты деплоя не заданы (DEPLOY_HOST пуст) — деплой пропущен. Настройте Settings → Secrets, чтобы включить CD."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy over SSH
+        if: steps.cfg.outputs.configured == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH }}"
+            git fetch --all --prune
+            git reset --hard origin/main
+            docker compose pull || true
+            docker compose up -d --build
+            docker image prune -f
+            docker compose ps

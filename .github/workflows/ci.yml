@@ -1,17 +1,17 @@
 name: CI
 
-# Гоняем сборку и тесты на пуш и на PR в основные ветки спринта.
+# Сборка и тесты бэкенда (Java) и фронтенда (React) на каждый push/PR в main/develop.
 # Падение любого теста роняет job → PR с красными тестами нельзя смержить,
 # если в Settings → Branches включить Required status checks на этот workflow.
 on:
   push:
     branches:
-      - feat/s2-ports
       - main
+      - develop
   pull_request:
     branches:
-      - feat/s2-ports
       - main
+      - develop
 
 jobs:
   backend-verify:
@@ -31,5 +31,43 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Build and test (mvn verify)
+      - name: Build, test & coverage (mvn verify)
         run: mvn -B verify
+
+      - name: Upload JaCoCo coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-backend
+          path: backend-java/target/site/jacoco
+          if-no-files-found: warn
+
+  frontend-verify:
+    name: frontend • test & build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests + coverage (vitest)
+        run: npm run test:coverage
+
+      - name: Production build (vite)
+        run: npm run build
+
+      - name: Upload frontend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-frontend
+          path: coverage/frontend
+          if-no-files-found: warn
