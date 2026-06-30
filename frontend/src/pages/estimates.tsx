@@ -1,11 +1,11 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BrainCircuit, Clock3, FileSpreadsheet, Loader2, Network, Package, Plus, Search, Trash2, Upload, X } from "lucide-react";
+import { AlertTriangle, BrainCircuit, Clock3, FileDown, FileSpreadsheet, Loader2, Network, Package, Plus, Search, Trash2, Upload, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import type { Equipment } from "@shared/schema";
@@ -91,6 +91,24 @@ type EstimateResult = {
     endAt: string | null;
     notes: string;
   } | null;
+  meta?: EstimatePdfMeta;
+};
+
+// Данные мероприятия для шапки PDF (хранятся вместе со сметой).
+type EstimatePdfMeta = {
+  eventDates?: string;
+  setupDates?: string;
+  location?: string;
+  eventName?: string;
+  customer?: string;
+};
+
+// Реквизиты компании для шапки PDF (хранятся в settings.branding компании).
+type EstimateBranding = {
+  displayName?: string;
+  phone?: string;
+  website?: string;
+  logo?: string;
 };
 
 type EstimateHistoryEntry = {
@@ -427,23 +445,6 @@ function safeFilePart(value: string) {
   return value.replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_").slice(0, 80) || "estimate";
 }
 
-const ESTIMATE_HISTORY_KEY = "streamdesk_estimate_history_v1";
-
-function loadEstimateHistory(): EstimateHistoryEntry[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(ESTIMATE_HISTORY_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed.slice(0, 40) : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistEstimateHistory(entries: EstimateHistoryEntry[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(ESTIMATE_HISTORY_KEY, JSON.stringify(entries.slice(0, 40)));
-}
-
 function exportEstimateToExcel(estimate: EstimateResult, delivery?: ReturnType<typeof calculateDelivery>) {
   const rows = groupEstimateItems(estimate.items).map((group) => `
     <tr style="background:#e8eef8;font-weight:bold">
@@ -531,6 +532,173 @@ function exportEstimateToExcel(estimate: EstimateResult, delivery?: ReturnType<t
   URL.revokeObjectURL(url);
 }
 
+// Формат «3 900,00р.» как в макете PDF.
+function formatRub(value: number) {
+  const n = Number(value) || 0;
+  return n.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "р.";
+}
+
+type EstimatePdfOptions = {
+  branding?: EstimateBranding;
+  meta?: EstimatePdfMeta;
+  delivery?: ReturnType<typeof calculateDelivery>;
+  grandTotal: number;
+};
+
+// Собирает HTML-шаблон сметы (макет как в образце: шапка с реквизитами, блок мероприятия, таблица по группам).
+function buildEstimatePdfHtml(estimate: EstimateResult, opts: EstimatePdfOptions) {
+  const branding = opts.branding || {};
+  const meta = opts.meta || {};
+  const groups = groupEstimateItems(estimate.items);
+  const titleLine = branding.displayName
+    ? `Техническое оснащение ${branding.displayName}`
+    : "Смета на техническое оснащение";
+
+  const cell = "border:1px solid #cbd5e1;padding:3px 6px;";
+  const metaRows = [
+    ["Дата проведения", meta.eventDates],
+    ["Дата монтажа / Репетиция", meta.setupDates],
+    ["Место проведения", meta.location],
+    ["Мероприятие", meta.eventName],
+    ["Заказчик", meta.customer],
+  ]
+    .map(
+      ([label, value]) => `
+    <tr>
+      <td style="${cell}background:#f1f5f9;font-weight:600;width:240px;">${escapeHtml(label)}</td>
+      <td style="${cell}">${escapeHtml(value || "")}</td>
+    </tr>`,
+    )
+    .join("");
+
+  let rowsHtml = "";
+  for (const group of groups) {
+    rowsHtml += `<tr><td colspan="6" style="${cell}background:#e2e8f0;text-align:center;font-weight:700;">${escapeHtml(group.title)}</td></tr>`;
+    group.items.forEach((line, idx) => {
+      rowsHtml += `
+        <tr>
+          <td style="${cell}text-align:center;">${idx + 1}</td>
+          <td style="${cell}">${escapeHtml(line.name)}${line.model ? " " + escapeHtml(line.model) : ""}</td>
+          <td style="${cell}text-align:center;">${line.quantity}</td>
+          <td style="${cell}text-align:right;">${line.unitPrice ? formatRub(line.unitPrice) : ""}</td>
+          <td style="${cell}text-align:center;">${line.shiftFactor ?? 1}</td>
+          <td style="${cell}text-align:right;">${line.total ? formatRub(line.total) : ""}</td>
+        </tr>`;
+    });
+    rowsHtml += `
+      <tr>
+        <td colspan="5" style="${cell}text-align:right;font-weight:700;">Итого:</td>
+        <td style="${cell}text-align:right;font-weight:700;">${formatRub(group.total)}</td>
+      </tr>`;
+  }
+
+  if (opts.delivery && opts.delivery.total > 0) {
+    rowsHtml += `
+      <tr><td colspan="6" style="${cell}background:#e2e8f0;text-align:center;font-weight:700;">Доставка</td></tr>
+      <tr>
+        <td style="${cell}text-align:center;">1</td>
+        <td style="${cell}">Доставка оборудования (${opts.delivery.vehicles} авто, ${opts.delivery.distanceKm} км)</td>
+        <td style="${cell}text-align:center;">1</td>
+        <td style="${cell}text-align:right;">${formatRub(opts.delivery.total)}</td>
+        <td style="${cell}text-align:center;">1</td>
+        <td style="${cell}text-align:right;">${formatRub(opts.delivery.total)}</td>
+      </tr>`;
+  }
+
+  const th = "border:1px solid #cbd5e1;padding:5px 6px;background:#f1f5f9;";
+  const logoBlock = branding.logo
+    ? `<img src="${branding.logo}" style="max-height:56px;max-width:220px;object-fit:contain;" />`
+    : `<div style="font-weight:800;font-size:18px;">${escapeHtml(branding.displayName || "")}</div>`;
+
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;font-size:12px;padding:24px;background:#ffffff;width:852px;box-sizing:border-box;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
+      <div style="width:40%;">${logoBlock}</div>
+      <div style="width:55%;text-align:right;">
+        <div style="font-weight:700;font-size:14px;">${escapeHtml(titleLine)}</div>
+        <div>${escapeHtml(branding.phone || "")}</div>
+        <div>${escapeHtml(branding.website || "")}</div>
+      </div>
+    </div>
+    <table style="border-collapse:collapse;width:100%;margin-bottom:12px;">${metaRows}</table>
+    <table style="border-collapse:collapse;width:100%;">
+      <thead>
+        <tr>
+          <th style="${th}">№</th>
+          <th style="${th}text-align:left;">Наименование</th>
+          <th style="${th}">Количество</th>
+          <th style="${th}">Цена за ед. в руб.</th>
+          <th style="${th}">Коэффициент</th>
+          <th style="${th}">Общая цена</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+      <tfoot>
+        <tr>
+          <td colspan="5" style="${cell}text-align:right;font-weight:800;background:#f8fafc;">ИТОГО${opts.delivery && opts.delivery.total > 0 ? " с доставкой" : ""}:</td>
+          <td style="${cell}text-align:right;font-weight:800;background:#f8fafc;">${formatRub(opts.grandTotal)}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>`;
+}
+
+// Рендерит HTML-шаблон в PDF (html2canvas -> jsPDF, многостраничный).
+// Шаблон рендерим в изолированном iframe без стилей приложения: иначе html2canvas
+// натыкается на CSS-цвета oklch() из Tailwind v4 и падает ("unsupported color function oklch").
+async function exportEstimateToPdf(estimate: EstimateResult, opts: EstimatePdfOptions) {
+  const [{ jsPDF }, html2canvasMod] = await Promise.all([import("jspdf"), import("html2canvas")]);
+  const html2canvas = html2canvasMod.default;
+
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.left = "-10000px";
+  iframe.style.top = "0";
+  iframe.style.width = "900px";
+  iframe.style.height = "100px";
+  iframe.style.border = "0";
+  document.body.appendChild(iframe);
+
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) throw new Error("iframe document недоступен");
+    doc.open();
+    doc.write(`<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:#ffffff;">${buildEstimatePdfHtml(estimate, opts)}</body></html>`);
+    doc.close();
+
+    // Ждём загрузку картинок (логотип как data URL) и небольшую паузу на верстку.
+    const images = Array.from(doc.images);
+    await Promise.all(
+      images.map((img) =>
+        img.complete ? Promise.resolve() : new Promise<void>((resolve) => { img.onload = img.onerror = () => resolve(); }),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    const canvas = await html2canvas(doc.body, { scale: 2, backgroundColor: "#ffffff" });
+    const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgW = pageW;
+    const imgH = (canvas.height * imgW) / canvas.width;
+    const imgData = canvas.toDataURL("image/png");
+
+    let heightLeft = imgH;
+    let position = 0;
+    pdf.addImage(imgData, "PNG", 0, position, imgW, imgH);
+    heightLeft -= pageH;
+    while (heightLeft > 0) {
+      position -= pageH;
+      pdf.addPage();
+      pdf.addImage(imgData, "PNG", 0, position, imgW, imgH);
+      heightLeft -= pageH;
+    }
+    pdf.save(`${safeFilePart(estimate.title)}_${new Date().toISOString().slice(0, 10)}.pdf`);
+  } finally {
+    document.body.removeChild(iframe);
+  }
+}
+
 export default function EstimatesPage() {
   const [title, setTitle] = useState(() => `Смета ${new Date().toLocaleDateString("ru-RU")}`);
   const [tzText, setTzText] = useState("");
@@ -551,13 +719,43 @@ export default function EstimatesPage() {
   const [holidayDates, setHolidayDates] = useState("");
   const [workdayDates, setWorkdayDates] = useState("");
   const [deliveryDistanceKm, setDeliveryDistanceKm] = useState("0");
-  const [estimateHistory, setEstimateHistory] = useState<EstimateHistoryEntry[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
+  // Активная компания и её реквизиты для PDF (settings.branding).
+  const { data: onboarding } = useQuery<any>({ queryKey: ["/api/auth/onboarding-state"] });
+  const activeCompany = onboarding?.activeCompanies?.[0]?.company || null;
+  const companyId: string = activeCompany?.id || "";
+
+  const [companyDisplayName, setCompanyDisplayName] = useState("");
+  const [companyPhone, setCompanyPhone] = useState("");
+  const [companyWebsite, setCompanyWebsite] = useState("");
+  const [companyLogo, setCompanyLogo] = useState("");
+
+  // Реквизиты мероприятия (шапка PDF; сохраняются вместе со сметой).
+  const [eventName, setEventName] = useState("");
+  const [customer, setCustomer] = useState("");
+  const [eventLocation, setEventLocation] = useState("");
+  const [eventDates, setEventDates] = useState("");
+  const [setupDates, setSetupDates] = useState("");
+  const [pdfBusy, setPdfBusy] = useState(false);
+
   useEffect(() => {
-    setEstimateHistory(loadEstimateHistory());
-  }, []);
+    const b = activeCompany?.settings?.branding || {};
+    setCompanyDisplayName(b.displayName || activeCompany?.name || "");
+    setCompanyPhone(b.phone || "");
+    setCompanyWebsite(b.website || "");
+    setCompanyLogo(b.logo || "");
+  }, [activeCompany?.id]);
+
+  const branding: EstimateBranding = { displayName: companyDisplayName, phone: companyPhone, website: companyWebsite, logo: companyLogo };
+  const estimateMeta: EstimatePdfMeta = { eventName, customer, location: eventLocation, eventDates, setupDates };
+
+  // История смет теперь хранится в БД и общая для всех сотрудников компании.
+  const { data: estimateHistory = [] } = useQuery<EstimateHistoryEntry[]>({
+    queryKey: ["/api/estimates"],
+  });
 
   const { data: equipment = [], isLoading: equipmentLoading } = useQuery<Equipment[]>({
     queryKey: ["/api/equipment"],
@@ -577,34 +775,96 @@ export default function EstimatesPage() {
   const estimateGrandTotal = Math.round(((estimate?.totals.subtotal || 0) + delivery.total) * 100) / 100;
   const estimateGroups = useMemo(() => groupEstimateItems(estimate?.items || []), [estimate?.items]);
 
-  const saveEstimateVersion = (entryEstimate = estimate) => {
+  const saveEstimateMutation = useMutation({
+    mutationFn: async ({ entryEstimate }: { entryEstimate: EstimateResult; notify: boolean }) => {
+      const response = await apiRequest("POST", "/api/estimates", {
+        title: entryEstimate.title || title || "Смета",
+        estimate: { ...entryEstimate, meta: estimateMeta },
+        deliveryDistanceKm,
+      });
+      return response.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/estimates"] });
+      if (variables.notify) toast({ title: "Версия сметы сохранена" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Не удалось сохранить смету", description: error?.message || "Попробуйте ещё раз", variant: "destructive" });
+    },
+  });
+
+  const deleteEstimateMutation = useMutation({
+    mutationFn: async (entryId: string) => {
+      await apiRequest("DELETE", `/api/estimates/${entryId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/estimates"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Не удалось удалить смету", description: error?.message || "Попробуйте ещё раз", variant: "destructive" });
+    },
+  });
+
+  const saveEstimateVersion = (entryEstimate = estimate, notify = false) => {
     if (!entryEstimate) return;
-    const entry: EstimateHistoryEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      title: entryEstimate.title || title || "Смета",
-      savedAt: new Date().toISOString(),
-      estimate: entryEstimate,
-      deliveryDistanceKm,
-    };
-    setEstimateHistory((current) => {
-      const next = [entry, ...current].slice(0, 40);
-      persistEstimateHistory(next);
-      return next;
-    });
+    saveEstimateMutation.mutate({ entryEstimate, notify });
   };
 
   const openEstimateVersion = (entry: EstimateHistoryEntry) => {
     setEstimate(entry.estimate);
     setTitle(entry.estimate.title || entry.title);
     setDeliveryDistanceKm(entry.deliveryDistanceKm || "0");
+    const m = entry.estimate?.meta;
+    if (m) {
+      setEventName(m.eventName || "");
+      setCustomer(m.customer || "");
+      setEventLocation(m.location || "");
+      setEventDates(m.eventDates || "");
+      setSetupDates(m.setupDates || "");
+    }
   };
 
   const deleteEstimateVersion = (entryId: string) => {
-    setEstimateHistory((current) => {
-      const next = current.filter((entry) => entry.id !== entryId);
-      persistEstimateHistory(next);
-      return next;
-    });
+    deleteEstimateMutation.mutate(entryId);
+  };
+
+  const saveBrandingMutation = useMutation({
+    mutationFn: async () => {
+      if (!companyId) throw new Error("Нет активной компании");
+      const res = await apiRequest("PUT", `/api/companies/${companyId}/branding`, {
+        displayName: companyDisplayName,
+        phone: companyPhone,
+        website: companyWebsite,
+        logo: companyLogo,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/onboarding-state"] });
+      toast({ title: "Реквизиты компании сохранены" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Не удалось сохранить реквизиты", description: error?.message || "Проверьте права доступа", variant: "destructive" });
+    },
+  });
+
+  const onLogoSelected = (selected?: File | null) => {
+    if (!selected) return;
+    const reader = new FileReader();
+    reader.onload = () => setCompanyLogo(String(reader.result || ""));
+    reader.readAsDataURL(selected);
+  };
+
+  const handleExportPdf = async () => {
+    if (!estimate) return;
+    setPdfBusy(true);
+    try {
+      await exportEstimateToPdf(estimate, { branding, meta: estimateMeta, delivery, grandTotal: estimateGrandTotal });
+    } catch (error: any) {
+      toast({ title: "Не удалось сформировать PDF", description: error?.message || "Попробуйте ещё раз", variant: "destructive" });
+    } finally {
+      setPdfBusy(false);
+    }
   };
 
   const analyzeMutation = useMutation({
@@ -856,11 +1116,8 @@ export default function EstimatesPage() {
             type="button"
             variant="outline"
             className="shrink-0"
-            disabled={!estimate}
-            onClick={() => {
-              saveEstimateVersion();
-              toast({ title: "Версия сметы сохранена" });
-            }}
+            disabled={!estimate || saveEstimateMutation.isPending}
+            onClick={() => saveEstimateVersion(estimate, true)}
           >
             <Clock3 className="mr-2 h-4 w-4" />
             Сохранить версию
@@ -884,6 +1141,16 @@ export default function EstimatesPage() {
           >
             <FileSpreadsheet className="mr-2 h-4 w-4" />
             Excel
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="shrink-0"
+            disabled={!estimate?.items.length || pdfBusy}
+            onClick={handleExportPdf}
+          >
+            {pdfBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
+            PDF
           </Button>
         </div>
       </div>
@@ -940,6 +1207,52 @@ export default function EstimatesPage() {
               {analyzeMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <BrainCircuit className="mr-2 h-4 w-4" />}
               Собрать смету
             </Button>
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          <h2 className="font-semibold text-slate-900 dark:text-white">Реквизиты для PDF</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Шапка PDF-сметы: логотип и контакты компании (сохраняются для всех сотрудников), данные мероприятия (для этой сметы). Где поле пустое — в PDF будет пусто.
+          </p>
+          <div className="mt-3 grid gap-4 lg:grid-cols-2">
+            <div className="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-800">
+              <div className="text-sm font-medium text-slate-700 dark:text-slate-300">Компания (общие реквизиты)</div>
+              <div className="flex items-center gap-3">
+                {companyLogo ? (
+                  <img src={companyLogo} alt="logo" className="h-12 w-auto max-w-[140px] object-contain" />
+                ) : (
+                  <div className="flex h-12 w-[140px] items-center justify-center rounded border border-dashed border-slate-300 text-xs text-slate-400 dark:border-slate-700">
+                    нет логотипа
+                  </div>
+                )}
+                <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => onLogoSelected(event.target.files?.[0])} />
+                <Button type="button" variant="outline" size="sm" onClick={() => logoInputRef.current?.click()}>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Логотип
+                </Button>
+                {companyLogo && (
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setCompanyLogo("")}>
+                    Убрать
+                  </Button>
+                )}
+              </div>
+              <Input value={companyDisplayName} onChange={(event) => setCompanyDisplayName(event.target.value)} placeholder="Название компании" />
+              <Input value={companyPhone} onChange={(event) => setCompanyPhone(event.target.value)} placeholder="Телефон" />
+              <Input value={companyWebsite} onChange={(event) => setCompanyWebsite(event.target.value)} placeholder="Сайт" />
+              <Button type="button" size="sm" disabled={!companyId || saveBrandingMutation.isPending} onClick={() => saveBrandingMutation.mutate()}>
+                {saveBrandingMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Сохранить реквизиты компании
+              </Button>
+            </div>
+            <div className="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-800">
+              <div className="text-sm font-medium text-slate-700 dark:text-slate-300">Мероприятие (для этой сметы)</div>
+              <Input value={eventName} onChange={(event) => setEventName(event.target.value)} placeholder="Мероприятие" />
+              <Input value={customer} onChange={(event) => setCustomer(event.target.value)} placeholder="Заказчик" />
+              <Input value={eventLocation} onChange={(event) => setEventLocation(event.target.value)} placeholder="Место проведения" />
+              <Input value={eventDates} onChange={(event) => setEventDates(event.target.value)} placeholder="Дата проведения" />
+              <Input value={setupDates} onChange={(event) => setSetupDates(event.target.value)} placeholder="Дата монтажа / Репетиция" />
+            </div>
           </div>
         </section>
 
