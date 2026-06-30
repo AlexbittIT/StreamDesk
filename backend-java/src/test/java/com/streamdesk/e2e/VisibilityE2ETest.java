@@ -1,6 +1,8 @@
 package com.streamdesk.e2e;
 
 import com.streamdesk.auth.AuthenticatedUser;
+import com.streamdesk.company.CompanyMember;
+import com.streamdesk.company.CompanyMemberRepository;
 import com.streamdesk.event.Event;
 import com.streamdesk.event.EventRepository;
 import com.streamdesk.task.Task;
@@ -40,16 +42,25 @@ class VisibilityE2ETest extends AbstractE2ETest {
     @Autowired
     private EventRepository eventRepository;
 
+    @Autowired
+    private CompanyMemberRepository companyMemberRepository;
+
     @Test
     void tasks_ownUserSeesOnlyOwn_viewAllUserSeesOthers() throws Exception {
         String ownId = "own-user-1";
-        // Чужая задача (другой создатель/исполнитель, без общей компании).
-        taskRepository.save(task("Чужая задача", "stranger-1", "stranger-1"));
-        // Своя задача владельца.
+        String companyId = "company-1";
+        // Чужая задача (другой создатель/исполнитель) в компании company-1.
+        Task stranger = task("Чужая задача", "stranger-1", "stranger-1");
+        stranger.setCompanyId(companyId);
+        taskRepository.save(stranger);
+        // Своя задача владельца (без компании — видна по владению, на любом уровне).
         taskRepository.save(task("Моя задача", ownId, ownId));
 
         AuthenticatedUser own = user(ownId, "user", List.of());
         AuthenticatedUser viewAll = user("viewer-all", "user", List.of("tasks:view_all"));
+        // viewAll — активный участник company-1: барьер компании (действует даже на уровне
+        // ALL/view_all) пропускает чужую задачу этой компании.
+        companyMemberRepository.save(member("viewer-all", companyId));
 
         // OWN: видит свою, НЕ видит чужую.
         mockMvc.perform(get("/api/tasks").with(as(own)))
@@ -85,6 +96,14 @@ class VisibilityE2ETest extends AbstractE2ETest {
         t.setCreatorId(creatorId);
         t.setAssigneeId(assigneeId);
         return t;
+    }
+
+    private CompanyMember member(String userId, String companyId) {
+        CompanyMember m = new CompanyMember();
+        m.setUserId(userId);
+        m.setCompanyId(companyId);
+        m.setStatus("active");
+        return m;
     }
 
     private Event event(String title, String organizerId) {
