@@ -156,14 +156,28 @@ function DeviceEditForm({
     (device.portsOut || []).map((p) => p.name || p.id).join("\n")
   );
   const handleSave = () => {
+    // Сохраняем portType для портов с такими же именами (чтобы не терялись иконки)
+    const portTypeMapIn = new Map((device.portsIn || []).map(p => [p.name.toLowerCase(), p.portType]));
+    const portTypeMapOut = new Map((device.portsOut || []).map(p => [p.name.toLowerCase(), p.portType]));
+
     const portsIn: Device["portsIn"] = portsInText
       .split("\n")
       .filter((s) => s.trim())
-      .map((s, i) => ({ id: `in-${i}`, name: s.trim(), type: "in" as const }));
+      .map((s, i) => ({
+        id: `in-${i}`,
+        name: s.trim(),
+        type: "in" as const,
+        portType: portTypeMapIn.get(s.trim().toLowerCase()),
+      }));
     const portsOut: Device["portsOut"] = portsOutText
       .split("\n")
       .filter((s) => s.trim())
-      .map((s, i) => ({ id: `out-${i}`, name: s.trim(), type: "out" as const }));
+      .map((s, i) => ({
+        id: `out-${i}`,
+        name: s.trim(),
+        type: "out" as const,
+        portType: portTypeMapOut.get(s.trim().toLowerCase()),
+      }));
     onSave({ name: name.trim(), width: Number(width) || 260, height: Number(height) || 80, portsIn, portsOut });
   };
   return (
@@ -513,6 +527,43 @@ export default function ConnectionSchemas() {
         title: "Схема дополнена",
         description: `Добавлено блоков: ${data?.created?.length || 0}. Проверьте порты и поправьте при необходимости.`,
       });
+
+      // Перемещаем новые устройства в центр экрана пользователя
+      const created = data?.created || [];
+      console.log("[AI Generate] Created devices:", created.length);
+      console.log("[AI Generate] Created IDs:", created.map(d => d.id));
+
+      // Проверяем что canvas готов
+      const isReady = schemaCanvasRef.current?.isReady() ?? false;
+      console.log("[AI Generate] Canvas isReady:", isReady);
+
+      const center = schemaCanvasRef.current?.getViewportCenter();
+      console.log("[AI Generate] Viewport center:", center);
+
+      if (created.length > 0 && isReady && center) {
+        // Раскладываем устройства в сетку вокруг центра viewport
+        const cols = Math.ceil(Math.sqrt(created.length));
+        const spacingX = 320;
+        const spacingY = 180;
+
+        // Собираем все промисы позиционирования
+        const positionPromises = [];
+        for (let i = 0; i < created.length; i++) {
+          const col = i % cols;
+          const row = Math.floor(i / cols);
+          const newX = Math.round(center.x - (cols * spacingX) / 2 + col * spacingX);
+          const newY = Math.round(center.y - (Math.ceil(created.length / cols) * spacingY) / 2 + row * spacingY);
+          console.log(`[AI Generate] Moving device ${created[i].id} (${created[i].name}): x=${newX}, y=${newY}`);
+          positionPromises.push(updateDevicePosition.mutateAsync({ id: created[i].id, position: { x: newX, y: newY } }));
+        }
+
+        // Ждем завершения всех обновлений позиций
+        await Promise.all(positionPromises);
+        console.log("[AI Generate] All positions updated");
+      } else {
+        console.log("[AI Generate] Skipping - isReady:", isReady, "center:", center);
+      }
+
       await refetchSelectedSchema();
     },
     onError: (error: any) => {
@@ -585,12 +636,16 @@ export default function ConnectionSchemas() {
   // Обновление позиции устройства
   const updateDevicePosition = useMutation({
     mutationFn: async ({ id, position }: { id: string; position: { x: number; y: number } }) => {
+      console.log("[UpdatePosition] Updating device:", id, "to:", position);
       const component = selectedSchemaData?.components?.find(c => c.id === id);
-      if (!component) throw new Error("Компонент не найден");
-      
+      if (!component) {
+        console.log("[UpdatePosition] Component not found in cache for id:", id);
+        console.log("[UpdatePosition] Available components:", selectedSchemaData?.components?.map(c => c.id));
+      }
+
       const response = await apiRequest("PUT", `/api/connection-schemas/components/${id}`, {
         position,
-        properties: component.properties,
+        properties: component?.properties,
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
@@ -600,6 +655,9 @@ export default function ConnectionSchemas() {
     },
     onSuccess: () => {
       refetchSelectedSchema();
+    },
+    onError: (error: any) => {
+      console.error("[UpdatePosition] Error:", error);
     },
   });
 
@@ -795,9 +853,10 @@ export default function ConnectionSchemas() {
     }
 
     // Размещаем в центре текущего вида (как в Figma), чтобы не переносить пользователя на другой край
-    const center = schemaCanvasRef.current?.getViewportCenter();
-    const x = center ? Math.round(center.x - 100) : Math.floor(devices.length / 3) * 250 + 50;
-    const y = center ? Math.round(center.y - 40) : (devices.length % 3) * 150 + 50;
+    const canvasReady = schemaCanvasRef.current?.isReady();
+    const center = canvasReady ? schemaCanvasRef.current?.getViewportCenter() : null;
+    const x = center ? Math.round(center.x - 100) : Math.floor(devices.length / 3) * 250 + 500;
+    const y = center ? Math.round(center.y - 40) : (devices.length % 3) * 150 + 300;
 
     createComponentMutation.mutate({
       schemaId: selectedSchema,
@@ -946,11 +1005,6 @@ export default function ConnectionSchemas() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-          <Link href="/connection-schemas/port-review">
-            <Button size="lg" variant="outline">
-              Очередь разъёмов
-            </Button>
-          </Link>
           <Dialog open={isCreatingSchema} onOpenChange={setIsCreatingSchema}>
             <DialogTrigger asChild>
               <Button size="lg" onClick={() => setIsCreatingSchema(true)}>
