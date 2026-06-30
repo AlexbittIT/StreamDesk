@@ -45,7 +45,13 @@ public class SecurityConfig {
                 // CSRF выключен — это REST API для SPA (как в текущем Express).
                 .csrf(AbstractHttpConfigurer::disable)
                 // Сессию создаём сами в AuthController; Spring её не навязывает.
-                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
+                // sessionFixation().none() — НЕ менять id сессии на каждом запросе:
+                // кастомный SessionAuthenticationFilter «аутентифицирует» из сессии каждый запрос,
+                // из-за чего Spring по умолчанию ротировал session id на каждом ответе. При
+                // параллельных запросах SPA (переключение вкладок) это вызывало гонку и 401 → разлогин.
+                .sessionManagement(sm -> sm
+                        .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
+                        .sessionFixation(sf -> sf.none()))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/api/auth/login",
