@@ -1061,6 +1061,15 @@ export default function EquipmentPage() {
     return Array.isArray(currentUser?.permissions) && currentUser.permissions.includes("equipment:delete");
   };
 
+  const canEditEquipmentItem = (item: Equipment) => {
+    const specifications = (item.specifications && typeof item.specifications === "object" && !Array.isArray(item.specifications))
+      ? item.specifications as Record<string, unknown>
+      : {};
+    const creatorId = String(specifications.createdByUserId ?? "").trim();
+    if (creatorId && currentUser?.id === creatorId) return true;
+    return userCanEdit;
+  };
+
   const employeeFilterOptions = users
     .map((user) => ({
       id: user.id,
@@ -2089,7 +2098,7 @@ export default function EquipmentPage() {
                         )}
                       </Button>
                     )}
-                    {userCanEdit ? (
+                    {canEditEquipmentItem(item) ? (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -2272,6 +2281,8 @@ export default function EquipmentPage() {
         equipment={selectedEquipment}
         mode={formMode}
         companyManager={canApproveCheckout}
+        canEdit={selectedEquipment ? canEditEquipmentItem(selectedEquipment) : userCanCreate}
+        creatorEditMode={selectedEquipment ? (canEditEquipmentItem(selectedEquipment) && !userCanEdit) : false}
       />
 
       {/* Barcode Scanner */}

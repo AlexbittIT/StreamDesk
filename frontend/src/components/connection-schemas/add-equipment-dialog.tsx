@@ -100,6 +100,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
   const [typeFilters, setTypeFilters] = useState<string[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
+  const searchAbortRef = useRef<AbortController | null>(null);
   const [customEquipment, setCustomEquipment] = useState<Partial<EquipmentTemplate>>({
     name: "",
     manufacturer: "",
@@ -128,11 +129,21 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
   const runSuggest = async (query: string) => {
     const q = query.trim();
     if (!q) return;
+
+    // Отменяем предыдущий запрос, если есть
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+
+    const abortController = new AbortController();
+    searchAbortRef.current = abortController;
+
     setIsSearching(true);
     setSearchSuggestionsOpen(false);
     setSearchResults([]);
     try {
-      const list = await suggestModels(q);
+      const list = await suggestModels(q, { signal: abortController.signal });
+      if (abortController.signal.aborted) return;
       const mapped = list.map((r) => ({
         name: r.device?.name || q,
         manufacturer: r.device?.manufacturer,
@@ -149,13 +160,16 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
         toast({ title: "Ничего не найдено", description: "ИИ не вернул моделей" });
       }
     } catch (e: any) {
+      if (e?.name === "AbortError" || abortController.signal.aborted) return;
       toast({
         title: "Поиск не сработал",
         description: e?.message || "Ошибка ИИ (проверьте DEEPSEEK_API_KEY)",
         variant: "destructive",
       });
     } finally {
-      setIsSearching(false);
+      if (!abortController.signal.aborted) {
+        setIsSearching(false);
+      }
     }
   };
 
@@ -771,13 +785,30 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                     </div>
                   )}
                 </div>
-                <Button onClick={() => runSuggest(searchTerm)} disabled={isSearching} className="shrink-0">
+                                <Button
+                  onClick={() => {
+                    if (isSearching) {
+                      searchAbortRef.current?.abort();
+                      setIsSearching(false);
+                    } else {
+                      runSuggest(searchTerm);
+                    }
+                  }}
+                  disabled={!searchTerm.trim() && !isSearching}
+                  className={isSearching ? "shrink-0 bg-red-500 hover:bg-red-600 text-white border-red-500" : "shrink-0"}
+                  variant={isSearching ? "destructive" : "default"}
+                >
                   {isSearching ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <>
+                      <span className="mr-2">✕</span>
+                      Отмена
+                    </>
                   ) : (
-                    <Search className="w-4 h-4" />
+                    <>
+                      <Search className="w-4 h-4 mr-2" />
+                      Поиск
+                    </>
                   )}
-                  Поиск
                 </Button>
               </div>
 

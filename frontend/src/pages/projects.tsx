@@ -14,7 +14,7 @@ import {
   Plus, HardDrive, Calendar,
   User, Edit, Trash2, Film, Clock, CheckCircle2,
   Columns, GripVertical, X, Settings2, MessageSquare, Link2, Github, ExternalLink, Save,
-  ArrowUp, ArrowDown, ListTodo, BarChart3, FileSpreadsheet as FileExcelIcon
+  ArrowUp, ArrowDown, ListTodo, BarChart3, FileSpreadsheet as FileExcelIcon, Calculator
 } from "lucide-react";
 import { Link } from "wouter";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -473,6 +473,15 @@ export default function Projects() {
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["/api/projects"],
   });
+
+  // Возврат из сметы (?projectId=) — открываем карточку соответствующего проекта.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const projectId = params.get("projectId");
+    if (!projectId) return;
+    const match = (projects as any[]).find((p) => p.id === projectId);
+    if (match) setSelectedProject(match);
+  }, [projects]);
 
   const { data: users = [] } = useQuery({
     queryKey: ["/api/users"],
@@ -1002,8 +1011,8 @@ export default function Projects() {
                       <Edit className="w-4 h-4 mr-1 shrink-0" />
                       Изменить
                     </Button>
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="sm"
                       className="shrink-0 min-w-[7rem]"
                       title="Статистика по задачам"
@@ -1012,6 +1021,17 @@ export default function Projects() {
                       <BarChart3 className="w-4 h-4 mr-1 shrink-0" />
                       Статистика
                     </Button>
+                    <Link href={`/estimates?projectId=${project.id}`}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0 min-w-[7rem]"
+                        title="Открыть смету проекта"
+                      >
+                        <Calculator className="w-4 h-4 mr-1 shrink-0" />
+                        Смета
+                      </Button>
+                    </Link>
                     {project.showInTaskManager ? (
                       <Link href="/tasks">
                         <Button variant="outline" size="sm" className="shrink-0 min-w-[5rem]" title="Открыть локальную доску проекта в таск-менеджере">

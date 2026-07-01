@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BrainCircuit, Clock3, FileDown, FileSpreadsheet, Loader2, Network, Package, Plus, Search, Trash2, Upload, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "wouter";
+import { AlertTriangle, BrainCircuit, Clock3, ExternalLink, FileDown, FileSpreadsheet, FolderKanban, Loader2, Network, Package, Plus, Search, Trash2, Upload, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import type { Equipment } from "@shared/schema";
@@ -30,6 +31,8 @@ type EstimateLine = {
   confidence: number;
   reason: string;
   locations: string[];
+  // Индикатор происхождения строки: "ai" — предложено ИИ, "local" — локальный подбор.
+  source?: "ai" | "local";
 };
 
 type EstimateMissingLine = {
@@ -91,32 +94,30 @@ type EstimateResult = {
     endAt: string | null;
     notes: string;
   } | null;
-  meta?: EstimatePdfMeta;
 };
 
-// Данные мероприятия для шапки PDF (хранятся вместе со сметой).
-type EstimatePdfMeta = {
-  eventDates?: string;
-  setupDates?: string;
-  location?: string;
-  eventName?: string;
-  customer?: string;
+type EstimateVersionDto = {
+  id: string;
+  estimateId: string;
+  versionNo: number;
+  title: string;
+  subtotal: number;
+  itemsCount: number;
+  data: EstimateResult;
+  savedAt: string;
 };
 
-// Реквизиты компании для шапки PDF (хранятся в settings.branding компании).
-type EstimateBranding = {
-  displayName?: string;
-  phone?: string;
-  website?: string;
-  logo?: string;
-};
-
-type EstimateHistoryEntry = {
+type EstimateDto = {
   id: string;
   title: string;
-  savedAt: string;
-  estimate: EstimateResult;
-  deliveryDistanceKm: string;
+  projectId: string | null;
+  status: string;
+  data: EstimateResult | Record<string, never>;
+};
+
+type ProjectOption = {
+  id: string;
+  name: string;
 };
 
 type CatalogItem = {
@@ -213,7 +214,6 @@ function getTypeText(type: string) {
     case "power": return "Питание";
     case "cable": return "Коммутация";
     case "labor": return "Персонал";
-    case "transport": return "Доставка";
     default: return type || "Другое";
   }
 }
@@ -224,12 +224,11 @@ function getEstimateGroup(type: string) {
   if (type === "lighting") return { key: "lighting", title: "Световое оборудование" };
   if (["network", "power", "cable"].includes(type)) return { key: "technical", title: "Коммутация, сеть и питание" };
   if (type === "labor") return { key: "labor", title: "Персонал" };
-  if (type === "transport") return { key: "transport", title: "Доставка" };
   return { key: "other", title: "Дополнительно" };
 }
 
 function groupEstimateItems(items: EstimateLine[]) {
-  const order = ["audio", "video", "lighting", "technical", "labor", "transport", "other"];
+  const order = ["audio", "video", "lighting", "technical", "labor", "other"];
   const groups = new Map<string, { key: string; title: string; items: EstimateLine[]; total: number }>();
   for (const item of items) {
     const group = getEstimateGroup(item.type);
@@ -322,21 +321,8 @@ function buildLineFromCatalog(item: CatalogItem, index: number, shiftFactor = 1)
     confidence: 1,
     reason: "Добавлено вручную",
     locations: item.locations.slice(0, 5),
+    source: "local",
   };
-}
-
-function calculateDelivery(items: EstimateLine[], distanceKmText: string) {
-  const distanceKm = Math.max(0, Number(distanceKmText) || 0);
-  const quantity = items.reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0), 0);
-  const vehicles = quantity > 0 ? Math.max(1, Math.ceil(quantity / 14)) : 0;
-  const loadHours = vehicles ? Math.max(2, Math.ceil(quantity / 10)) : 0;
-  const driveHours = vehicles ? Math.max(1, Math.ceil((distanceKm * 2) / 45)) : 0;
-  const hours = vehicles ? loadHours + driveHours : 0;
-  const basePerVehicle = 4500;
-  const kmRate = 55;
-  const hourlyRate = 1200;
-  const total = vehicles ? Math.round((vehicles * basePerVehicle + vehicles * distanceKm * 2 * kmRate + hours * hourlyRate) * 100) / 100 : 0;
-  return { distanceKm, quantity, vehicles, hours, total };
 }
 
 function inferPortsForEstimateLine(line: EstimateLine) {
@@ -445,7 +431,7 @@ function safeFilePart(value: string) {
   return value.replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_").slice(0, 80) || "estimate";
 }
 
-function exportEstimateToExcel(estimate: EstimateResult, delivery?: ReturnType<typeof calculateDelivery>) {
+function exportEstimateToExcel(estimate: EstimateResult) {
   const rows = groupEstimateItems(estimate.items).map((group) => `
     <tr style="background:#e8eef8;font-weight:bold">
       <td colspan="10">${escapeHtml(group.title)}</td>
@@ -484,10 +470,6 @@ function exportEstimateToExcel(estimate: EstimateResult, delivery?: ReturnType<t
         <h2>${escapeHtml(estimate.title)}</h2>
         <p>Дата: ${new Date().toLocaleString("ru-RU")}</p>
         <p>Итого: ${estimate.totals.subtotal}</p>
-        ${delivery && delivery.total > 0 ? `
-          <p>Доставка: ${delivery.vehicles} авто, ${delivery.distanceKm} км, ${delivery.hours} ч, ${delivery.total}</p>
-          <p>Итого с доставкой: ${Math.round((estimate.totals.subtotal + delivery.total) * 100) / 100}</p>
-        ` : ""}
         ${estimate.shiftCalculation ? `
           <p>Смены: ${estimate.shiftCalculation.chargeableShifts}; коэффициент: ${estimate.shiftCalculation.chargeFactor}; часы: ${estimate.shiftCalculation.actualHours}</p>
           <table border="1" cellspacing="0" cellpadding="6">
@@ -538,14 +520,30 @@ function formatRub(value: number) {
   return n.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "р.";
 }
 
+// Данные мероприятия для шапки PDF (вводятся для конкретной сметы).
+type EstimatePdfMeta = {
+  eventDates?: string;
+  setupDates?: string;
+  location?: string;
+  eventName?: string;
+  customer?: string;
+};
+
+// Реквизиты компании для шапки PDF (хранятся в settings.branding компании).
+type EstimateBranding = {
+  displayName?: string;
+  phone?: string;
+  website?: string;
+  logo?: string;
+};
+
 type EstimatePdfOptions = {
   branding?: EstimateBranding;
   meta?: EstimatePdfMeta;
-  delivery?: ReturnType<typeof calculateDelivery>;
   grandTotal: number;
 };
 
-// Собирает HTML-шаблон сметы (макет как в образце: шапка с реквизитами, блок мероприятия, таблица по группам).
+// Собирает HTML-шаблон сметы (шапка с реквизитами, блок мероприятия, таблица по группам).
 function buildEstimatePdfHtml(estimate: EstimateResult, opts: EstimatePdfOptions) {
   const branding = opts.branding || {};
   const meta = opts.meta || {};
@@ -554,7 +552,7 @@ function buildEstimatePdfHtml(estimate: EstimateResult, opts: EstimatePdfOptions
     ? `Техническое оснащение ${branding.displayName}`
     : "Смета на техническое оснащение";
 
-  const cell = "border:1px solid #cbd5e1;padding:3px 6px;";
+  const cell = "border:1px solid #cbd5e1;padding:3px 6px;word-break:break-word;overflow-wrap:break-word;";
   const metaRows = [
     ["Дата проведения", meta.eventDates],
     ["Дата монтажа / Репетиция", meta.setupDates],
@@ -592,19 +590,6 @@ function buildEstimatePdfHtml(estimate: EstimateResult, opts: EstimatePdfOptions
       </tr>`;
   }
 
-  if (opts.delivery && opts.delivery.total > 0) {
-    rowsHtml += `
-      <tr><td colspan="6" style="${cell}background:#e2e8f0;text-align:center;font-weight:700;">Доставка</td></tr>
-      <tr>
-        <td style="${cell}text-align:center;">1</td>
-        <td style="${cell}">Доставка оборудования (${opts.delivery.vehicles} авто, ${opts.delivery.distanceKm} км)</td>
-        <td style="${cell}text-align:center;">1</td>
-        <td style="${cell}text-align:right;">${formatRub(opts.delivery.total)}</td>
-        <td style="${cell}text-align:center;">1</td>
-        <td style="${cell}text-align:right;">${formatRub(opts.delivery.total)}</td>
-      </tr>`;
-  }
-
   const th = "border:1px solid #cbd5e1;padding:5px 6px;background:#f1f5f9;";
   const logoBlock = branding.logo
     ? `<img src="${branding.logo}" style="max-height:56px;max-width:220px;object-fit:contain;" />`
@@ -621,7 +606,10 @@ function buildEstimatePdfHtml(estimate: EstimateResult, opts: EstimatePdfOptions
       </div>
     </div>
     <table style="border-collapse:collapse;width:100%;margin-bottom:12px;">${metaRows}</table>
-    <table style="border-collapse:collapse;width:100%;">
+    <table style="border-collapse:collapse;width:100%;table-layout:fixed;">
+      <colgroup>
+        <col style="width:6%;" /><col style="width:40%;" /><col style="width:12%;" /><col style="width:16%;" /><col style="width:11%;" /><col style="width:15%;" />
+      </colgroup>
       <thead>
         <tr>
           <th style="${th}">№</th>
@@ -635,7 +623,7 @@ function buildEstimatePdfHtml(estimate: EstimateResult, opts: EstimatePdfOptions
       <tbody>${rowsHtml}</tbody>
       <tfoot>
         <tr>
-          <td colspan="5" style="${cell}text-align:right;font-weight:800;background:#f8fafc;">ИТОГО${opts.delivery && opts.delivery.total > 0 ? " с доставкой" : ""}:</td>
+          <td colspan="5" style="${cell}text-align:right;font-weight:800;background:#f8fafc;">ИТОГО:</td>
           <td style="${cell}text-align:right;font-weight:800;background:#f8fafc;">${formatRub(opts.grandTotal)}</td>
         </tr>
       </tfoot>
@@ -718,22 +706,23 @@ export default function EstimatesPage() {
   const [weekendNightCoefficient, setWeekendNightCoefficient] = useState("2");
   const [holidayDates, setHolidayDates] = useState("");
   const [workdayDates, setWorkdayDates] = useState("");
-  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState("0");
+  // Смета привязана к проекту (двусторонняя связь). projectId берём из ?projectId= в URL.
+  const [linkedProjectId, setLinkedProjectId] = useState<string | null>(null);
+  // id сметы на бэкенде (создаётся при первом сохранении версии).
+  const [currentEstimateId, setCurrentEstimateId] = useState<string | null>(null);
+  // Тик пересчёта смен на сервере: бампается при изменении строк/параметров смен.
+  const [recalcTick, setRecalcTick] = useState(0);
+  const scheduleRecalc = () => setRecalcTick((t) => t + 1);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  // Активная компания и её реквизиты для PDF (settings.branding).
-  const { data: onboarding } = useQuery<any>({ queryKey: ["/api/auth/onboarding-state"] });
-  const activeCompany = onboarding?.activeCompanies?.[0]?.company || null;
-  const companyId: string = activeCompany?.id || "";
-
+  // Реквизиты компании для шапки PDF (settings.branding) и данные мероприятия.
   const [companyDisplayName, setCompanyDisplayName] = useState("");
   const [companyPhone, setCompanyPhone] = useState("");
   const [companyWebsite, setCompanyWebsite] = useState("");
   const [companyLogo, setCompanyLogo] = useState("");
-
-  // Реквизиты мероприятия (шапка PDF; сохраняются вместе со сметой).
   const [eventName, setEventName] = useState("");
   const [customer, setCustomer] = useState("");
   const [eventLocation, setEventLocation] = useState("");
@@ -741,25 +730,79 @@ export default function EstimatesPage() {
   const [setupDates, setSetupDates] = useState("");
   const [pdfBusy, setPdfBusy] = useState(false);
 
+  // Актуальная смета для отложенного серверного пересчёта (без перезапуска эффекта).
+  const estimateRef = useRef<EstimateResult | null>(estimate);
+  estimateRef.current = estimate;
+
+  const { data: equipment = [], isLoading: equipmentLoading } = useQuery<Equipment[]>({
+    queryKey: ["/api/equipment"],
+  });
+
+  // Список проектов для привязки сметы и перехода в карточку проекта.
+  const { data: projects = [] } = useQuery<ProjectOption[]>({
+    queryKey: ["/api/projects"],
+  });
+  const linkedProject = projects.find((p) => p.id === linkedProjectId) || null;
+
+  // Версии текущей сметы из БД (раньше — localStorage). Создаются и просматриваются.
+  const { data: estimateVersions = [] } = useQuery<EstimateVersionDto[]>({
+    queryKey: ["/api/estimates", currentEstimateId, "versions"],
+    queryFn: async () => {
+      if (!currentEstimateId) return [];
+      const res = await apiRequest("GET", `/api/estimates/${currentEstimateId}/versions`);
+      return res.json();
+    },
+    enabled: !!currentEstimateId,
+  });
+
+  // Активная компания и её реквизиты для шапки PDF (settings.branding).
+  const { data: onboarding } = useQuery<any>({ queryKey: ["/api/auth/onboarding-state"] });
+  const activeCompany = onboarding?.companies?.[0]?.company || null;
+  const companyId: string = activeCompany?.id || "";
+
   useEffect(() => {
     const b = activeCompany?.settings?.branding || {};
     setCompanyDisplayName(b.displayName || activeCompany?.name || "");
     setCompanyPhone(b.phone || "");
     setCompanyWebsite(b.website || "");
     setCompanyLogo(b.logo || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCompany?.id]);
 
   const branding: EstimateBranding = { displayName: companyDisplayName, phone: companyPhone, website: companyWebsite, logo: companyLogo };
   const estimateMeta: EstimatePdfMeta = { eventName, customer, location: eventLocation, eventDates, setupDates };
 
-  // История смет теперь хранится в БД и общая для всех сотрудников компании.
-  const { data: estimateHistory = [] } = useQuery<EstimateHistoryEntry[]>({
-    queryKey: ["/api/estimates"],
-  });
+  const hydrateFromEstimate = (dto: EstimateDto) => {
+    setCurrentEstimateId(dto.id);
+    setLinkedProjectId(dto.projectId || null);
+    if (dto.title) setTitle(dto.title);
+    if (dto.data && Array.isArray((dto.data as EstimateResult).items)) {
+      setEstimate(dto.data as EstimateResult);
+    }
+  };
 
-  const { data: equipment = [], isLoading: equipmentLoading } = useQuery<Equipment[]>({
-    queryKey: ["/api/equipment"],
-  });
+  // На входе: ?estimateId= открывает конкретную смету, ?projectId= — смету проекта.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const estimateId = params.get("estimateId");
+    const projectId = params.get("projectId");
+    if (estimateId) {
+      apiRequest("GET", `/api/estimates/${estimateId}`)
+        .then((r) => r.json())
+        .then((dto: EstimateDto) => hydrateFromEstimate(dto))
+        .catch(() => {});
+      return;
+    }
+    if (projectId) {
+      setLinkedProjectId(projectId);
+      apiRequest("GET", `/api/estimates?projectId=${encodeURIComponent(projectId)}`)
+        .then((r) => r.json())
+        .then((list: EstimateDto[]) => {
+          if (Array.isArray(list) && list.length > 0) hydrateFromEstimate(list[0]);
+        })
+        .catch(() => {});
+    }
+  }, []);
 
   const catalog = useMemo(() => buildCatalog(equipment), [equipment]);
   const pricedCount = catalog.filter((item) => item.unitPrice > 0).length;
@@ -771,61 +814,79 @@ export default function EstimatesPage() {
       return normalizeText([item.name, item.model, item.type].join(" ")).includes(query);
     })
     .slice(0, 12);
-  const delivery = useMemo(() => calculateDelivery(estimate?.items || [], deliveryDistanceKm), [estimate?.items, deliveryDistanceKm]);
-  const estimateGrandTotal = Math.round(((estimate?.totals.subtotal || 0) + delivery.total) * 100) / 100;
+  const estimateGrandTotal = Math.round((estimate?.totals.subtotal || 0) * 100) / 100;
   const estimateGroups = useMemo(() => groupEstimateItems(estimate?.items || []), [estimate?.items]);
 
-  const saveEstimateMutation = useMutation({
-    mutationFn: async ({ entryEstimate }: { entryEstimate: EstimateResult; notify: boolean }) => {
-      const response = await apiRequest("POST", "/api/estimates", {
+  const invalidateVersions = () =>
+    queryClient.invalidateQueries({ queryKey: ["/api/estimates"] });
+
+  // Сохранить версию: гарантируем существование сметы в БД (создаём/обновляем),
+  // привязываем к проекту и пишем неизменяемый снимок-версию.
+  const saveVersionMutation = useMutation({
+    mutationFn: async (entryEstimate: EstimateResult) => {
+      const payload = {
         title: entryEstimate.title || title || "Смета",
-        estimate: { ...entryEstimate, meta: estimateMeta },
-        deliveryDistanceKm,
+        projectId: linkedProjectId ?? "",
+        data: entryEstimate,
+      };
+      let id = currentEstimateId;
+      if (!id) {
+        const res = await apiRequest("POST", "/api/estimates", payload);
+        const created = await res.json();
+        id = created.id as string;
+        setCurrentEstimateId(id);
+      } else {
+        await apiRequest("PUT", `/api/estimates/${id}`, payload);
+      }
+      const versionRes = await apiRequest("POST", `/api/estimates/${id}/versions`, {
+        title: entryEstimate.title || title || "Смета",
+        subtotal: entryEstimate.totals?.subtotal ?? 0,
+        itemsCount: entryEstimate.items?.length ?? 0,
+        data: entryEstimate,
       });
-      return response.json();
+      return versionRes.json();
     },
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/estimates"] });
-      if (variables.notify) toast({ title: "Версия сметы сохранена" });
-    },
-    onError: (error: any) => {
-      toast({ title: "Не удалось сохранить смету", description: error?.message || "Попробуйте ещё раз", variant: "destructive" });
-    },
+    onSuccess: () => invalidateVersions(),
   });
 
-  const deleteEstimateMutation = useMutation({
-    mutationFn: async (entryId: string) => {
-      await apiRequest("DELETE", `/api/estimates/${entryId}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/estimates"] });
-    },
-    onError: (error: any) => {
-      toast({ title: "Не удалось удалить смету", description: error?.message || "Попробуйте ещё раз", variant: "destructive" });
-    },
-  });
-
-  const saveEstimateVersion = (entryEstimate = estimate, notify = false) => {
+  const saveEstimateVersion = (entryEstimate = estimate) => {
     if (!entryEstimate) return;
-    saveEstimateMutation.mutate({ entryEstimate, notify });
+    saveVersionMutation.mutate(entryEstimate);
   };
 
-  const openEstimateVersion = (entry: EstimateHistoryEntry) => {
-    setEstimate(entry.estimate);
-    setTitle(entry.estimate.title || entry.title);
-    setDeliveryDistanceKm(entry.deliveryDistanceKm || "0");
-    const m = entry.estimate?.meta;
-    if (m) {
-      setEventName(m.eventName || "");
-      setCustomer(m.customer || "");
-      setEventLocation(m.location || "");
-      setEventDates(m.eventDates || "");
-      setSetupDates(m.setupDates || "");
-    }
+  const openEstimateVersion = (entry: EstimateVersionDto) => {
+    setEstimate(entry.data);
+    setTitle(entry.data?.title || entry.title);
   };
 
-  const deleteEstimateVersion = (entryId: string) => {
-    deleteEstimateMutation.mutate(entryId);
+  const deleteVersionMutation = useMutation({
+    mutationFn: async (versionId: string) => {
+      await apiRequest("DELETE", `/api/estimates/versions/${versionId}`);
+    },
+    onSuccess: () => invalidateVersions(),
+  });
+
+  const deleteEstimateVersion = (versionId: string) => {
+    deleteVersionMutation.mutate(versionId);
+  };
+
+  // Привязать/отвязать смету к проекту (двусторонняя связь).
+  const linkProjectMutation = useMutation({
+    mutationFn: async (projectId: string) => {
+      if (currentEstimateId) {
+        await apiRequest("PUT", `/api/estimates/${currentEstimateId}`, { projectId });
+      }
+      return projectId;
+    },
+    onSuccess: (projectId) => {
+      setLinkedProjectId(projectId || null);
+      invalidateVersions();
+    },
+  });
+
+  const handleSelectProject = (projectId: string) => {
+    setLinkedProjectId(projectId || null);
+    linkProjectMutation.mutate(projectId);
   };
 
   const saveBrandingMutation = useMutation({
@@ -859,7 +920,7 @@ export default function EstimatesPage() {
     if (!estimate) return;
     setPdfBusy(true);
     try {
-      await exportEstimateToPdf(estimate, { branding, meta: estimateMeta, delivery, grandTotal: estimateGrandTotal });
+      await exportEstimateToPdf(estimate, { branding, meta: estimateMeta, grandTotal: estimateGrandTotal });
     } catch (error: any) {
       toast({ title: "Не удалось сформировать PDF", description: error?.message || "Попробуйте ещё раз", variant: "destructive" });
     } finally {
@@ -912,7 +973,7 @@ export default function EstimatesPage() {
       if (!estimate) throw new Error("Смета не собрана");
       const schemaResponse = await apiRequest("POST", "/api/connection-schemas", {
         name: estimate.title,
-        description: `Создано из сметы. Доставка: ${delivery.vehicles} авто, ${delivery.distanceKm} км, ${formatMoney(delivery.total)}.`,
+        description: `Создано из сметы «${estimate.title}». Позиций: ${estimate.totals.lines}, итог ${formatMoney(estimate.totals.subtotal)}.`,
       });
       const schema = await schemaResponse.json();
       if (!schema?.id) throw new Error("Схема не создана");
@@ -1044,6 +1105,66 @@ export default function EstimatesPage() {
     },
   });
 
+  const buildShiftParams = () => ({
+    startAt,
+    endAt,
+    manualShiftCount,
+    shiftHours,
+    roundingStep,
+    dayStartHour,
+    nightStartHour,
+    weekdayDayCoefficient,
+    weekdayNightCoefficient,
+    weekendDayCoefficient,
+    weekendNightCoefficient,
+    holidayDates,
+    workdayDates,
+  });
+
+  // Серверный расчёт смен/итогов — источник истины. Фронт показывает числа сервера,
+  // поэтому итоги на сервере и на фронте совпадают по построению.
+  const recalcMutation = useMutation({
+    mutationFn: async (items: EstimateLine[]) => {
+      const res = await apiRequest("POST", "/api/estimates/calculate", { ...buildShiftParams(), items });
+      return res.json() as Promise<{
+        shiftCalculation: EstimateShiftCalculation;
+        items: EstimateLine[];
+        totals: EstimateResult["totals"];
+      }>;
+    },
+    onSuccess: (data) => {
+      setEstimate((cur) =>
+        cur ? { ...cur, items: data.items, totals: data.totals, shiftCalculation: data.shiftCalculation } : cur,
+      );
+    },
+  });
+
+  // Пересчитываем на сервере при изменении строк (recalcTick) или параметров смен.
+  useEffect(() => {
+    const current = estimateRef.current;
+    if (!current) return;
+    const handle = setTimeout(() => {
+      recalcMutation.mutate(current.items);
+    }, 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    recalcTick,
+    startAt,
+    endAt,
+    manualShiftCount,
+    shiftHours,
+    roundingStep,
+    dayStartHour,
+    nightStartHour,
+    weekdayDayCoefficient,
+    weekdayNightCoefficient,
+    weekendDayCoefficient,
+    weekendNightCoefficient,
+    holidayDates,
+    workdayDates,
+  ]);
+
   const updateLine = (lineId: string, patch: Partial<Pick<EstimateLine, "quantity" | "unitPrice" | "reason">>) => {
     setEstimate((current) => {
       if (!current) return current;
@@ -1073,6 +1194,7 @@ export default function EstimatesPage() {
       });
       return { ...current, items, totals: recalculateTotals(items) };
     });
+    scheduleRecalc();
   };
 
   const removeLine = (lineId: string) => {
@@ -1081,6 +1203,7 @@ export default function EstimatesPage() {
       const items = current.items.filter((item) => item.lineId !== lineId);
       return { ...current, items, totals: recalculateTotals(items) };
     });
+    scheduleRecalc();
   };
 
   const addCatalogLine = (item: CatalogItem) => {
@@ -1098,6 +1221,7 @@ export default function EstimatesPage() {
       const items = [...base.items, buildLineFromCatalog(item, base.items.length, shiftFactor)];
       return { ...base, title, items, totals: recalculateTotals(items) };
     });
+    scheduleRecalc();
   };
 
   const canAnalyze = Boolean(tzText.trim() || file) && !analyzeMutation.isPending;
@@ -1116,8 +1240,11 @@ export default function EstimatesPage() {
             type="button"
             variant="outline"
             className="shrink-0"
-            disabled={!estimate || saveEstimateMutation.isPending}
-            onClick={() => saveEstimateVersion(estimate, true)}
+            disabled={!estimate}
+            onClick={() => {
+              saveEstimateVersion();
+              toast({ title: "Версия сметы сохранена" });
+            }}
           >
             <Clock3 className="mr-2 h-4 w-4" />
             Сохранить версию
@@ -1137,7 +1264,7 @@ export default function EstimatesPage() {
             variant="outline"
             className="shrink-0"
             disabled={!estimate?.items.length}
-            onClick={() => estimate && exportEstimateToExcel(estimate, delivery)}
+            onClick={() => estimate && exportEstimateToExcel(estimate)}
           >
             <FileSpreadsheet className="mr-2 h-4 w-4" />
             Excel
@@ -1153,6 +1280,72 @@ export default function EstimatesPage() {
             PDF
           </Button>
         </div>
+      </div>
+
+      {/* Реквизиты для шапки PDF: компания (логотип/контакты, общие) + данные мероприятия (для этой сметы). */}
+      <details className="rounded-lg border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900">
+        <summary className="cursor-pointer font-medium text-slate-900 dark:text-white">Реквизиты для PDF</summary>
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold uppercase text-slate-500">Компания (для всех смет)</span>
+            <Input placeholder="Название" value={companyDisplayName} onChange={(e) => setCompanyDisplayName(e.target.value)} />
+            <Input placeholder="Телефон" value={companyPhone} onChange={(e) => setCompanyPhone(e.target.value)} />
+            <Input placeholder="Сайт" value={companyWebsite} onChange={(e) => setCompanyWebsite(e.target.value)} />
+            <div className="flex items-center gap-2">
+              <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => onLogoSelected(e.target.files?.[0])} />
+              <Button type="button" variant="outline" size="sm" onClick={() => logoInputRef.current?.click()}>
+                <Upload className="mr-2 h-4 w-4" />
+                Логотип
+              </Button>
+              {companyLogo && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => setCompanyLogo("")}>Убрать</Button>
+              )}
+            </div>
+            <Button type="button" size="sm" disabled={!companyId || saveBrandingMutation.isPending} onClick={() => saveBrandingMutation.mutate()}>
+              {saveBrandingMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Сохранить реквизиты компании
+            </Button>
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold uppercase text-slate-500">Мероприятие (для этой сметы)</span>
+            <Input placeholder="Мероприятие" value={eventName} onChange={(e) => setEventName(e.target.value)} />
+            <Input placeholder="Заказчик" value={customer} onChange={(e) => setCustomer(e.target.value)} />
+            <Input placeholder="Место проведения" value={eventLocation} onChange={(e) => setEventLocation(e.target.value)} />
+            <Input placeholder="Дата проведения" value={eventDates} onChange={(e) => setEventDates(e.target.value)} />
+            <Input placeholder="Дата монтажа / репетиции" value={setupDates} onChange={(e) => setSetupDates(e.target.value)} />
+          </div>
+        </div>
+      </details>
+
+      {/* Двусторонняя связь смета↔проект: привязка сметы и переход в карточку проекта. */}
+      <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <FolderKanban className="h-4 w-4 text-primary" />
+          <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Проект</label>
+          <select
+            value={linkedProjectId ?? ""}
+            onChange={(event) => handleSelectProject(event.target.value)}
+            className="h-9 min-w-[12rem] rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+          >
+            <option value="">Без проекта</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>{project.name}</option>
+            ))}
+          </select>
+          {linkProjectMutation.isPending && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+        </div>
+        {linkedProject ? (
+          <Link href={`/projects?projectId=${linkedProject.id}`}>
+            <Button type="button" variant="outline" size="sm" className="shrink-0">
+              <ExternalLink className="mr-2 h-4 w-4" />
+              Открыть проект: {linkedProject.name}
+            </Button>
+          </Link>
+        ) : (
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            Привяжите смету к проекту, чтобы открывать её из карточки проекта и обратно.
+          </span>
+        )}
       </div>
 
       <div className="grid gap-4">
@@ -1211,78 +1404,45 @@ export default function EstimatesPage() {
         </section>
 
         <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-          <h2 className="font-semibold text-slate-900 dark:text-white">Реквизиты для PDF</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            Шапка PDF-сметы: логотип и контакты компании (сохраняются для всех сотрудников), данные мероприятия (для этой сметы). Где поле пустое — в PDF будет пусто.
-          </p>
-          <div className="mt-3 grid gap-4 lg:grid-cols-2">
-            <div className="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-800">
-              <div className="text-sm font-medium text-slate-700 dark:text-slate-300">Компания (общие реквизиты)</div>
-              <div className="flex items-center gap-3">
-                {companyLogo ? (
-                  <img src={companyLogo} alt="logo" className="h-12 w-auto max-w-[140px] object-contain" />
-                ) : (
-                  <div className="flex h-12 w-[140px] items-center justify-center rounded border border-dashed border-slate-300 text-xs text-slate-400 dark:border-slate-700">
-                    нет логотипа
-                  </div>
-                )}
-                <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => onLogoSelected(event.target.files?.[0])} />
-                <Button type="button" variant="outline" size="sm" onClick={() => logoInputRef.current?.click()}>
-                  <Upload className="mr-2 h-4 w-4" />
-                  Логотип
-                </Button>
-                {companyLogo && (
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setCompanyLogo("")}>
-                    Убрать
-                  </Button>
-                )}
-              </div>
-              <Input value={companyDisplayName} onChange={(event) => setCompanyDisplayName(event.target.value)} placeholder="Название компании" />
-              <Input value={companyPhone} onChange={(event) => setCompanyPhone(event.target.value)} placeholder="Телефон" />
-              <Input value={companyWebsite} onChange={(event) => setCompanyWebsite(event.target.value)} placeholder="Сайт" />
-              <Button type="button" size="sm" disabled={!companyId || saveBrandingMutation.isPending} onClick={() => saveBrandingMutation.mutate()}>
-                {saveBrandingMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Сохранить реквизиты компании
-              </Button>
-            </div>
-            <div className="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-800">
-              <div className="text-sm font-medium text-slate-700 dark:text-slate-300">Мероприятие (для этой сметы)</div>
-              <Input value={eventName} onChange={(event) => setEventName(event.target.value)} placeholder="Мероприятие" />
-              <Input value={customer} onChange={(event) => setCustomer(event.target.value)} placeholder="Заказчик" />
-              <Input value={eventLocation} onChange={(event) => setEventLocation(event.target.value)} placeholder="Место проведения" />
-              <Input value={eventDates} onChange={(event) => setEventDates(event.target.value)} placeholder="Дата проведения" />
-              <Input value={setupDates} onChange={(event) => setSetupDates(event.target.value)} placeholder="Дата монтажа / Репетиция" />
-            </div>
-          </div>
-        </section>
-
-        <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="font-semibold text-slate-900 dark:text-white">История смет</h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Откройте прошлую версию, поправьте строки и сохраните новую.</p>
+              <h2 className="font-semibold text-slate-900 dark:text-white">История версий</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Версии хранятся на сервере. Откройте прошлую версию, поправьте строки и сохраните новую.</p>
             </div>
-            <Badge variant="secondary">{estimateHistory.length} версий</Badge>
+            <Badge variant="secondary">{estimateVersions.length} версий</Badge>
           </div>
-          {estimateHistory.length === 0 ? (
+          {!currentEstimateId ? (
             <div className="mt-3 rounded-md border border-dashed border-slate-300 px-3 py-6 text-center text-sm text-slate-500 dark:border-slate-700">
-              История появится после первой сборки сметы или ручного сохранения версии.
+              Соберите смету и нажмите «Сохранить версию» — она появится здесь и будет привязана к проекту.
+            </div>
+          ) : estimateVersions.length === 0 ? (
+            <div className="mt-3 rounded-md border border-dashed border-slate-300 px-3 py-6 text-center text-sm text-slate-500 dark:border-slate-700">
+              У этой сметы пока нет сохранённых версий.
             </div>
           ) : (
             <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-              {estimateHistory.slice(0, 9).map((entry) => (
+              {estimateVersions.slice(0, 9).map((entry) => (
                 <div key={entry.id} className="rounded-md border border-slate-200 p-3 dark:border-slate-800">
                   <div className="min-w-0">
-                    <div className="truncate font-medium text-slate-900 dark:text-white">{entry.title}</div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="shrink-0">v{entry.versionNo}</Badge>
+                      <div className="truncate font-medium text-slate-900 dark:text-white">{entry.title}</div>
+                    </div>
                     <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {new Date(entry.savedAt).toLocaleString("ru-RU")} · {entry.estimate.items.length} поз. · {formatMoney(entry.estimate.totals.subtotal)}
+                      {new Date(entry.savedAt).toLocaleString("ru-RU")} · {entry.itemsCount} поз. · {formatMoney(entry.subtotal)}
                     </div>
                   </div>
                   <div className="mt-3 flex gap-2">
                     <Button type="button" size="sm" variant="outline" onClick={() => openEstimateVersion(entry)}>
                       Открыть
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => deleteEstimateVersion(entry.id)}>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={deleteVersionMutation.isPending}
+                      onClick={() => deleteEstimateVersion(entry.id)}
+                    >
                       Удалить
                     </Button>
                   </div>
@@ -1293,7 +1453,7 @@ export default function EstimatesPage() {
         </section>
 
         <aside className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)_minmax(320px,420px)]">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,460px)]">
           <div className="border-b border-slate-200 pb-4 dark:border-slate-800 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-4">
             <div className="flex items-center gap-2">
               <Clock3 className="h-5 w-5 text-primary" />
@@ -1355,30 +1515,6 @@ export default function EstimatesPage() {
             </div>
           </div>
 
-          <div className="border-b border-slate-200 pb-4 dark:border-slate-800 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-4">
-            <div className="flex items-center gap-2">
-              <Network className="h-5 w-5 text-primary" />
-              <h2 className="font-semibold text-slate-900 dark:text-white">Доставка</h2>
-            </div>
-            <div className="mt-3 space-y-2">
-              <label className="text-xs text-slate-500 dark:text-slate-400">Дальность, км в одну сторону</label>
-              <Input type="number" min="0" step="1" value={deliveryDistanceKm} onChange={(event) => setDeliveryDistanceKm(event.target.value)} className="h-9" />
-              <div className="grid grid-cols-3 gap-2 text-sm">
-                <div className="rounded-md bg-slate-50 p-2 dark:bg-slate-800">
-                  <div className="text-xs text-slate-500">Авто</div>
-                  <div className="font-semibold">{delivery.vehicles}</div>
-                </div>
-                <div className="rounded-md bg-slate-50 p-2 dark:bg-slate-800">
-                  <div className="text-xs text-slate-500">Время</div>
-                  <div className="font-semibold">{delivery.hours} ч</div>
-                </div>
-                <div className="rounded-md bg-slate-50 p-2 dark:bg-slate-800">
-                  <div className="text-xs text-slate-500">Сумма</div>
-                  <div className="font-semibold">{formatMoney(delivery.total)}</div>
-                </div>
-              </div>
-            </div>
-          </div>
           <div>
           <div className="flex items-center gap-2">
             <Package className="h-5 w-5 text-primary" />
@@ -1464,7 +1600,6 @@ export default function EstimatesPage() {
               <div className="rounded-md bg-slate-50 p-3 dark:bg-slate-800">
                 <div className="text-xs text-slate-500 dark:text-slate-400">Итого</div>
                 <div className="mt-1 font-semibold">{formatMoney(estimateGrandTotal)}</div>
-                {delivery.total > 0 && <div className="mt-1 text-[11px] text-slate-500">оборудование {formatMoney(estimate.totals.subtotal)} + доставка</div>}
               </div>
               <div className="rounded-md bg-slate-50 p-3 dark:bg-slate-800">
                 <div className="text-xs text-slate-500 dark:text-slate-400">Смены</div>
@@ -1547,7 +1682,17 @@ export default function EstimatesPage() {
                       {group.items.map((line) => (
                     <tr key={line.lineId} className="align-top">
                       <td className="px-4 py-3">
-                        <div className="font-medium text-slate-900 dark:text-white">{line.name}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-slate-900 dark:text-white">{line.name}</span>
+                          {line.source && (
+                            <Badge
+                              variant={line.source === "ai" ? "default" : "secondary"}
+                              className="shrink-0 text-[10px] px-1.5 py-0"
+                            >
+                              {line.source === "ai" ? "ИИ" : "Локально"}
+                            </Badge>
+                          )}
+                        </div>
                         <div className="mt-1 flex flex-wrap gap-1.5 text-xs text-slate-500 dark:text-slate-400">
                           <span>{getTypeText(line.type)}</span>
                           {line.model && <span>· {line.model}</span>}

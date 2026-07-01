@@ -63,6 +63,9 @@ public class SecurityConfig {
                                 "/api/agents/**",
                                 "/api/company-invites/resolve/**"
                         ).permitAll()
+                        // Сборка смет — только для авторизованных (внутри ещё проверяется
+                        // доступ к рабочему пространству). Явное правило для /api/estimates/**.
+                        .requestMatchers("/api/estimates/**").authenticated()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().permitAll()
                 )

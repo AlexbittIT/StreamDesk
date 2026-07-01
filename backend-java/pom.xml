@@ -93,6 +93,13 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- In-memory БД для E2E-тестов: PostgreSQL-режим + домен JSONB поверх JSON,
+             чтобы поднять полный контекст без внешнего Postgres (см. application-test.yml). -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -108,6 +115,28 @@
                         </exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+            <!-- JaCoCo: покрытие кода тестами. Агент инструментирует тесты,
+                 report генерирует HTML/XML в target/site/jacoco на фазе test. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.12</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

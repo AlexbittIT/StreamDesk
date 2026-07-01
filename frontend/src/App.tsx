@@ -31,7 +31,7 @@ import ManagerDashboard from "@/pages/manager-dashboard";
 import Terminal from "@/pages/terminal";
 import ConnectionSchemas from "@/pages/connection-schemas";
 import EquipmentPortsReview from "@/pages/equipment-ports-review";
-import OtisOnAir from "@/pages/otis-onair";
+import MediaMtx from "@/pages/mediamtx";
 import Maps from "@/pages/maps";
 import RoomBooking from "@/pages/room-booking";
 
@@ -158,7 +158,12 @@ function Router({ user }: { user: any }) {
       </Route>
       <Route path="/otis-onair">
         <ProtectedRoute user={user}>
-          <OtisOnAir />
+          <MediaMtx />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/mediamtx">
+        <ProtectedRoute user={user}>
+          <MediaMtx />
         </ProtectedRoute>
       </Route>
       <Route path="/notifications">

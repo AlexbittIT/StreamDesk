@@ -3,13 +3,14 @@ package com.streamdesk.estimate.dto;
 import java.util.Map;
 
 /**
- * Тело сохранения сметы (POST /api/estimates).
- * {@code estimate} — полный объект расчёта (EstimateResult) с фронта.
+ * Тело создания/обновления сметы (/api/estimates).
+ * data — снимок расчёта (структура EstimateResult с фронта), любое поле опционально.
  */
 public record EstimateRequest(
         String title,
-        Map<String, Object> estimate,
-        String deliveryDistanceKm,
-        String visibility
+        String projectId,
+        String companyId,
+        String status,
+        Map<String, Object> data
 ) {
 }

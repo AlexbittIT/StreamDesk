@@ -49,6 +49,17 @@ services:
       DEEPSEEK_PROTOCOL: "${DEEPSEEK_PROTOCOL:-openai}"
       HUGGINGFACE_API_KEY: "${HUGGINGFACE_API_KEY:-}"
       HF_TOKEN: "${HF_TOKEN:-}"
+      # MediaMTX (внешний медиасервер). Бэкенд управляет им через Control API (порт 9997)
+      # и строит URL потоков. Укажи адрес своего MediaMTX; без него /api/mediamtx вернёт 503.
+      # host.docker.internal — это хост, где запущен MediaMTX, со стороны контейнера.
+      MEDIAMTX_API_URL: "${MEDIAMTX_API_URL:-http://host.docker.internal:9997}"
+      MEDIAMTX_HOST: "${MEDIAMTX_HOST:-localhost}"
+      MEDIAMTX_SRT_PORT: "${MEDIAMTX_SRT_PORT:-8890}"
+      MEDIAMTX_RTMP_PORT: "${MEDIAMTX_RTMP_PORT:-1935}"
+      MEDIAMTX_HLS_PORT: "${MEDIAMTX_HLS_PORT:-8888}"
+      MEDIAMTX_WEBRTC_PORT: "${MEDIAMTX_WEBRTC_PORT:-8889}"
+      MEDIAMTX_RTSP_PORT: "${MEDIAMTX_RTSP_PORT:-8554}"
+      MEDIAMTX_HLS_SCHEME: "${MEDIAMTX_HLS_SCHEME:-http}"
     ports:
       - "5050:5050"
     # Готовность приложения видна в `docker compose ps` (HEALTHCHECK из Dockerfile

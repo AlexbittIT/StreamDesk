@@ -8,6 +8,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Network,
   Plus,
   Trash2,
@@ -87,10 +97,17 @@ interface Cable {
   protocol?: string;
 }
 
+// Связь хранится на компоненте-источнике в одном из двух форматов:
+//  - оптимистичный (фронтенд): { componentId, port, fromPortId }
+//  - серверный (persistConnection): { id, fromDeviceId, fromPortId, toDeviceId, toPortId }
 type ComponentConnection = {
+  id?: string;
   componentId?: string;
   port?: string;
+  fromDeviceId?: string;
   fromPortId?: string;
+  toDeviceId?: string;
+  toPortId?: string;
   cableType?: string;
   protocol?: string;
 };
@@ -156,14 +173,28 @@ function DeviceEditForm({
     (device.portsOut || []).map((p) => p.name || p.id).join("\n")
   );
   const handleSave = () => {
+    // Сохраняем portType для портов с такими же именами (чтобы не терялись иконки)
+    const portTypeMapIn = new Map((device.portsIn || []).map(p => [p.name.toLowerCase(), p.portType]));
+    const portTypeMapOut = new Map((device.portsOut || []).map(p => [p.name.toLowerCase(), p.portType]));
+
     const portsIn: Device["portsIn"] = portsInText
       .split("\n")
       .filter((s) => s.trim())
-      .map((s, i) => ({ id: `in-${i}`, name: s.trim(), type: "in" as const }));
+      .map((s, i) => ({
+        id: `in-${i}`,
+        name: s.trim(),
+        type: "in" as const,
+        portType: portTypeMapIn.get(s.trim().toLowerCase()),
+      }));
     const portsOut: Device["portsOut"] = portsOutText
       .split("\n")
       .filter((s) => s.trim())
-      .map((s, i) => ({ id: `out-${i}`, name: s.trim(), type: "out" as const }));
+      .map((s, i) => ({
+        id: `out-${i}`,
+        name: s.trim(),
+        type: "out" as const,
+        portType: portTypeMapOut.get(s.trim().toLowerCase()),
+      }));
     onSave({ name: name.trim(), width: Number(width) || 260, height: Number(height) || 80, portsIn, portsOut });
   };
   return (
@@ -318,6 +349,9 @@ export default function ConnectionSchemas() {
 
   const [buildViolations, setBuildViolations] = useState<Violation[] | null>(null);
   const [buildSuccess, setBuildSuccess] = useState(false);
+  // Внутреннее окно подтверждения (вместо window.confirm — в части окружений нативные
+  // диалоги заблокированы и удаление молча не срабатывало).
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; description?: string; onConfirm: () => void } | null>(null);
   useEffect(() => {
     setBuildViolations(null);
     setBuildSuccess(false);
@@ -513,6 +547,43 @@ export default function ConnectionSchemas() {
         title: "Схема дополнена",
         description: `Добавлено блоков: ${data?.created?.length || 0}. Проверьте порты и поправьте при необходимости.`,
       });
+
+      // Перемещаем новые устройства в центр экрана пользователя
+      const created = data?.created || [];
+      console.log("[AI Generate] Created devices:", created.length);
+      console.log("[AI Generate] Created IDs:", created.map(d => d.id));
+
+      // Проверяем что canvas готов
+      const isReady = schemaCanvasRef.current?.isReady() ?? false;
+      console.log("[AI Generate] Canvas isReady:", isReady);
+
+      const center = schemaCanvasRef.current?.getViewportCenter();
+      console.log("[AI Generate] Viewport center:", center);
+
+      if (created.length > 0 && isReady && center) {
+        // Раскладываем устройства в сетку вокруг центра viewport
+        const cols = Math.ceil(Math.sqrt(created.length));
+        const spacingX = 320;
+        const spacingY = 180;
+
+        // Собираем все промисы позиционирования
+        const positionPromises = [];
+        for (let i = 0; i < created.length; i++) {
+          const col = i % cols;
+          const row = Math.floor(i / cols);
+          const newX = Math.round(center.x - (cols * spacingX) / 2 + col * spacingX);
+          const newY = Math.round(center.y - (Math.ceil(created.length / cols) * spacingY) / 2 + row * spacingY);
+          console.log(`[AI Generate] Moving device ${created[i].id} (${created[i].name}): x=${newX}, y=${newY}`);
+          positionPromises.push(updateDevicePosition.mutateAsync({ id: created[i].id, position: { x: newX, y: newY } }));
+        }
+
+        // Ждем завершения всех обновлений позиций
+        await Promise.all(positionPromises);
+        console.log("[AI Generate] All positions updated");
+      } else {
+        console.log("[AI Generate] Skipping - isReady:", isReady, "center:", center);
+      }
+
       await refetchSelectedSchema();
     },
     onError: (error: any) => {
@@ -585,12 +656,16 @@ export default function ConnectionSchemas() {
   // Обновление позиции устройства
   const updateDevicePosition = useMutation({
     mutationFn: async ({ id, position }: { id: string; position: { x: number; y: number } }) => {
+      console.log("[UpdatePosition] Updating device:", id, "to:", position);
       const component = selectedSchemaData?.components?.find(c => c.id === id);
-      if (!component) throw new Error("Компонент не найден");
-      
+      if (!component) {
+        console.log("[UpdatePosition] Component not found in cache for id:", id);
+        console.log("[UpdatePosition] Available components:", selectedSchemaData?.components?.map(c => c.id));
+      }
+
       const response = await apiRequest("PUT", `/api/connection-schemas/components/${id}`, {
         position,
-        properties: component.properties,
+        properties: component?.properties,
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
@@ -600,6 +675,9 @@ export default function ConnectionSchemas() {
     },
     onSuccess: () => {
       refetchSelectedSchema();
+    },
+    onError: (error: any) => {
+      console.error("[UpdatePosition] Error:", error);
     },
   });
 
@@ -728,14 +806,25 @@ export default function ConnectionSchemas() {
 
   // Удаление кабеля (двойной клик по связи): убираем запись из connections источника.
   const deleteConnectionMutation = useMutation({
-    mutationFn: async (cable: { fromDeviceId: string; fromPortId: string; toDeviceId: string; toPortId: string }) => {
+    mutationFn: async (cable: Cable) => {
       const component = selectedSchemaData?.components?.find(c => c.id === cable.fromDeviceId);
       if (!component) throw new Error("Устройство не найдено");
-      const connections = normalizeConnections(component.connections).filter((conn) =>
-        !(conn.componentId === cable.toDeviceId &&
-          conn.port === cable.toPortId &&
-          (conn.fromPortId ?? conn.port) === cable.fromPortId)
-      );
+      // Связь матчим в обоих форматах хранения (серверный/оптимистичный),
+      // иначе серверные связи не удалялись (фильтр по componentId/port не совпадал).
+      const isTarget = (conn: ComponentConnection) => {
+        if (conn.id && cable.id && conn.id === cable.id) return true;
+        const toDeviceId = conn.toDeviceId ?? conn.componentId;
+        const toPortId = conn.toPortId ?? conn.port;
+        const fromPortId = conn.fromPortId ?? conn.port;
+        return toDeviceId === cable.toDeviceId &&
+          toPortId === cable.toPortId &&
+          fromPortId === cable.fromPortId;
+      };
+      const all = normalizeConnections(component.connections);
+      const connections = all.filter((conn) => !isTarget(conn));
+      if (connections.length === all.length) {
+        throw new Error("Связь не найдена");
+      }
       const response = await apiRequest("PUT", `/api/connection-schemas/components/${cable.fromDeviceId}`, {
         position: component.position,
         properties: component.properties,
@@ -756,7 +845,7 @@ export default function ConnectionSchemas() {
     },
   });
 
-  const handleDeleteConnection = (cable: { fromDeviceId: string; fromPortId: string; toDeviceId: string; toPortId: string }) => {
+  const handleDeleteConnection = (cable: Cable) => {
     deleteConnectionMutation.mutate(cable);
   };
 
@@ -795,9 +884,10 @@ export default function ConnectionSchemas() {
     }
 
     // Размещаем в центре текущего вида (как в Figma), чтобы не переносить пользователя на другой край
-    const center = schemaCanvasRef.current?.getViewportCenter();
-    const x = center ? Math.round(center.x - 100) : Math.floor(devices.length / 3) * 250 + 50;
-    const y = center ? Math.round(center.y - 40) : (devices.length % 3) * 150 + 50;
+    const canvasReady = schemaCanvasRef.current?.isReady();
+    const center = canvasReady ? schemaCanvasRef.current?.getViewportCenter() : null;
+    const x = center ? Math.round(center.x - 100) : Math.floor(devices.length / 3) * 250 + 500;
+    const y = center ? Math.round(center.y - 40) : (devices.length % 3) * 150 + 300;
 
     createComponentMutation.mutate({
       schemaId: selectedSchema,
@@ -822,9 +912,10 @@ export default function ConnectionSchemas() {
   const handleDeleteComponent = (id: string) => {
     const component = selectedSchemaData?.components?.find((item) => item.id === id);
     const name = component?.name || "элемент";
-    if (window.confirm(`Удалить "${name}" из схемы?`)) {
-      deleteComponentMutation.mutate(id);
-    }
+    setConfirmDialog({
+      title: `Удалить "${name}" из схемы?`,
+      onConfirm: () => deleteComponentMutation.mutate(id),
+    });
   };
 
   const handleAddZone = (zone: Omit<Zone, "id">) => {
@@ -879,15 +970,6 @@ export default function ConnectionSchemas() {
       const violations = Array.isArray(data?.violations) ? data.violations : [];
       setBuildViolations(violations);
       setBuildSuccess(data?.ok === true);
-      if (data?.ok) {
-        toast({ title: "Схема целостна", description: data.summary || "Проверка пройдена успешно." });
-      } else {
-        toast({
-          title: `Найдено нарушений: ${violations.length}`,
-          description: "Проблемные элементы подсвечены на схеме.",
-          variant: "destructive",
-        });
-      }
     },
     onError: (error: any) => {
       setBuildSuccess(false);
@@ -946,11 +1028,6 @@ export default function ConnectionSchemas() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-          <Link href="/connection-schemas/port-review">
-            <Button size="lg" variant="outline">
-              Очередь разъёмов
-            </Button>
-          </Link>
           <Dialog open={isCreatingSchema} onOpenChange={setIsCreatingSchema}>
             <DialogTrigger asChild>
               <Button size="lg" onClick={() => setIsCreatingSchema(true)}>
@@ -1090,6 +1167,7 @@ export default function ConnectionSchemas() {
                 onDeleteConnection={handleDeleteConnection}
                 onZoneSelect={setSelectedZoneId}
                 selectedZoneId={selectedZoneId}
+                onZoneDelete={handleDeleteComponent}
                 onDeviceDelete={handleDeleteComponent}
                 validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
               />
@@ -1243,9 +1321,11 @@ export default function ConnectionSchemas() {
                           size="sm"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm("Удалить схему?")) {
-                              deleteSchemaMutation.mutate(schema.id);
-                            }
+                            setConfirmDialog({
+                              title: `Удалить схему "${schema.name}"?`,
+                              description: "Схема и все её элементы будут удалены без возможности восстановления.",
+                              onConfirm: () => deleteSchemaMutation.mutate(schema.id),
+                            });
                           }}
                         >
                           <Trash2 className="w-4 h-4 text-red-500" />
@@ -1365,6 +1445,7 @@ export default function ConnectionSchemas() {
                       onDeleteConnection={handleDeleteConnection}
                       onZoneSelect={setSelectedZoneId}
                       selectedZoneId={selectedZoneId}
+                      onZoneDelete={handleDeleteComponent}
                       onDeviceDelete={handleDeleteComponent}
                       validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
                     />
@@ -1382,6 +1463,29 @@ export default function ConnectionSchemas() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={!!confirmDialog} onOpenChange={(open) => { if (!open) setConfirmDialog(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmDialog?.title}</AlertDialogTitle>
+            {confirmDialog?.description && (
+              <AlertDialogDescription>{confirmDialog.description}</AlertDialogDescription>
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => {
+                confirmDialog?.onConfirm();
+                setConfirmDialog(null);
+              }}
+            >
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

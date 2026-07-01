@@ -5,10 +5,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 
 /**
- * Репозиторий сохранённых смет.
+ * Репозиторий смет — список по времени создания и фильтр по проекту
+ * (для показа смет из карточки проекта).
  */
 public interface EstimateRepository extends JpaRepository<Estimate, String> {
 
-    // Список смет, новые сверху (как сортировалась история на фронте).
     List<Estimate> findByOrderByCreatedAtDesc();
+
+    List<Estimate> findByProjectIdOrderByCreatedAtDesc(String projectId);
 }

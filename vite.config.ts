@@ -21,6 +21,11 @@ export default defineConfig({
     include: ["jspdf", "html2canvas"],
   },
   root: path.resolve(import.meta.dirname, "frontend"),
+  // Пре-бандлим тяжёлые PDF-зависимости на старте, чтобы Vite не делал
+  // переоптимизацию и полную перезагрузку при первом клике на «PDF».
+  optimizeDeps: {
+    include: ["jspdf", "html2canvas"],
+  },
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,

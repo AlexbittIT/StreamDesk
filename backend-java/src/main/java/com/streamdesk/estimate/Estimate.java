@@ -10,15 +10,13 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
 /**
- * Сущность сохранённой сметы — таблица "estimates".
- * Заменяет хранение истории смет в localStorage браузера: теперь смета лежит в БД
- * и видна всем сотрудникам рабочего пространства (компании).
- * Весь расчёт ({@code EstimateResult} с фронта) кладём целиком в jsonb-поле data.
+ * Смета — контейнер, который связывает расчёт с проектом (двусторонняя связь
+ * смета↔проект) и хранит актуальный снимок. История версий — в EstimateVersion.
  */
 @Entity
 @Table(name = "estimates")
@@ -33,29 +31,23 @@ public class Estimate {
     @Column(name = "title", nullable = false)
     private String title;
 
-    // Компания-владелец (для будущей фильтрации по компании/отделу). Берётся из членства автора.
+    /** Привязка к проекту (карточка проекта показывает свою смету и обратно). */
+    @Column(name = "project_id")
+    private String projectId;
+
     @Column(name = "company_id")
     private String companyId;
 
-    // Кто сохранил смету (userId) и его имя — для отображения автора.
-    @Column(name = "created_by")
-    private String createdBy;
+    @Column(name = "owner_id")
+    private String ownerId;
 
-    @Column(name = "created_by_name")
-    private String createdByName;
+    @Column(name = "status", nullable = false)
+    private String status = "draft";
 
-    // own | department | company — уровень видимости (как в role-isolation). По умолчанию вся компания.
-    @Column(name = "visibility", nullable = false)
-    private String visibility = "company";
-
-    // Дальность доставки, сохранённая вместе со сметой (строкой, как на фронте).
-    @Column(name = "delivery_distance_km")
-    private String deliveryDistanceKm = "0";
-
-    // Полный результат сметы (позиции, итоги, смены, доставка) — как приходит с фронта.
+    /** Актуальный снимок расчёта (структура EstimateResult с фронта). */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "data", columnDefinition = "jsonb")
-    private Map<String, Object> data = new HashMap<>();
+    private Map<String, Object> data = new LinkedHashMap<>();
 
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();

@@ -60,6 +60,8 @@ interface SchemaCanvasProps {
   onCancelDrawZone?: () => void;
   onZoneSelect?: (zoneId: string | null) => void;
   selectedZoneId?: string | null;
+  /** Удаление зоны (правый клик → Удалить) */
+  onZoneDelete?: (zoneId: string) => void;
   /** Создание кабеля: от выходного порта к входному */
   onAddConnection?: (from: { deviceId: string; portId: string }, to: { deviceId: string; portId: string }, protocol?: string) => void;
   /** Удаление кабеля (двойной клик по связи) */
@@ -71,7 +73,8 @@ interface SchemaCanvasProps {
 }
 
 export interface SchemaCanvasRef {
-  getViewportCenter: () => { x: number; y: number };
+  getViewportCenter: () => { x: number; y: number } | null;
+  isReady: () => boolean;
 }
 
 const SCENE_WIDTH = 16000;
@@ -103,6 +106,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   onCancelDrawZone,
   onZoneSelect,
   selectedZoneId,
+  onZoneDelete,
   onAddConnection,
   onDeleteConnection,
   onDeviceDelete,
@@ -117,6 +121,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   const [history, setHistory] = useState<Device[][]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [dragState, setDragState] = useState<{ deviceId: string; startPos: { x: number; y: number }; offset: { x: number; y: number } } | null>(null);
+  const [draggingDeviceId, setDraggingDeviceId] = useState<string | null>(null);
   const [panState, setPanState] = useState<{ startX: number; startY: number; startPos: { x: number; y: number } } | null>(null);
   const [localPositions, setLocalPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [zoneDrawStart, setZoneDrawStart] = useState<{ x: number; y: number } | null>(null);
@@ -131,7 +136,10 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   const [hoveredPort, setHoveredPort] = useState<{ deviceId: string; portId: string; type: "in" | "out" } | null>(null);
   const [autoFitted, setAutoFitted] = useState(false);
   const [deviceContextMenu, setDeviceContextMenu] = useState<{ x: number; y: number; deviceId: string } | null>(null);
+  const [zoneContextMenu, setZoneContextMenu] = useState<{ x: number; y: number; zoneId: string } | null>(null);
   const deviceContextMenuRef = useRef<HTMLDivElement>(null);
+  const zoneContextMenuRef = useRef<HTMLDivElement>(null);
+  const [stageReady, setStageReady] = useState(false);
 
   const cancelCableDrag = useCallback(() => {
     setCableDrag(null);
@@ -141,11 +149,15 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
 
   useImperativeHandle(ref, () => ({
     getViewportCenter() {
+      if (!stageReady) return null;
       const cx = (-position.x + stageSize.w / 2) / scale;
       const cy = (-position.y + stageSize.h / 2) / scale;
       return { x: Math.round(cx), y: Math.round(cy) };
     },
-  }), [position, scale, stageSize]);
+    isReady() {
+      return stageReady;
+    },
+  }), [position, scale, stageSize, stageReady]);
 
   useEffect(() => {
     if (!deviceContextMenu) return;
@@ -162,10 +174,25 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   }, [deviceContextMenu]);
 
   useEffect(() => {
+    if (!zoneContextMenu) return;
+    const close = () => setZoneContextMenu(null);
+    const onDocClick = (e: MouseEvent) => {
+      if (zoneContextMenuRef.current?.contains(e.target as Node)) return;
+      close();
+    };
+    const t = setTimeout(() => document.addEventListener("click", onDocClick, true), 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("click", onDocClick, true);
+    };
+  }, [zoneContextMenu]);
+
+  useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const update = () => {
       setStageSize({ w: el.clientWidth || 800, h: Math.max(el.clientHeight || 600, 400) });
+      setStageReady(true);
     };
     update();
     const ro = new ResizeObserver(update);
@@ -242,6 +269,51 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
     }
   }, [devices.length, autoFitted, stageSize.w, stageSize.h]);
 
+  /** Проверяет, пересекается ли прямоугольник с каким-либо устройством (кроме исключённого). */
+  const checkDeviceCollision = (
+    deviceId: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): boolean => {
+    const PADDING = 4;
+    for (const d of devices) {
+      if (d.id === deviceId) continue;
+      const dw = getDeviceWidth(d);
+      const dh = calculateDeviceHeight(d);
+      const dp = localPositions[d.id] ?? d.position;
+      const overlapX = x < dp.x + dw + PADDING && x + w + PADDING > dp.x;
+      const overlapY = y < dp.y + dh + PADDING && y + h + PADDING > dp.y;
+      if (overlapX && overlapY) return true;
+    }
+    return false;
+  };
+
+  /** Находит позицию без коллизий рядом с целевой. */
+  const findNonCollidingPosition = (
+    deviceId: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): { x: number; y: number } => {
+    if (!checkDeviceCollision(deviceId, x, y, w, h)) return { x, y };
+    const step = 20;
+    // Спираль наружу
+    for (let r = step; r <= 200; r += step) {
+      for (const dx of [-r, r]) {
+        for (const dy of [-r, r]) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (!checkDeviceCollision(deviceId, nx, ny, w, h)) return { x: nx, y: ny };
+        }
+      }
+    }
+    return { x, y };
+  };
+
   const handleDeviceDragEnd = useCallback((deviceId: string, newPosition: { x: number; y: number }) => {
     const device = devices.find((d) => d.id === deviceId);
     const w = device ? getDeviceWidth(device) : DEVICE_WIDTH_DEFAULT;
@@ -250,10 +322,12 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       x: Math.max(0, Math.min(SCENE_WIDTH - w, newPosition.x)),
       y: Math.max(0, Math.min(SCENE_HEIGHT - h, newPosition.y)),
     };
-    setLocalPositions((prev) => ({ ...prev, [deviceId]: clamped }));
-    const updatedDevices = devices.map((d) => (d.id === deviceId ? { ...d, position: clamped } : d));
+    // Находим позицию без коллизий
+    const finalPos = findNonCollidingPosition(deviceId, clamped.x, clamped.y, w, h);
+    setLocalPositions((prev) => ({ ...prev, [deviceId]: finalPos }));
+    const updatedDevices = devices.map((d) => (d.id === deviceId ? { ...d, position: finalPos } : d));
     saveToHistory(updatedDevices);
-    onDeviceUpdate(deviceId, clamped);
+    onDeviceUpdate(deviceId, finalPos);
   }, [devices, onDeviceUpdate, saveToHistory]);
 
   useEffect(() => {
@@ -396,12 +470,15 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
         const device = devices.find((d) => d.id === state.deviceId);
         const w = device ? getDeviceWidth(device) : DEVICE_WIDTH_DEFAULT;
         const h = device ? calculateDeviceHeight(device) : DEVICE_HEIGHT_BASE;
+        let rawX = scene.x - state.offset.x;
+        let rawY = scene.y - state.offset.y;
+        rawX = Math.max(0, Math.min(SCENE_WIDTH - w, rawX));
+        rawY = Math.max(0, Math.min(SCENE_HEIGHT - h, rawY));
+        // Проверка коллизий во время перетаскивания
+        const finalPos = findNonCollidingPosition(state.deviceId, rawX, rawY, w, h);
         setLocalPositions((prev) => ({
           ...prev,
-          [state.deviceId]: {
-            x: Math.max(0, Math.min(SCENE_WIDTH - w, scene.x - state.offset.x)),
-            y: Math.max(0, Math.min(SCENE_HEIGHT - h, scene.y - state.offset.y)),
-          },
+          [state.deviceId]: finalPos,
         }));
       });
     };
@@ -413,6 +490,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       const newPos = { x: scene.x - state.offset.x, y: scene.y - state.offset.y };
       handleDeviceDragEnd(state.deviceId, newPos);
       setDragState(null);
+      setDraggingDeviceId(null);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
@@ -977,6 +1055,12 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                     e.stopPropagation();
                     if (!drawZoneMode) onZoneSelect?.(zone.id);
                   }}
+                  onContextMenu={(e) => {
+                    if (drawZoneMode) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setZoneContextMenu({ x: e.clientX, y: e.clientY, zoneId: zone.id });
+                  }}
                 >
                   <rect
                     x={zone.position.x}
@@ -997,36 +1081,40 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               );
             })}
 
-            {devices.map((device) => {
-              const deviceWidth = getDeviceWidth(device);
-              const deviceHeight = calculateDeviceHeight(device);
-              const pos = getDevicePosition(device);
-              const isSelected = selectedDeviceId === device.id;
-              const hasError = !!(validationComponentIds && validationComponentIds.includes(device.id));
-              return (
-                <g
-                  key={device.id}
-                  data-device-id={device.id}
-                  transform={`translate(${pos.x}, ${pos.y})`}
-                  style={{ cursor: dragState?.deviceId === device.id ? "grabbing" : "grab" }}
-                  onPointerDown={(e) => {
-                    if (drawZoneMode) return;
-                    if ((e.target as SVGElement).closest?.("[data-port-id]")) return;
-                    e.stopPropagation();
-                    const scene = screenToScene(e.clientX, e.clientY);
-                    setDragState({
-                      deviceId: device.id,
-                      startPos: { ...pos },
-                      offset: { x: scene.x - pos.x, y: scene.y - pos.y },
-                    });
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setDeviceContextMenu({ x: e.clientX, y: e.clientY, deviceId: device.id });
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                >
+            {/* Устройства, которые НЕ перетаскиваются — рендерятся первыми (ниже) */}
+            {devices
+              .filter((d) => d.id !== draggingDeviceId)
+              .map((device) => {
+                const deviceWidth = getDeviceWidth(device);
+                const deviceHeight = calculateDeviceHeight(device);
+                const pos = getDevicePosition(device);
+                const isSelected = selectedDeviceId === device.id;
+                const hasError = !!(validationComponentIds && validationComponentIds.includes(device.id));
+                return (
+                  <g
+                    key={device.id}
+                    data-device-id={device.id}
+                    transform={`translate(${pos.x}, ${pos.y})`}
+                    style={{ cursor: "grab" }}
+                    onPointerDown={(e) => {
+                      if (drawZoneMode) return;
+                      if ((e.target as SVGElement).closest?.("[data-port-id]")) return;
+                      e.stopPropagation();
+                      const scene = screenToScene(e.clientX, e.clientY);
+                      setDragState({
+                        deviceId: device.id,
+                        startPos: { ...pos },
+                        offset: { x: scene.x - pos.x, y: scene.y - pos.y },
+                      });
+                      setDraggingDeviceId(device.id);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDeviceContextMenu({ x: e.clientX, y: e.clientY, deviceId: device.id });
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
                   {hasError && (
                     <rect
                       width={deviceWidth + 12}
@@ -1197,6 +1285,169 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               );
             })}
 
+            {/* Перетаскиваемое устройство — рендерится последним (поверх всех) */}
+            {draggingDeviceId && (() => {
+              const device = devices.find((d) => d.id === draggingDeviceId);
+              if (!device) return null;
+              const deviceWidth = getDeviceWidth(device);
+              const deviceHeight = calculateDeviceHeight(device);
+              const pos = getDevicePosition(device);
+              const isSelected = selectedDeviceId === device.id;
+              const hasError = !!(validationComponentIds && validationComponentIds.includes(device.id));
+              return (
+                <g
+                  key={device.id}
+                  data-device-id={device.id}
+                  transform={`translate(${pos.x}, ${pos.y})`}
+                  style={{ cursor: "grabbing" }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDeviceContextMenu({ x: e.clientX, y: e.clientY, deviceId: device.id });
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {hasError && (
+                    <rect
+                      width={deviceWidth + 12}
+                      height={deviceHeight + 12}
+                      x={-6}
+                      y={-6}
+                      fill="none"
+                      stroke="#dc2626"
+                      strokeWidth={3}
+                      strokeDasharray="6 4"
+                      rx={11}
+                      style={{ animation: "schema-error-pulse 1.1s ease-in-out infinite" }}
+                      pointerEvents="none"
+                    />
+                  )}
+                  <rect
+                    width={deviceWidth}
+                    height={deviceHeight}
+                    fill={isSelected ? "#2563eb" : "#1e293b"}
+                    stroke={hasError ? "#dc2626" : isSelected ? "#60a5fa" : "#475569"}
+                    strokeWidth={hasError ? 3 : isSelected ? 3 : 2}
+                    rx={8}
+                  />
+                  <text
+                    x={deviceWidth / 2}
+                    y={deviceHeight / 2 - 4}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={14}
+                    fontWeight="bold"
+                    fill="#fff"
+                  >
+                    {device.name}
+                  </text>
+                  {(device.properties?.consideredModel || device.model || device.manufacturer) && (
+                    <text
+                      x={deviceWidth / 2}
+                      y={deviceHeight / 2 + 12}
+                      textAnchor="middle"
+                      fontSize={10}
+                      fill="#9ca3af"
+                    >
+                      {String(device.properties?.consideredModel || device.model || device.manufacturer).slice(0, 42)}
+                    </text>
+                  )}
+                  <text x={4} y={14} fontSize={10} fill="#e5e7eb">
+                    IN
+                  </text>
+                  <text x={4} y={deviceHeight - PORT_HEIGHT - 4} fontSize={10} fill="#e5e7eb">
+                    OUT
+                  </text>
+                  {getPortLayout(device, "in").map(({ port, x: portX, width: portWidth, centerX }) => {
+                    const portCode = normalizeConnectionType(port.portType);
+                    const showIcon = portCode !== "DEFAULT";
+                    const isHovered = hoveredPort?.deviceId === device.id && hoveredPort?.portId === port.id && hoveredPort?.type === "in";
+                    const portDragState: "source" | "compatible" | "incompatible" | null = (() => {
+                      if (!cableDrag) return null;
+                      if (device.id === cableDrag.fromDeviceId && port.id === cableDrag.fromPortId) return "source";
+                      if (port.type === cableDrag.fromType || device.id === cableDrag.fromDeviceId) return "incompatible";
+                      if (!dragFromPort) return "compatible";
+                      if (cableDrag.fromType === "out") return isConnectionValid(dragFromPort, port) ? "compatible" : "incompatible";
+                      return isConnectionValid(port, dragFromPort) ? "compatible" : "incompatible";
+                    })();
+                    return (
+                      <g
+                        key={port.id}
+                        transform={`translate(${portX}, 0)`}
+                        data-port-device-id={device.id}
+                        data-port-id={port.id}
+                        data-port-type="in"
+                        style={{ cursor: cableDrag ? "crosshair" : "default" }}
+                      >
+                        <title>{port.name}{port.portType ? ` (${port.portType})` : ""}</title>
+                        <rect width={portWidth} height={PORT_HEIGHT} fill="#C0C0C0" fillOpacity={portDragState === "incompatible" ? 0.2 : 1} stroke="#fff" strokeWidth={1} rx={2} />
+                        {!portDragState && (showIcon
+                          ? <ConnectorIconUse code={portCode} x={(portWidth - PORT_HEIGHT) / 2} y={0} size={PORT_HEIGHT} />
+                          : <text x={portWidth / 2} y={PORT_HEIGHT / 2} textAnchor="middle" dominantBaseline="middle" fontSize={7} fill="#fff" pointerEvents="none">{port.name || ""}</text>
+                        )}
+                        {portDragState && (
+                          <use
+                            href={portDragState === "compatible" ? "#port-state-free" : portDragState === "source" ? "#port-state-occupied" : "#port-state-incompatible"}
+                            x={(portWidth - PORT_HEIGHT) / 2} y={0} width={PORT_HEIGHT} height={PORT_HEIGHT}
+                            pointerEvents="none"
+                          />
+                        )}
+                        {isHovered && !cableDrag && (
+                          <circle cx={portWidth / 2} cy={PORT_HEIGHT / 2} r={6} fill="none" stroke="#fff" strokeWidth={2} strokeDasharray="3 2" />
+                        )}
+                      </g>
+                    );
+                  })}
+                  {getPortLayout(device, "out").map(({ port, x: portX, width: portWidth, centerX }) => {
+                    const portY = deviceHeight - PORT_HEIGHT;
+                    const portCode = normalizeConnectionType(port.portType);
+                    const showIcon = portCode !== "DEFAULT";
+                    const isHovered = hoveredPort?.deviceId === device.id && hoveredPort?.portId === port.id && hoveredPort?.type === "out";
+                    const portCenterScene = {
+                      x: pos.x + centerX,
+                      y: pos.y + deviceHeight - PORT_HEIGHT / 2,
+                    };
+                    const portDragState: "source" | "compatible" | "incompatible" | null = (() => {
+                      if (!cableDrag) return null;
+                      if (device.id === cableDrag.fromDeviceId && port.id === cableDrag.fromPortId) return "source";
+                      if (port.type === cableDrag.fromType || device.id === cableDrag.fromDeviceId) return "incompatible";
+                      if (!dragFromPort) return "compatible";
+                      if (cableDrag.fromType === "out") return isConnectionValid(dragFromPort, port) ? "compatible" : "incompatible";
+                      return isConnectionValid(port, dragFromPort) ? "compatible" : "incompatible";
+                    })();
+                    return (
+                      <g
+                        key={port.id}
+                        transform={`translate(${portX}, ${portY})`}
+                        data-port-device-id={device.id}
+                        data-port-id={port.id}
+                        data-port-type="out"
+                        style={{ cursor: "crosshair" }}
+                      >
+                        <title>{port.name}{port.portType ? ` (${port.portType})` : ""} — потяните для соединения</title>
+                        <rect width={portWidth} height={PORT_HEIGHT} fill="#C0C0C0" fillOpacity={portDragState === "incompatible" ? 0.2 : 1} stroke="#fff" strokeWidth={1} rx={2} />
+                        {!portDragState && (showIcon
+                          ? <ConnectorIconUse code={portCode} x={(portWidth - PORT_HEIGHT) / 2} y={0} size={PORT_HEIGHT} />
+                          : <text x={portWidth / 2} y={PORT_HEIGHT / 2} textAnchor="middle" dominantBaseline="middle" fontSize={7} fill="#fff" pointerEvents="none">{port.name || ""}</text>
+                        )}
+                        {portDragState && (
+                          <use
+                            href={portDragState === "compatible" ? "#port-state-free" : portDragState === "source" ? "#port-state-occupied" : "#port-state-incompatible"}
+                            x={(portWidth - PORT_HEIGHT) / 2} y={0} width={PORT_HEIGHT} height={PORT_HEIGHT}
+                            pointerEvents="none"
+                          />
+                        )}
+                        {isHovered && !cableDrag && (
+                          <circle cx={portWidth / 2} cy={PORT_HEIGHT / 2} r={6} fill="none" stroke="#fff" strokeWidth={2} strokeDasharray="3 2" />
+                        )}
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })()}
+
             {/* Кабели поверх устройств — линия и анимация сигнала видны */}
             {cableDrag && cableDragCurrent && (
               (() => {
@@ -1265,26 +1516,12 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               const labelY = eDx >= eDy ? (endpoints.start.y + endpoints.end.y) / 2 : eMidY;
               const signalColor = getSignalColor(protocolLabel || fromPort.portType || toPort.portType);
               const stroke = valid ? signalColor : "#dc2626";
+              // Полный путь кабеля для невидимого слоя (чтобы ловить клики)
+              const fullCablePath = `M ${startPoint.x} ${startPoint.y} L ${endpoints.start.x} ${endpoints.start.y} ${pathD.replace(/^M [^L]+L /, '')} M ${endpoints.end.x} ${endpoints.end.y} L ${endPoint.x} ${endPoint.y}`;
               return (
                 <g
-                  key={cable.id}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteConnection?.(cable);
-                  }}
                   style={{ cursor: onDeleteConnection ? "pointer" : undefined }}
                 >
-                  {onDeleteConnection && (
-                    <path
-                      d={pathD}
-                      stroke="transparent"
-                      strokeWidth={18}
-                      fill="none"
-                      style={{ pointerEvents: "stroke" }}
-                    >
-                      <title>Двойной клик — удалить связь</title>
-                    </path>
-                  )}
                   <path
                     d={`M ${startPoint.x} ${startPoint.y} L ${endpoints.start.x} ${endpoints.start.y}`}
                     stroke={stroke}
@@ -1338,6 +1575,22 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                       {protocolLabel}
                     </text>
                   )}
+                  {/* Невидимый слой для обработки кликов — должен быть последним */}
+                  {onDeleteConnection && (
+                    <path
+                      d={fullCablePath}
+                      stroke="transparent"
+                      strokeWidth={20}
+                      fill="none"
+                      style={{ pointerEvents: "stroke" }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteConnection?.(cable);
+                      }}
+                    >
+                      <title>Двойной клик — удалить связь</title>
+                    </path>
+                  )}
                 </g>
               );
             })}
@@ -1371,6 +1624,27 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
               }}
             >
               Удалить устройство
+            </button>
+          )}
+        </div>
+      )}
+      {zoneContextMenu && (
+        <div
+          ref={zoneContextMenuRef}
+          className="fixed z-[100] min-w-[180px] rounded-lg border border-slate-600 bg-slate-800 py-1 shadow-xl"
+          style={{ left: zoneContextMenu.x, top: zoneContextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {onZoneDelete && (
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-slate-700"
+              onClick={() => {
+                onZoneDelete(zoneContextMenu.zoneId);
+                setZoneContextMenu(null);
+              }}
+            >
+              Удалить зону
             </button>
           )}
         </div>
