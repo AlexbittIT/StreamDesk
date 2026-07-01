@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "field_reference": {
+    "code": "уникальный стабильный идентификатор типа, не менять после ввода в эксплуатацию",
+    "name": "отображаемое имя (английское, каноничное)",
+    "name_ru": "отображаемое имя на русском",
+    "category": "video | audio | network | data | control | power | wireless",
+    "layer": "physical (есть физический разъём) | protocol (логический протокол поверх физического носителя) | wireless (без физического разъёма у устройства)",
+    "carrier": "для layer=protocol — коды физических носителей, по которым идёт сигнал",
+    "color": "hex, цвет линии/кабеля по умолчанию (можно переопределить в UI)",
+    "line_style": "solid | dashed",
+    "aliases": "синонимы/обозначения для фаззи-матчинга при AI-извлечении спеков",
+    "notes": "пояснение, важное для валидации соединений или для понимания типа"
+  },
+  "connector_types": [
+    { "code": "HDMI", "name": "HDMI", "name_ru": "HDMI", "category": "video", "layer": "physical", "carrier": [], "color": "#3F3F3F", "line_style": "solid", "aliases": ["High-Definition Multimedia Interface"], "notes": null },
+    { "code": "SDI", "name": "SDI", "name_ru": "SDI", "category": "video", "layer": "physical", "carrier": [], "color": "#6FA8DC", "line_style": "solid", "aliases": ["HD-SDI", "3G-SDI", "6G-SDI", "12G-SDI", "Serial Digital Interface", "BNC video"], "notes": null },
+    { "code": "DISPLAYPORT", "name": "DisplayPort", "name_ru": "DisplayPort", "category": "video", "layer": "physical", "carrier": [], "color": "#E8B647", "line_style": "solid", "aliases": ["DP", "Mini DisplayPort"], "notes": null },
+    { "code": "DVI", "name": "DVI", "name_ru": "DVI", "category": "video", "layer": "physical", "carrier": [], "color": "#B8860B", "line_style": "solid", "aliases": ["Digital Visual Interface", "DVI-D", "DVI-I", "DVI-A"], "notes": null },
+    { "code": "VGA", "name": "VGA", "name_ru": "VGA", "category": "video", "layer": "physical", "carrier": [], "color": "#4A4A4A", "line_style": "solid", "aliases": ["D-Sub 15", "D-Sub HD15", "RGB analog", "VGA analog"], "notes": null },
+    { "code": "GENLOCK", "name": "Genlock / black burst", "name_ru": "Генлок", "category": "video", "layer": "physical", "carrier": [], "color": "#8C8C8C", "line_style": "solid", "aliases": ["black burst", "word clock video", "reference sync", "BNC sync"], "notes": "Физически тот же BNC-разъём, что у SDI, но это сигнал синхронизации, не видеопоток — выделен отдельным типом, чтобы валидатор не спутал sync-порт с видео-портом." },
+    { "code": "FIBER", "name": "Fiber optic", "name_ru": "Оптика", "category": "data", "layer": "physical", "carrier": [], "color": "#CC0000", "line_style": "solid", "aliases": ["optical fiber", "LC", "SC", "ST", "SMPTE fiber", "оптоволокно"], "notes": "Оптика — это среда передачи; конкретный сигнал поверх неё (SDI-extender, Ethernet, гибридный кабель) уточняется на уровне оборудования." },
+
+    { "code": "XLR", "name": "XLR", "name_ru": "XLR", "category": "audio", "layer": "physical", "carrier": [], "color": "#6FCF4D", "line_style": "solid", "aliases": ["Cannon connector", "XLR3", "XLR5", "balanced audio"], "notes": null },
+    { "code": "RCA", "name": "RCA", "name_ru": "RCA (тюльпан)", "category": "audio", "layer": "physical", "carrier": [], "color": "#1B7A1B", "line_style": "solid", "aliases": ["phono", "composite video", "component video", "tulip"], "notes": "Используется и для аналогового аудио, и для композитного видео — категория здесь 'audio' как основная." },
+    { "code": "JACK", "name": "Jack (TRS/TS)", "name_ru": "Джек", "category": "audio", "layer": "physical", "carrier": [], "color": "#2DD4C4", "line_style": "solid", "aliases": ["6.35mm jack", "1/4 inch jack", "TRS", "TS"], "notes": null },
+    { "code": "XLR_JACK", "name": "XLR/Jack combo", "name_ru": "XLR/Джек комбо", "category": "audio", "layer": "physical", "carrier": [], "color": "#26C2B3", "line_style": "solid", "aliases": ["combo jack", "XLR-jack combo input"], "notes": null },
+    { "code": "MINI_JACK", "name": "Mini-jack", "name_ru": "Мини-джек", "category": "audio", "layer": "physical", "carrier": [], "color": "#0F9D77", "line_style": "solid", "aliases": ["3.5mm jack", "TRS mini", "aux"], "notes": null },
+    { "code": "AES_EBU", "name": "AES/EBU", "name_ru": "AES/EBU", "category": "audio", "layer": "physical", "carrier": [], "color": "#3D8B8B", "line_style": "solid", "aliases": ["AES3", "digital audio XLR", "professional digital audio"], "notes": "Физически обычно XLR (балансный) либо BNC 75 Ом (проф. вариант)." },
+    { "code": "TOSLINK", "name": "Toslink (optical audio)", "name_ru": "Тослинк", "category": "audio", "layer": "physical", "carrier": [], "color": "#D4622D", "line_style": "solid", "aliases": ["S/PDIF optical", "optical digital audio"], "notes": null },
+    { "code": "SPDIF_COAX", "name": "S/PDIF coaxial", "name_ru": "S/PDIF (коакс)", "category": "audio", "layer": "physical", "carrier": [], "color": "#C97A3D", "line_style": "solid", "aliases": ["digital coax audio", "RCA digital audio"], "notes": null },
+    { "code": "SPEAKON", "name": "Speakon", "name_ru": "Спикон", "category": "audio", "layer": "physical", "carrier": [], "color": "#7B1FA2", "line_style": "solid", "aliases": ["NL2", "NL4", "NL8", "Neutrik Speakon"], "notes": null },
+    { "code": "DANTE", "name": "Dante (audio over IP)", "name_ru": "Dante", "category": "audio", "layer": "protocol", "carrier": ["ETHERNET"], "color": "#00A7B5", "line_style": "solid", "aliases": ["Audinate Dante", "Dante AVIO", "audio over IP"], "notes": "Физический разъём — RJ45/Ethernet, но это отдельный протокол. При валидации соединений сверяйте protocol-тип, а не только физический разъём." },
+    { "code": "AES67", "name": "AES67 (audio over IP)", "name_ru": "AES67", "category": "audio", "layer": "protocol", "carrier": ["ETHERNET"], "color": "#008C99", "line_style": "solid", "aliases": ["audio over IP standard", "SMPTE ST 2110-30"], "notes": "Как и Dante, физически Ethernet — отдельный протокол поверх него." },
+
+    { "code": "MIDI", "name": "MIDI", "name_ru": "MIDI", "category": "control", "layer": "physical", "carrier": [], "color": "#CC1111", "line_style": "solid", "aliases": ["5-pin DIN", "MIDI DIN"], "notes": "Классический разъём — 5-pin DIN. Современные устройства часто туннелируют MIDI через USB (см. тип USB)." },
+    { "code": "DMX", "name": "DMX512", "name_ru": "DMX", "category": "control", "layer": "physical", "carrier": [], "color": "#E08080", "line_style": "solid", "aliases": ["DMX512", "5-pin XLR lighting", "lighting control"], "notes": null },
+    { "code": "ARTNET", "name": "Art-Net", "name_ru": "Art-Net", "category": "control", "layer": "protocol", "carrier": ["ETHERNET"], "color": "#D88A4A", "line_style": "solid", "aliases": ["DMX over IP", "Art-Net protocol"], "notes": "DMX-данные внутри обычного Ethernet — физически RJ45." },
+    { "code": "SACN", "name": "sACN", "name_ru": "sACN", "category": "control", "layer": "protocol", "carrier": ["ETHERNET"], "color": "#CC8B52", "line_style": "solid", "aliases": ["streaming ACN", "E1.31"], "notes": "Аналогично Art-Net — DMX-данные поверх Ethernet, другой протокол." },
+    { "code": "RS232", "name": "RS-232", "name_ru": "RS-232", "category": "control", "layer": "physical", "carrier": [], "color": "#707070", "line_style": "solid", "aliases": ["serial", "COM port", "DB9 serial"], "notes": null },
+    { "code": "RS485", "name": "RS-485", "name_ru": "RS-485", "category": "control", "layer": "physical", "carrier": [], "color": "#5C5C5C", "line_style": "solid", "aliases": ["serial bus", "differential serial"], "notes": null },
+
+    { "code": "ETHERNET", "name": "Ethernet", "name_ru": "Ethernet", "category": "network", "layer": "physical", "carrier": [], "color": "#1C4FA0", "line_style": "solid", "aliases": ["RJ45", "Cat5", "Cat5e", "Cat6", "Cat6a", "LAN"], "notes": null },
+    { "code": "ETHERCON", "name": "EtherCon", "name_ru": "Эзеркон", "category": "network", "layer": "physical", "carrier": [], "color": "#1C4FA0", "line_style": "solid", "aliases": ["Neutrik EtherCon", "ruggedized RJ45"], "notes": "Электрически идентичен RJ45/Ethernet, отличается только защищённым корпусом разъёма — для валидации совместим с ETHERNET." },
+
+    { "code": "USB", "name": "USB", "name_ru": "USB", "category": "data", "layer": "physical", "carrier": [], "color": "#D946C0", "line_style": "solid", "aliases": ["USB-A", "USB-B", "USB Mini", "USB Micro"], "notes": null },
+    { "code": "USB_C", "name": "USB-C", "name_ru": "USB-C", "category": "data", "layer": "physical", "carrier": [], "color": "#C13FB0", "line_style": "solid", "aliases": ["USB Type-C"], "notes": null },
+    { "code": "THUNDERBOLT", "name": "Thunderbolt", "name_ru": "Thunderbolt", "category": "data", "layer": "physical", "carrier": [], "color": "#6A1B9A", "line_style": "solid", "aliases": ["TB3", "TB4", "Thunderbolt 3", "Thunderbolt 4"], "notes": null },
+    { "code": "FIREWIRE", "name": "FireWire", "name_ru": "FireWire", "category": "data", "layer": "physical", "carrier": [], "color": "#C0C0C0", "line_style": "solid", "aliases": ["IEEE 1394", "i.Link", "FireWire 400", "FireWire 800"], "notes": null },
+    { "code": "LIGHTNING", "name": "Lightning", "name_ru": "Lightning", "category": "data", "layer": "physical", "carrier": [], "color": "#4CD964", "line_style": "solid", "aliases": ["Apple Lightning"], "notes": null },
+    { "code": "NDI", "name": "NDI (video over IP)", "name_ru": "NDI", "category": "video", "layer": "protocol", "carrier": ["ETHERNET"], "color": "#2A9DF4", "line_style": "solid", "aliases": ["Network Device Interface", "NDI|HX", "video over IP"], "notes": "Физически RJ45/Ethernet, отдельный протокол видео поверх IP — не путать порт NDI с обычным сетевым портом при валидации." },
+
+    { "code": "POWER", "name": "Power (generic AC)", "name_ru": "Питание (общее)", "category": "power", "layer": "physical", "carrier": [], "color": "#2E5FA8", "line_style": "solid", "aliases": ["mains", "AC power", "line power"], "notes": null },
+    { "code": "POWERCON", "name": "PowerCon", "name_ru": "Пауэркон", "category": "power", "layer": "physical", "carrier": [], "color": "#E040FB", "line_style": "solid", "aliases": ["Neutrik PowerCon", "PowerCon TRUE1"], "notes": null },
+    { "code": "IEC", "name": "IEC C13/C14", "name_ru": "IEC разъём", "category": "power", "layer": "physical", "carrier": [], "color": "#4A4A90", "line_style": "solid", "aliases": ["kettle plug", "C13", "C14", "C19", "C20", "IEC 60320"], "notes": null },
+    { "code": "SCHUKO", "name": "Schuko", "name_ru": "Шуко", "category": "power", "layer": "physical", "carrier": [], "color": "#3A6FB5", "line_style": "solid", "aliases": ["CEE 7/4", "European plug", "Schuko plug"], "notes": null },
+    { "code": "EDISON", "name": "Edison (NEMA)", "name_ru": "Эдисон", "category": "power", "layer": "physical", "carrier": [], "color": "#2D5FA0", "line_style": "solid", "aliases": ["NEMA 5-15", "stage pin", "Edison plug"], "notes": null },
+    { "code": "BANANA", "name": "Banana plug", "name_ru": "Банан", "category": "power", "layer": "physical", "carrier": [], "color": "#B5651D", "line_style": "solid", "aliases": ["4mm banana plug", "banana connector"], "notes": "Используется и в силовых, и в акустических (колонки) соединениях." },
+    { "code": "TERMINAL_BLOCK", "name": "Terminal block", "name_ru": "Терминальный блок", "category": "power", "layer": "physical", "carrier": [], "color": "#8C6E4A", "line_style": "solid", "aliases": ["Phoenix connector", "screw terminal", "barrier strip"], "notes": null },
+
+    { "code": "WIRELESS", "name": "Wireless (generic RF)", "name_ru": "Беспроводное", "category": "wireless", "layer": "wireless", "carrier": [], "color": "#7CA8DC", "line_style": "dashed", "aliases": ["RF link", "wireless link", "radio"], "notes": "Обобщённый тип для радиоканала без конкретного протокола. Если важен протокол — используйте WIFI или BLUETOOTH." },
+    { "code": "WIFI", "name": "Wi-Fi", "name_ru": "Wi-Fi", "category": "wireless", "layer": "wireless", "carrier": [], "color": "#5B9BD5", "line_style": "dashed", "aliases": ["WLAN", "802.11"], "notes": null },
+    { "code": "BLUETOOTH", "name": "Bluetooth", "name_ru": "Bluetooth", "category": "wireless", "layer": "wireless", "carrier": [], "color": "#2F5FCB", "line_style": "dashed", "aliases": ["BT", "Bluetooth LE"], "notes": null }
+  ]
+}

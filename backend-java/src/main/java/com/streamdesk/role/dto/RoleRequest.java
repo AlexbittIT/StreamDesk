@@ -11,6 +11,7 @@ public record RoleRequest(
         String description,
         List<Object> permissions,
         String color,
+        String dataScope,
         Boolean isSystem
 ) {
 }

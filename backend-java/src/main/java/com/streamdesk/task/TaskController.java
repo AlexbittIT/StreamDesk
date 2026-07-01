@@ -42,8 +42,8 @@ public class TaskController {
 
     // GET /api/tasks/{id}
     @GetMapping("/{id}")
-    public Task get(@PathVariable String id) {
-        return taskService.getTask(id);
+    public Task get(@PathVariable String id, @AuthenticationPrincipal AuthenticatedUser user) {
+        return taskService.getTask(id, user);
     }
 
     // POST /api/tasks
@@ -54,39 +54,48 @@ public class TaskController {
 
     // PUT /api/tasks/{id}
     @PutMapping("/{id}")
-    public Task update(@PathVariable String id, @RequestBody TaskRequest req) {
+    public Task update(@PathVariable String id, @RequestBody TaskRequest req,
+                       @AuthenticationPrincipal AuthenticatedUser user) {
+        taskService.requireAccess(taskService.getTask(id), user);
         return taskService.updateTask(id, req);
     }
 
     // DELETE /api/tasks/{id}
     @DeleteMapping("/{id}")
-    public Map<String, Boolean> delete(@PathVariable String id) {
+    public Map<String, Boolean> delete(@PathVariable String id, @AuthenticationPrincipal AuthenticatedUser user) {
+        taskService.requireAccess(taskService.getTask(id), user);
         taskService.deleteTask(id);
         return Map.of("success", true);
     }
 
     // GET /api/tasks/{taskId}/comments
     @GetMapping("/{taskId}/comments")
-    public List<TaskComment> comments(@PathVariable String taskId) {
+    public List<TaskComment> comments(@PathVariable String taskId, @AuthenticationPrincipal AuthenticatedUser user) {
+        taskService.requireAccess(taskService.getTask(taskId), user);
         return taskService.getComments(taskId);
     }
 
     // POST /api/tasks/{taskId}/comments
     @PostMapping("/{taskId}/comments")
-    public TaskComment addComment(@PathVariable String taskId, @RequestBody CommentRequest req) {
+    public TaskComment addComment(@PathVariable String taskId, @RequestBody CommentRequest req,
+                                  @AuthenticationPrincipal AuthenticatedUser user) {
+        taskService.requireAccess(taskService.getTask(taskId), user);
         return taskService.createComment(taskId, req);
     }
 
     // DELETE /api/tasks/{taskId}/comments/{commentId}
     @DeleteMapping("/{taskId}/comments/{commentId}")
-    public Map<String, Boolean> deleteComment(@PathVariable String taskId, @PathVariable String commentId) {
+    public Map<String, Boolean> deleteComment(@PathVariable String taskId, @PathVariable String commentId,
+                                              @AuthenticationPrincipal AuthenticatedUser user) {
+        taskService.requireAccess(taskService.getTask(taskId), user);
         taskService.deleteComment(commentId);
         return Map.of("success", true);
     }
 
     // GET /api/tasks/{taskId}/history
     @GetMapping("/{taskId}/history")
-    public List<TaskHistory> history(@PathVariable String taskId) {
+    public List<TaskHistory> history(@PathVariable String taskId, @AuthenticationPrincipal AuthenticatedUser user) {
+        taskService.requireAccess(taskService.getTask(taskId), user);
         return taskService.getHistory(taskId);
     }
 }

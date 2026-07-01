@@ -293,6 +293,9 @@ export const roles = pgTable("roles", {
   description: text("description"),
   permissions: jsonb("permissions").notNull().default('[]'),
   color: text("color").default("#6B7280"),
+  // Уровень видимости данных роли: own | department | all (см. бэкенд DataScope).
+  // По умолчанию 'all' — старые роли видят всё по своей компании (обратная совместимость).
+  dataScope: text("data_scope").notNull().default("all"),
   isSystem: boolean("is_system").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });

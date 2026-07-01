@@ -47,10 +47,10 @@ spring:
 app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5000,http://localhost:3000}
-  # Fallback-админ для теста — ВЫКЛЮЧЕН по умолчанию (безопасно для прода).
-  # Для тестового стенда включи через ALLOW_FALLBACK_ADMIN=true.
+  # Fallback-админ для теста — ВКЛЮЧЁН по умолчанию (staging).
+  # На проде переопредели через ALLOW_FALLBACK_ADMIN=false.
   auth:
-    fallback-admin-enabled: ${ALLOW_FALLBACK_ADMIN:false}
+    fallback-admin-enabled: ${ALLOW_FALLBACK_ADMIN:true}
     admin-username: ${ADMIN_USERNAME:admin}
     admin-password: ${ADMIN_PASSWORD:admin123}
   # AI-генерация схем подключения (DeepSeek). Без ключа эндпоинт /ai-schema
@@ -60,6 +60,8 @@ app:
       api-key: ${DEEPSEEK_API_KEY:}
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
       model: ${DEEPSEEK_MODEL:deepseek-chat}
+      # openai — стандартный DeepSeek; anthropic — шлюз OpenModel (/messages)
+      protocol: ${DEEPSEEK_PROTOCOL:openai}
       max-attempts: ${DEEPSEEK_MAX_ATTEMPTS:3}
 
 logging:

@@ -1,8 +1,17 @@
 package com.streamdesk.connectionschema;
 
+import com.streamdesk.ai.DeepSeekClient;
 import com.streamdesk.config.ApiException;
+import com.streamdesk.connectionschema.dto.AiSchemaRequest;
+import com.streamdesk.connectionschema.dto.AiSchemaResponse;
 import com.streamdesk.connectionschema.dto.ComponentRequest;
+import com.streamdesk.connectionschema.dto.ConnectionRequest;
 import com.streamdesk.connectionschema.dto.SchemaRequest;
+import com.streamdesk.connectionschema.validation.BuildResult;
+import com.streamdesk.connectionschema.validation.ConnectionValidator;
+import com.streamdesk.connectionschema.validation.ConnectorTypes;
+import com.streamdesk.connectionschema.validation.ValidationResult;
+import com.streamdesk.connectionschema.validation.Violation;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,6 +22,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -24,11 +34,17 @@ public class ConnectionSchemaService {
 
     private final ConnectionSchemaRepository schemaRepository;
     private final ConnectionSchemaComponentRepository componentRepository;
+    private final AiSchemaService aiSchemaService;
+    private final DeepSeekClient deepSeek;
 
     public ConnectionSchemaService(ConnectionSchemaRepository schemaRepository,
-                                   ConnectionSchemaComponentRepository componentRepository) {
+                                   ConnectionSchemaComponentRepository componentRepository,
+                                   AiSchemaService aiSchemaService,
+                                   DeepSeekClient deepSeek) {
         this.schemaRepository = schemaRepository;
         this.componentRepository = componentRepository;
+        this.aiSchemaService = aiSchemaService;
+        this.deepSeek = deepSeek;
     }
 
     public List<ConnectionSchema> list() {
@@ -139,6 +155,19 @@ public class ConnectionSchemaService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Схема не найдена"));
 
         String prompt = firstNonBlank(promptInput, schema.getDescription(), schema.getName(), "").trim();
+
+        // Умная генерация через DeepSeek: понимает количество и связи («4 камеры» -> 4 ноды).
+        // Эвристика ниже — фолбэк, когда ключ ИИ не задан.
+        if (deepSeek.isConfigured()) {
+            AiSchemaResponse ai = aiSchemaService.generate(new AiSchemaRequest(prompt, null));
+            List<ConnectionSchemaComponent> created = persistAiNodes(schemaId, ai);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("created", created);
+            result.put("connections", ai.connections());
+            result.put("aiAvailable", true);
+            return result;
+        }
+
         List<String> searchTerms = Arrays.stream(prompt.split("[,;\\n]+"))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
@@ -182,6 +211,52 @@ public class ConnectionSchemaService {
         result.put("created", created);
         result.put("aiAvailable", aiAvailable);
         return result;
+    }
+
+    /** Сохраняет ноды AI-схемы как компоненты и раскладывает связи по источникам. */
+    private List<ConnectionSchemaComponent> persistAiNodes(String schemaId, AiSchemaResponse ai) {
+        Map<String, ConnectionSchemaComponent> byNodeId = new LinkedHashMap<>();
+        for (Map<String, Object> node : ai.nodes()) {
+            ConnectionSchemaComponent c = new ConnectionSchemaComponent();
+            c.setId(UUID.randomUUID().toString());
+            c.setSchemaId(schemaId);
+            c.setType(String.valueOf(node.getOrDefault("type", "computer")));
+            c.setName(String.valueOf(node.getOrDefault("name", "Узел")));
+            if (node.get("position") instanceof Map<?, ?> pos) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> posMap = (Map<String, Object>) pos;
+                c.setPosition(new LinkedHashMap<>(posMap));
+            }
+            Map<String, Object> props = new LinkedHashMap<>();
+            props.put("source", "ai-assistant");
+            props.put("portsIn", node.getOrDefault("portsIn", new ArrayList<>()));
+            props.put("portsOut", node.getOrDefault("portsOut", new ArrayList<>()));
+            c.setProperties(props);
+            c.setConnections(new ArrayList<>());
+            byNodeId.put(String.valueOf(node.get("id")), c);
+        }
+
+        // Связи кладём на компонент-источник в формате фронта (ремап id ноды -> id компонента).
+        for (Map<String, Object> conn : ai.connections()) {
+            ConnectionSchemaComponent src = byNodeId.get(String.valueOf(conn.get("fromDeviceId")));
+            ConnectionSchemaComponent dst = byNodeId.get(String.valueOf(conn.get("toDeviceId")));
+            if (src == null || dst == null) {
+                continue;
+            }
+            Map<String, Object> link = new LinkedHashMap<>();
+            link.put("componentId", dst.getId());
+            link.put("port", conn.get("toPortId"));
+            link.put("fromPortId", conn.get("fromPortId"));
+            link.put("cableType", conn.get("cableType"));
+            link.put("protocol", conn.get("protocol"));
+            src.getConnections().add(link);
+        }
+
+        List<ConnectionSchemaComponent> created = new ArrayList<>();
+        for (ConnectionSchemaComponent c : byNodeId.values()) {
+            created.add(componentRepository.save(c));
+        }
+        return created;
     }
 
     private String detectType(String lower) {
@@ -247,5 +322,130 @@ public class ConnectionSchemaService {
 
     private static boolean isBlank(String s) {
         return s == null || s.isBlank();
+    }
+
+    // --- connections: валидация и хранение связей (Sprint 2) ---
+
+    /** Компоненты схемы, индексированные по id. */
+    private Map<String, ConnectionSchemaComponent> componentsById(String schemaId) {
+        Map<String, ConnectionSchemaComponent> byId = new LinkedHashMap<>();
+        for (ConnectionSchemaComponent c : componentRepository.findBySchemaIdOrderByCreatedAt(schemaId)) {
+            byId.put(c.getId(), c);
+        }
+        return byId;
+    }
+
+    /** Все связи схемы (хранятся в connections каждого компонента). */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> allConnections(Map<String, ConnectionSchemaComponent> byId) {
+        List<Map<String, Object>> all = new ArrayList<>();
+        for (ConnectionSchemaComponent c : byId.values()) {
+            List<Object> list = c.getConnections();
+            if (list == null) {
+                continue;
+            }
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> map) {
+                    all.add((Map<String, Object>) map);
+                }
+            }
+        }
+        return all;
+    }
+
+    /** POST /{schemaId}/connections — проверка одной новой связи по правилам контракта. */
+    public ValidationResult validateConnection(String schemaId, ConnectionRequest req) {
+        if (req == null || isBlank(req.fromDeviceId()) || isBlank(req.fromPortId())
+                || isBlank(req.toDeviceId()) || isBlank(req.toPortId())) {
+            throw ApiException.badRequest("Нужны fromDeviceId, fromPortId, toDeviceId, toPortId");
+        }
+        Map<String, ConnectionSchemaComponent> byId = componentsById(schemaId);
+        List<Map<String, Object>> existing = allConnections(byId);
+        return ValidationResult.of(ConnectionValidator.validate(req, byId, existing));
+    }
+
+    /** Сохраняет валидную связь в connections компонента-источника, возвращает её с id. */
+    @Transactional
+    public Map<String, Object> persistConnection(String schemaId, ConnectionRequest req) {
+        ConnectionSchemaComponent from = componentRepository.findById(req.fromDeviceId())
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Компонент-источник не найден"));
+
+        Map<String, Object> conn = new LinkedHashMap<>();
+        conn.put("id", UUID.randomUUID().toString());
+        conn.put("fromDeviceId", req.fromDeviceId());
+        conn.put("fromPortId", req.fromPortId());
+        conn.put("toDeviceId", req.toDeviceId());
+        conn.put("toPortId", req.toPortId());
+        conn.put("cableType", req.cableType());
+        conn.put("protocol", req.protocol());
+
+        List<Object> list = from.getConnections() != null ? from.getConnections() : new ArrayList<>();
+        list.add(conn);
+        from.setConnections(list);
+        from.setUpdatedAt(Instant.now());
+        componentRepository.save(from);
+        return conn;
+    }
+
+    /** DELETE /connections/{id} — удаляет связь из компонента, где она хранится. */
+    @Transactional
+    public void deleteConnection(String connectionId) {
+        for (ConnectionSchemaComponent c : componentRepository.findAll()) {
+            List<Object> list = c.getConnections();
+            if (list == null || list.isEmpty()) {
+                continue;
+            }
+            boolean removed = list.removeIf(o ->
+                    o instanceof Map<?, ?> m && connectionId.equals(String.valueOf(m.get("id"))));
+            if (removed) {
+                c.setConnections(list);
+                c.setUpdatedAt(Instant.now());
+                componentRepository.save(c);
+                return;
+            }
+        }
+        throw new ApiException(HttpStatus.NOT_FOUND, "Connection not found");
+    }
+
+    /** POST /{id}/validate — прогон правил по всем связям схемы. */
+    public ValidationResult validateSchema(String schemaId) {
+        Map<String, ConnectionSchemaComponent> byId = componentsById(schemaId);
+        List<Map<String, Object>> all = allConnections(byId);
+        List<Violation> violations = new ArrayList<>();
+        for (Map<String, Object> conn : all) {
+            ConnectionRequest req = toRequest(conn);
+            List<Map<String, Object>> others = all.stream().filter(x -> x != conn).toList();
+            violations.addAll(ConnectionValidator.validate(req, byId, others));
+        }
+        return ValidationResult.of(violations);
+    }
+
+    /** POST /{id}/build — проверка целостности схемы + краткий вердикт. */
+    public BuildResult buildSchema(String schemaId) {
+        ValidationResult vr = validateSchema(schemaId);
+        String summary = vr.ok()
+                ? "Схема корректна: нарушений не найдено."
+                : "Найдено нарушений: " + vr.violations().size();
+        return new BuildResult(vr.ok(), vr.violations(), summary);
+    }
+
+    /** GET /connector-types — справочник типов разъёмов. */
+    public List<ConnectorTypes.ConnectorType> connectorTypes() {
+        return ConnectorTypes.all();
+    }
+
+    private ConnectionRequest toRequest(Map<String, Object> conn) {
+        return new ConnectionRequest(
+                asString(conn.get("fromDeviceId")),
+                asString(conn.get("fromPortId")),
+                asString(conn.get("toDeviceId")),
+                asString(conn.get("toPortId")),
+                asString(conn.get("cableType")),
+                asString(conn.get("protocol"))
+        );
+    }
+
+    private static String asString(Object value) {
+        return value == null ? null : String.valueOf(value);
     }
 }

@@ -36,14 +36,17 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       # Java-only: Hibernate сам создаёт/обновляет схему из сущностей (Drizzle/Node не нужны)
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      # Fallback-админ admin/admin123 ВЫКЛЮЧЕН по умолчанию (безопасно для прода).
-      # Для тестового стенда можно включить: ALLOW_FALLBACK_ADMIN=true в .env.
-      ALLOW_FALLBACK_ADMIN: "${ALLOW_FALLBACK_ADMIN:-false}"
+      # Staging: fallback-админ admin/admin123 включён по умолчанию, чтобы можно было войти
+      # на свежей БД (на проде переопредели ALLOW_FALLBACK_ADMIN=false).
+      ALLOW_FALLBACK_ADMIN: "${ALLOW_FALLBACK_ADMIN:-true}"
       SERVER_PORT: "5050"
       # AI для схем подключения и подбора портов (DeepSeek / HuggingFace).
       # Без ключей стек поднимется, но AI-эндпоинты вернут 503 — задай в .env при необходимости.
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_MODEL: "${DEEPSEEK_MODEL:-deepseek-chat}"
+      # Базовый URL и протокол шлюза (для OpenModel: base-url .../v1, protocol anthropic)
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_PROTOCOL: "${DEEPSEEK_PROTOCOL:-openai}"
       HUGGINGFACE_API_KEY: "${HUGGINGFACE_API_KEY:-}"
       HF_TOKEN: "${HF_TOKEN:-}"
     ports:

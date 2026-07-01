@@ -51,6 +51,7 @@ public final class AuthConstants {
                 null,
                 null,
                 "admin",
+                null,
                 FALLBACK_ADMIN_PERMISSIONS,
                 true,
                 true,

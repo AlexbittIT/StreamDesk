@@ -4,8 +4,15 @@ import com.streamdesk.auth.AuthenticatedUser;
 import com.streamdesk.company.CompanyService;
 import com.streamdesk.config.ApiException;
 import com.streamdesk.connectionschema.dto.AiGenerateRequest;
+import com.streamdesk.connectionschema.dto.AiSchemaRequest;
+import com.streamdesk.connectionschema.dto.AiSchemaResponse;
 import com.streamdesk.connectionschema.dto.ComponentRequest;
+import com.streamdesk.connectionschema.dto.ConnectionRequest;
 import com.streamdesk.connectionschema.dto.SchemaRequest;
+import com.streamdesk.connectionschema.validation.BuildResult;
+import com.streamdesk.connectionschema.validation.ConnectorTypes;
+import com.streamdesk.connectionschema.validation.ValidationResult;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,10 +35,14 @@ import java.util.Map;
 public class ConnectionSchemaController {
 
     private final ConnectionSchemaService schemaService;
+    private final AiSchemaService aiSchemaService;
     private final CompanyService companyService;
 
-    public ConnectionSchemaController(ConnectionSchemaService schemaService, CompanyService companyService) {
+    public ConnectionSchemaController(ConnectionSchemaService schemaService,
+                                      AiSchemaService aiSchemaService,
+                                      CompanyService companyService) {
         this.schemaService = schemaService;
+        this.aiSchemaService = aiSchemaService;
         this.companyService = companyService;
     }
 
@@ -89,6 +100,67 @@ public class ConnectionSchemaController {
     public Map<String, Boolean> deleteComponent(@PathVariable String id) {
         schemaService.deleteComponent(id);
         return Map.of("success", true);
+    }
+
+    // --- connections: серверная валидация связей (Sprint 2) ---
+
+    /**
+     * Создаёт связь между OUT- и IN-портом с серверной валидацией.
+     * При нарушении правил — 422 с {@link ValidationResult} (ok=false, violations).
+     * При корректной связи — 200 с сохранённой связью.
+     */
+    @PostMapping("/{schemaId}/connections")
+    public ResponseEntity<Object> createConnection(@PathVariable String schemaId,
+                                                   @RequestBody ConnectionRequest req,
+                                                   @AuthenticationPrincipal AuthenticatedUser user) {
+        requireWorkspace(user, "Нет доступа к схемам");
+        ValidationResult result = schemaService.validateConnection(schemaId, req);
+        if (!result.ok()) {
+            return ResponseEntity.unprocessableEntity().body(result);
+        }
+        return ResponseEntity.ok(schemaService.persistConnection(schemaId, req));
+    }
+
+    @DeleteMapping("/connections/{id}")
+    public Map<String, Boolean> deleteConnection(@PathVariable String id,
+                                                 @AuthenticationPrincipal AuthenticatedUser user) {
+        requireWorkspace(user, "Нет доступа к схемам");
+        schemaService.deleteConnection(id);
+        return Map.of("success", true);
+    }
+
+    /** Проверка всех связей схемы по правилам валидации. */
+    @PostMapping("/{id}/validate")
+    public ValidationResult validateSchema(@PathVariable String id,
+                                           @AuthenticationPrincipal AuthenticatedUser user) {
+        requireWorkspace(user, "Нет доступа к схемам");
+        return schemaService.validateSchema(id);
+    }
+
+    /** «Собрать» схему — проверка целостности всех связей. */
+    @PostMapping("/{id}/build")
+    public BuildResult buildSchema(@PathVariable String id,
+                                   @AuthenticationPrincipal AuthenticatedUser user) {
+        requireWorkspace(user, "Нет доступа к схемам");
+        return schemaService.buildSchema(id);
+    }
+
+    /** Справочник типов разъёмов (категория + цвет) для легенды и подсветки. */
+    @GetMapping("/connector-types")
+    public List<ConnectorTypes.ConnectorType> connectorTypes() {
+        return schemaService.connectorTypes();
+    }
+
+    /**
+     * AI-генерация схемы (DeepSeek): по ТЗ и/или списку оборудования возвращает
+     * ноды + связи, прошедшие серверную валидацию, для отрисовки на холсте.
+     * При сбое AI — явная ошибка (502/503) с ретраями внутри, без фолбэка на шаблон.
+     */
+    @PostMapping("/ai-schema")
+    public AiSchemaResponse aiSchema(@RequestBody AiSchemaRequest req,
+                                     @AuthenticationPrincipal AuthenticatedUser user) {
+        requireWorkspace(user, "Нет доступа к схемам");
+        return aiSchemaService.generate(req);
     }
 
     private void requireWorkspace(AuthenticatedUser user, String message) {

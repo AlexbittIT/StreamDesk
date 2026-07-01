@@ -43,6 +43,13 @@ public class Role {
     @Column(name = "color")
     private String color = "#6B7280";
 
+    /**
+     * Уровень видимости данных роли: own | department | all (см. {@link com.streamdesk.access.DataScope}).
+     * По умолчанию "all" — старые роли продолжают видеть всё по своей компании, как до фичи.
+     */
+    @Column(name = "data_scope", nullable = false)
+    private String dataScope = "all";
+
     @Column(name = "is_system")
     private Boolean isSystem = false;
 

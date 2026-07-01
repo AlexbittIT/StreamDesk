@@ -1,0 +1,3 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <g fill="none" stroke="#2DD4C4" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" color="#2DD4C4"><path d="M44 21 H24 a4 4 0 0 0 0 8 H44"/><circle cx="46" cy="25" r="3" fill="currentColor" stroke="none"/><path d="M30 23 V27 M36 23 V27"/></g>
+  <text x="32" y="59" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif" font-size="11.5" font-weight="700" fill="#2DD4C4">JACK</text></svg>
