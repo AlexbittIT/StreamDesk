@@ -423,20 +423,6 @@ export const connectionSchemaComponents = pgTable("connection_schema_components"
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// Estimates (Сохранённые сметы) — история смет хранится в БД и видна всем в компании
-export const estimates = pgTable("estimates", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  title: text("title").notNull(),
-  companyId: varchar("company_id").references(() => companies.id),
-  createdBy: varchar("created_by").references(() => users.id),
-  createdByName: text("created_by_name"),
-  visibility: text("visibility").notNull().default("company"), // own | department | company
-  deliveryDistanceKm: text("delivery_distance_km").default("0"),
-  data: jsonb("data").notNull().default('{}'), // полный результат сметы (EstimateResult)
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
 // Эфир ОТИС — настройки потока для вкладки «Эфир ОТИС»
 export const otisStreamSettings = pgTable("otis_stream_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -680,12 +666,6 @@ export const insertConnectionSchemaComponentSchema = createInsertSchema(connecti
   updatedAt: true,
 });
 
-export const insertEstimateSchema = createInsertSchema(estimates).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
 export const insertOtisStreamSettingsSchema = createInsertSchema(otisStreamSettings).omit({
   id: true,
   updatedAt: true,
@@ -798,9 +778,6 @@ export type InsertConnectionSchemaComponent = z.infer<typeof insertConnectionSch
 
 export type OtisStreamSettings = typeof otisStreamSettings.$inferSelect;
 export type InsertOtisStreamSettings = z.infer<typeof insertOtisStreamSettingsSchema>;
-
-export type Estimate = typeof estimates.$inferSelect;
-export type InsertEstimate = z.infer<typeof insertEstimateSchema>;
 
 export type ShowParticipantProfile = typeof showParticipantProfiles.$inferSelect;
 export type InsertShowParticipantProfile = z.infer<typeof insertShowParticipantProfileSchema>;
