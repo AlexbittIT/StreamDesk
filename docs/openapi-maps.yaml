@@ -1,0 +1,611 @@
+openapi: 3.0.3
+
+info:
+  title: StreamDesk — Схема площадки (Maps) API
+  version: 0.1.0-sprint3
+  description: >
+    Замороженный контракт модуля «Схема площадки» для Sprint 3.
+
+    Компания загружает изображение плана, человек вручную обводит зоны полигонами,
+    зонам назначаются ответственные и статусы готовности; изменения приходят в realtime,
+    при статусе «Проблема» админ компании получает алерт. Данные изолированы по компаниям.
+
+    Все эндпоинты помечены `x-status: planned` — на момент фиксации контракта модуль ещё
+    не реализован в backend-java. Реализация должна следовать этим путям и формам данных.
+
+    Читаемое описание, state-machine статусов и WebSocket-события: docs/maps-api.md
+    Realtime-канал (WS /ws/maps/{mapId}) в OpenAPI не описывается — см. docs/maps-api.md §5.
+
+servers:
+  - url: http://localhost:5000
+    description: Локальный запуск (Docker compose)
+  - url: https://staging.streamdesk.local
+    description: Staging
+
+tags:
+  - name: Maps
+    description: Карты (планы площадок) — загрузка подложки и CRUD
+  - name: Zones
+    description: Зоны карты — полигоны, статусы, ответственные
+  - name: Comments
+    description: Комментарии к зоне
+  - name: Photos
+    description: Фото к зоне
+
+security:
+  - cookieAuth: []
+
+paths:
+  /api/maps:
+    get:
+      tags: [Maps]
+      summary: Список карт компании
+      x-status: planned
+      parameters:
+        - name: venueId
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Карты компании пользователя
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Map" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Maps]
+      summary: Создать карту (метаданные)
+      x-status: planned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MapCreateRequest" }
+      responses:
+        "201":
+          description: Карта создана
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Map" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/maps/{mapId}:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+    get:
+      tags: [Maps]
+      summary: Карта с планом и зонами
+      x-status: planned
+      responses:
+        "200":
+          description: Карта
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MapWithZones" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Maps]
+      summary: Обновить метаданные карты
+      x-status: planned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MapCreateRequest" }
+      responses:
+        "200":
+          description: Обновлено
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Map" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Maps]
+      summary: Удалить карту и её зоны
+      x-status: planned
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/maps/{mapId}/plan:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+    post:
+      tags: [Maps]
+      summary: Загрузить подложку-план (изображение)
+      description: PNG/JPG ≤ 20 МБ. Возвращает imageUrl и размеры для координат зон.
+      x-status: planned
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        "200":
+          description: План загружен
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Map" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMedia" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/maps/{mapId}/zones:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+    get:
+      tags: [Zones]
+      summary: Список зон карты
+      x-status: planned
+      responses:
+        "200":
+          description: Зоны
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Zone" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Zones]
+      summary: Создать зону (полигон)
+      x-status: planned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneCreateRequest" }
+      responses:
+        "201":
+          description: Зона создана
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/maps/{mapId}/zones/{zoneId}:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - $ref: "#/components/parameters/ZoneId"
+    get:
+      tags: [Zones]
+      summary: Одна зона
+      x-status: planned
+      responses:
+        "200":
+          description: Зона
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Zones]
+      summary: Изменить имя/геометрию зоны
+      x-status: planned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneUpdateRequest" }
+      responses:
+        "200":
+          description: Обновлено
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Zones]
+      summary: Удалить зону
+      x-status: planned
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/maps/{mapId}/zones/{zoneId}/status:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - $ref: "#/components/parameters/ZoneId"
+    patch:
+      tags: [Zones]
+      summary: Сменить статус зоны (с историей)
+      description: Проверяется допустимость перехода (см. docs/maps-api.md §3). Пишет историю.
+      x-status: planned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneStatusRequest" }
+      responses:
+        "200":
+          description: Статус изменён
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "409":
+          description: Недопустимый переход или конфликт версии
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/maps/{mapId}/zones/{zoneId}/status-history:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - $ref: "#/components/parameters/ZoneId"
+    get:
+      tags: [Zones]
+      summary: История смен статуса зоны
+      x-status: planned
+      responses:
+        "200":
+          description: История
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/StatusHistoryEntry" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/maps/{mapId}/zones/{zoneId}/assignee:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - $ref: "#/components/parameters/ZoneId"
+    put:
+      tags: [Zones]
+      summary: Назначить/снять ответственного за зону
+      x-status: planned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneAssigneeRequest" }
+      responses:
+        "200":
+          description: Ответственный обновлён
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/maps/{mapId}/zones/{zoneId}/comments:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - $ref: "#/components/parameters/ZoneId"
+    get:
+      tags: [Comments]
+      summary: Комментарии зоны
+      x-status: planned
+      responses:
+        "200":
+          description: Список комментариев
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ZoneComment" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Comments]
+      summary: Добавить комментарий
+      x-status: planned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string, minLength: 1 }
+              required: [text]
+      responses:
+        "201":
+          description: Комментарий добавлен
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ZoneComment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/maps/{mapId}/zones/{zoneId}/comments/{commentId}:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - $ref: "#/components/parameters/ZoneId"
+      - name: commentId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [Comments]
+      summary: Удалить комментарий (автор или админ компании)
+      x-status: planned
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/maps/{mapId}/zones/{zoneId}/photos:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - $ref: "#/components/parameters/ZoneId"
+    get:
+      tags: [Photos]
+      summary: Фото зоны
+      x-status: planned
+      responses:
+        "200":
+          description: Список фото
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ZonePhoto" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Photos]
+      summary: Прикрепить фото к зоне
+      description: PNG/JPG ≤ 10 МБ.
+      x-status: planned
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        "201":
+          description: Фото прикреплено
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ZonePhoto" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMedia" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/maps/{mapId}/zones/{zoneId}/photos/{photoId}:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - $ref: "#/components/parameters/ZoneId"
+      - name: photoId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [Photos]
+      summary: Удалить фото зоны
+      x-status: planned
+      responses:
+        "200": { $ref: "#/components/responses/Success" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: connect.sid
+
+  parameters:
+    MapId:
+      name: mapId
+      in: path
+      required: true
+      schema: { type: string }
+    ZoneId:
+      name: zoneId
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    Success:
+      description: Успех
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: { type: boolean, example: true }
+    BadRequest:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Нет активной сессии
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Нет доступа к рабочему пространству / прав
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Не найдено или принадлежит другой компании
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Конфликт версий (оптимистичная блокировка)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PayloadTooLarge:
+      description: Файл превышает лимит
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMedia:
+      description: Неподдерживаемый тип файла
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        message: { type: string }
+      required: [message]
+
+    ZoneStatus:
+      type: string
+      description: Статус готовности зоны (6 состояний).
+      enum: [not_started, in_progress, done, needs_review, problem, verified]
+
+    ZonePoint:
+      type: object
+      properties:
+        x: { type: number }
+        y: { type: number }
+      required: [x, y]
+
+    Map:
+      type: object
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        venueId: { type: string, nullable: true }
+        name: { type: string }
+        imageUrl: { type: string, nullable: true }
+        imageWidth: { type: integer, nullable: true }
+        imageHeight: { type: integer, nullable: true }
+        zonesCount: { type: integer }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, companyId, name]
+
+    MapWithZones:
+      allOf:
+        - $ref: "#/components/schemas/Map"
+        - type: object
+          properties:
+            zones:
+              type: array
+              items: { $ref: "#/components/schemas/Zone" }
+
+    MapCreateRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        venueId: { type: string, nullable: true }
+      required: [name]
+
+    Zone:
+      type: object
+      properties:
+        id: { type: string }
+        mapId: { type: string }
+        companyId: { type: string }
+        name: { type: string }
+        points:
+          type: array
+          minItems: 3
+          items: { $ref: "#/components/schemas/ZonePoint" }
+        status: { $ref: "#/components/schemas/ZoneStatus" }
+        assigneeId: { type: string, nullable: true }
+        assigneeType:
+          type: string
+          nullable: true
+          enum: [user, team]
+        color: { type: string, nullable: true }
+        version: { type: integer }
+        commentsCount: { type: integer }
+        photosCount: { type: integer }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, mapId, companyId, name, points, status, version]
+
+    ZoneCreateRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        points:
+          type: array
+          minItems: 3
+          items: { $ref: "#/components/schemas/ZonePoint" }
+        status: { $ref: "#/components/schemas/ZoneStatus" }
+      required: [name, points]
+
+    ZoneUpdateRequest:
+      type: object
+      description: Частичное обновление имени/геометрии; version — для оптимистичной блокировки.
+      properties:
+        name: { type: string }
+        points:
+          type: array
+          minItems: 3
+          items: { $ref: "#/components/schemas/ZonePoint" }
+        version: { type: integer }
+      required: [version]
+
+    ZoneStatusRequest:
+      type: object
+      properties:
+        status: { $ref: "#/components/schemas/ZoneStatus" }
+        version: { type: integer }
+      required: [status, version]
+
+    ZoneAssigneeRequest:
+      type: object
+      properties:
+        assigneeId:
+          type: string
+          nullable: true
+          description: null — снять ответственного
+        assigneeType:
+          type: string
+          nullable: true
+          enum: [user, team]
+      required: [assigneeId]
+
+    StatusHistoryEntry:
+      type: object
+      properties:
+        id: { type: string }
+        zoneId: { type: string }
+        fromStatus: { $ref: "#/components/schemas/ZoneStatus" }
+        toStatus: { $ref: "#/components/schemas/ZoneStatus" }
+        changedBy: { type: string }
+        changedAt: { type: string, format: date-time }
+
+    ZoneComment:
+      type: object
+      properties:
+        id: { type: string }
+        zoneId: { type: string }
+        authorId: { type: string }
+        text: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    ZonePhoto:
+      type: object
+      properties:
+        id: { type: string }
+        zoneId: { type: string }
+        url: { type: string }
+        width: { type: integer, nullable: true }
+        height: { type: integer, nullable: true }
+        uploadedBy: { type: string }
+        createdAt: { type: string, format: date-time }
