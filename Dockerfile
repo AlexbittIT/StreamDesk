@@ -21,7 +21,6 @@ FROM maven:3.9-eclipse-temurin-21 AS backend
 WORKDIR /src
 # Сначала pom — кешируем зависимости отдельным слоем (best-effort)
 COPY backend-java/pom.xml ./pom.xml
-RUN mvn -q -B dependency:go-offline || true
 COPY backend-java/src ./src
 RUN mvn -q -B -DskipTests package
 # Результат: /src/target/streamdesk-backend-*.jar

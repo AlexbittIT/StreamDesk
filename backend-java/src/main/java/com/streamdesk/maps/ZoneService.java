@@ -63,7 +63,7 @@ public class ZoneService {
 
     @Transactional
     public Zone create(String mapId, ZoneCreateRequest req, AuthenticatedUser user) {
-        SiteMap map = access.requireMap(mapId, user);
+        SiteMap map = access.requireEditableMap(mapId, user);
         if (req == null || isBlank(req.name())) {
             throw ApiException.badRequest("Укажите название зоны");
         }
@@ -88,12 +88,13 @@ public class ZoneService {
     @Transactional
     public Zone update(String mapId, String zoneId, ZoneUpdateRequest req, AuthenticatedUser user) {
         Zone zone = access.requireZone(mapId, zoneId, user);
+        access.requireCanManageMaps(user, zone.getCompanyId());
         requireVersionMatch(zone, req != null ? req.version() : null);
 
-        if (req.name() != null && !req.name().isBlank()) {
+        if (req != null && req.name() != null && !req.name().isBlank()) {
             zone.setName(req.name().trim());
         }
-        if (req.points() != null) {
+        if (req != null && req.points() != null) {
             validatePoints(req.points());
             zone.setPoints(req.points());
         }
@@ -108,6 +109,7 @@ public class ZoneService {
     @Transactional
     public void delete(String mapId, String zoneId, AuthenticatedUser user) {
         Zone zone = access.requireZone(mapId, zoneId, user);
+        access.requireCanManageMaps(user, zone.getCompanyId());
         historyRepository.deleteByZoneId(zone.getId());
         zoneRepository.delete(zone);
         events.publishEvent(new ZoneDeletedEvent(zone.getMapId(), zone.getCompanyId(), zone.getId()));
@@ -163,6 +165,7 @@ public class ZoneService {
     @Transactional
     public Zone assign(String mapId, String zoneId, ZoneAssigneeRequest req, AuthenticatedUser user) {
         Zone zone = access.requireZone(mapId, zoneId, user);
+        access.requireCanManageMaps(user, zone.getCompanyId());
         String assigneeId = req != null ? req.assigneeId() : null;
 
         if (assigneeId == null || assigneeId.isBlank()) {

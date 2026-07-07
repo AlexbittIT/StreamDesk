@@ -70,7 +70,7 @@ export default function Header({ onMobileMenuClick, user, onLogout }: HeaderProp
     return () => clearInterval(timer);
   }, []);
 
-  const pageTitle = pageTitles[location] ?? "StreamDesk";
+  const pageTitle = location.startsWith("/maps/") ? "Просмотр карты" : pageTitles[location] ?? "StreamDesk";
 
   return (
     <header className="bg-card/80 backdrop-blur-sm border-b border-border px-2 sm:px-3 py-1 sm:py-1.5 sticky top-0 z-30 flex items-center justify-between gap-1 sm:gap-2 min-w-0 w-full max-w-full overflow-hidden safe-area-top">
@@ -196,4 +196,3 @@ export default function Header({ onMobileMenuClick, user, onLogout }: HeaderProp
     </header>
   );
 }
-
