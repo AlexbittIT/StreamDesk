@@ -36,7 +36,7 @@ class MapPlanUploadE2ETest extends AbstractE2ETest {
 
     @Test
     void uploadPng_savesUrlAndDimensions() throws Exception {
-        AuthenticatedUser owner = user("plan-owner", "user", List.of());
+        AuthenticatedUser owner = user("plan-owner", "manager", List.of());
         companyMemberRepository.save(member("plan-owner", "company-plan"));
         String mapId = createMap(owner);
 
@@ -61,7 +61,7 @@ class MapPlanUploadE2ETest extends AbstractE2ETest {
 
     @Test
     void uploadNonImage_returns415() throws Exception {
-        AuthenticatedUser owner = user("plan-owner-2", "user", List.of());
+        AuthenticatedUser owner = user("plan-owner-2", "manager", List.of());
         companyMemberRepository.save(member("plan-owner-2", "company-plan-2"));
         String mapId = createMap(owner);
 
@@ -74,7 +74,7 @@ class MapPlanUploadE2ETest extends AbstractE2ETest {
 
     @Test
     void uploadToOtherCompanyMap_returns404() throws Exception {
-        AuthenticatedUser owner = user("plan-a", "user", List.of());
+        AuthenticatedUser owner = user("plan-a", "manager", List.of());
         AuthenticatedUser outsider = user("plan-b", "user", List.of());
         companyMemberRepository.save(member("plan-a", "company-a"));
         companyMemberRepository.save(member("plan-b", "company-b"));
