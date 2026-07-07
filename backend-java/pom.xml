@@ -34,6 +34,12 @@
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
+        <!-- Realtime зон: STOMP-over-WebSocket + SockJS (комнаты карт, docs/maps-api.md §5) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+
         <!-- Авторизация / сессии (замена express-session) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

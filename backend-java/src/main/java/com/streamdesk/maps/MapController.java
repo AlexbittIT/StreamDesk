@@ -15,13 +15,14 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
 
 /**
  * REST-контроллер карт — {@code /api/maps} по контракту docs/openapi-maps.yaml.
- * Загрузка подложки ({@code POST /plan}) — отдельная задача VM-04.
+ * Загрузка подложки ({@code POST /plan}) — VM-04.
  */
 @RestController
 @RequestMapping("/api/maps")
@@ -61,5 +62,17 @@ public class MapController {
                                        @AuthenticationPrincipal AuthenticatedUser user) {
         mapService.delete(mapId, user);
         return Map.of("success", true);
+    }
+
+    /**
+     * Загрузить подложку (план площадки): PNG/JPG ≤ 20 МБ. Возвращает карту с
+     * {@code imageUrl/imageWidth/imageHeight}. Ошибки: 415 неверный тип, 413 размер,
+     * 400 пустой/битый файл, 404 чужая/несуществующая карта, 500 сбой хранилища.
+     */
+    @PostMapping("/{mapId}/plan")
+    public MapResponse uploadPlan(@PathVariable String mapId,
+                                  @RequestParam("file") MultipartFile file,
+                                  @AuthenticationPrincipal AuthenticatedUser user) {
+        return mapService.savePlan(mapId, file, user);
     }
 }

@@ -16,6 +16,14 @@ server:
         secure: ${SESSION_COOKIE_SECURE:false}
 
 spring:
+  servlet:
+    multipart:
+      # Держим лимит парсера чуть выше прикладного (20 МБ, docs/maps-api.md §4), чтобы
+      # превышение размера ловил наш валидатор (MapPlanStorage → 413 с понятным сообщением),
+      # а не сырой отказ Tomcat. Слишком большие файлы всё равно отсекает GlobalExceptionHandler.
+      max-file-size: 25MB
+      max-request-size: 25MB
+
   datasource:
     # Та же база, что и у TS-бэкенда. JDBC-формат отличается от postgresql://...,
     # поэтому задаём JDBC_DATABASE_URL отдельно, например:

@@ -6,6 +6,7 @@ import com.streamdesk.maps.dto.MapCreateRequest;
 import com.streamdesk.maps.dto.MapResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Instant;
 import java.util.List;
@@ -21,15 +22,18 @@ public class MapService {
     private final ZoneRepository zoneRepository;
     private final ZoneStatusHistoryRepository historyRepository;
     private final MapsAccess access;
+    private final MapPlanStorage planStorage;
 
     public MapService(MapRepository mapRepository,
                       ZoneRepository zoneRepository,
                       ZoneStatusHistoryRepository historyRepository,
-                      MapsAccess access) {
+                      MapsAccess access,
+                      MapPlanStorage planStorage) {
         this.mapRepository = mapRepository;
         this.zoneRepository = zoneRepository;
         this.historyRepository = historyRepository;
         this.access = access;
+        this.planStorage = planStorage;
     }
 
     /** Список карт компании пользователя (опц. по venueId). */
@@ -73,6 +77,22 @@ public class MapService {
         if (req != null && req.venueId() != null) {
             map.setVenueId(req.venueId().isBlank() ? null : req.venueId());
         }
+        map.setUpdatedAt(Instant.now());
+        return MapResponse.of(mapRepository.save(map), zoneRepository.countByMapId(mapId));
+    }
+
+    /**
+     * Загрузка подложки (плана площадки): валидирует и надёжно сохраняет файл, затем пишет
+     * {@code imageUrl/imageWidth/imageHeight} в карту (docs/maps-api.md §4, VM-04). Изоляция —
+     * через {@link MapsAccess#requireMap} (чужая/несуществующая карта → 404).
+     */
+    @Transactional
+    public MapResponse savePlan(String mapId, MultipartFile file, AuthenticatedUser user) {
+        SiteMap map = access.requireMap(mapId, user);
+        MapPlanStorage.StoredPlan plan = planStorage.store(mapId, file);
+        map.setImageUrl(plan.url());
+        map.setImageWidth(plan.width());
+        map.setImageHeight(plan.height());
         map.setUpdatedAt(Instant.now());
         return MapResponse.of(mapRepository.save(map), zoneRepository.countByMapId(mapId));
     }
