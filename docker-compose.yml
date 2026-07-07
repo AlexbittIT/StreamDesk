@@ -3,9 +3,10 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     ports:
-      # Проброс на хост для доступа GUI-клиентами (DBeaver/IntelliJ/pgAdmin).
-      # Если 5432 на хосте занят — поменяй левую часть на 5433.
-      - "5432:5432"
+      # Проброс ТОЛЬКО на localhost хоста — для GUI-клиентов (DBeaver/IntelliJ/pgAdmin)
+      # через SSH-туннель. Наружу порт БД не публикуется. Если 5432 занят — поменяй
+      # левую часть на 127.0.0.1:5433.
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-streamdesk}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -34,11 +35,17 @@ services:
       JDBC_DATABASE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-streamdesk}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      # Java-only: Hibernate сам создаёт/обновляет схему из сущностей (Drizzle/Node не нужны)
-      SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      # Staging: fallback-админ admin/admin123 включён по умолчанию, чтобы можно было войти
-      # на свежей БД (на проде переопредели ALLOW_FALLBACK_ADMIN=false).
-      ALLOW_FALLBACK_ADMIN: "${ALLOW_FALLBACK_ADMIN:-true}"
+      # Схема БД: по умолчанию validate (Hibernate НЕ трогает существующую схему).
+      # На свежей пустой БД задай один раз SPRING_JPA_HIBERNATE_DDL_AUTO=update в .env,
+      # чтобы Hibernate создал таблицы, затем убери переменную (вернётся validate).
+      SPRING_JPA_HIBERNATE_DDL_AUTO: "${SPRING_JPA_HIBERNATE_DDL_AUTO:-validate}"
+      # Безопасный дефолт: fallback-админ admin/admin123 ВЫКЛЮЧЕН. Для входа на свежую БД
+      # временно задай ALLOW_FALLBACK_ADMIN=true в .env (staging), на проде не включай.
+      ALLOW_FALLBACK_ADMIN: "${ALLOW_FALLBACK_ADMIN:-false}"
+      # Secure-флаг session-куки: true только за HTTPS (иначе браузер её не сохранит по HTTP).
+      SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+      # Домены, которым разрешены запросы с куками (через запятую). На проде — свой домен.
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5000,http://localhost:3000}"
       SERVER_PORT: "5050"
       # AI для схем подключения и подбора портов (DeepSeek / HuggingFace).
       # Без ключей стек поднимется, но AI-эндпоинты вернут 503 — задай в .env при необходимости.
@@ -61,7 +68,10 @@ services:
       MEDIAMTX_RTSP_PORT: "${MEDIAMTX_RTSP_PORT:-8554}"
       MEDIAMTX_HLS_SCHEME: "${MEDIAMTX_HLS_SCHEME:-http}"
     ports:
-      - "5050:5050"
+      # Наружу приложение НЕ публикуем — HTTPS-трафик идёт через caddy (443).
+      # На хосте порт открыт только на localhost (для отладки/health с самого сервера).
+      # Caddy достаёт приложение по внутренней docker-сети как app:5050.
+      - "127.0.0.1:5050:5050"
     # Готовность приложения видна в `docker compose ps` (HEALTHCHECK из Dockerfile
     # опрашивает /api/health). Здесь переопределяем тайминги под staging.
     healthcheck:
@@ -74,6 +84,29 @@ services:
       # Загруженные файлы (фото/аватары/чат/транскрипции) — переживают пересоздание контейнера
       - uploads:/app/uploads
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      # 80 нужен для ACME-проверки Let's Encrypt и редиректа на HTTPS; 443 — сам сайт.
+      - "80:80"
+      - "443:443"
+    environment:
+      # Домен сайта. Реальный (app.example.ru) -> авто-сертификат Let's Encrypt.
+      # localhost (по умолчанию) -> self-signed внутренний CA (для локали).
+      SITE_DOMAIN: "${SITE_DOMAIN:-localhost}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Сертификаты и ACME-аккаунт — переживают пересоздание контейнера
+      # (иначе Let's Encrypt упрётся в rate-limit при частых рестартах).
+      - caddy_data:/data
+      - caddy_config:/config
+
 volumes:
   pgdata:
   uploads:
+  caddy_data:
+  caddy_config:
