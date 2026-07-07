@@ -31,7 +31,7 @@ class MapsIsolationE2ETest extends AbstractE2ETest {
 
     @Test
     void companyB_cannotAccessCompanyA_zones() throws Exception {
-        AuthenticatedUser userA = user("user-a", "user", List.of());
+        AuthenticatedUser userA = user("user-a", "manager", List.of());
         AuthenticatedUser userB = user("user-b", "user", List.of());
         companyMemberRepository.save(member("user-a", "company-a"));
         companyMemberRepository.save(member("user-b", "company-b"));
