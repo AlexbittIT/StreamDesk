@@ -22,6 +22,7 @@ import java.util.Map;
 
 /**
  * REST-контроллер карт — {@code /api/maps} по контракту docs/openapi-maps.yaml.
+ * Загрузка подложки ({@code POST /plan}) — VM-04.
  */
 @RestController
 @RequestMapping("/api/maps")
@@ -63,10 +64,15 @@ public class MapController {
         return Map.of("success", true);
     }
 
+    /**
+     * Загрузить подложку (план площадки): PNG/JPG ≤ 20 МБ. Возвращает карту с
+     * {@code imageUrl/imageWidth/imageHeight}. Ошибки: 415 неверный тип, 413 размер,
+     * 400 пустой/битый файл, 404 чужая/несуществующая карта, 500 сбой хранилища.
+     */
     @PostMapping("/{mapId}/plan")
     public MapResponse uploadPlan(@PathVariable String mapId,
                                   @RequestParam("file") MultipartFile file,
                                   @AuthenticationPrincipal AuthenticatedUser user) {
-        return mapService.uploadPlan(mapId, file, user);
+        return mapService.savePlan(mapId, file, user);
     }
 }

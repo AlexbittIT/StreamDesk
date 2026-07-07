@@ -56,7 +56,7 @@ class MapsAccessAndPlanE2ETest extends AbstractE2ETest {
                 "file", "plan.png", "image/png", pngBytes(7, 5));
         mockMvc.perform(multipart("/api/maps/{m}/plan", mapId).file(plan).with(as(manager)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.imageUrl", containsString("/uploads/maps/map-" + mapId)))
+                .andExpect(jsonPath("$.imageUrl", containsString("/uploads/maps/plan-" + mapId)))
                 .andExpect(jsonPath("$.imageWidth", is(7)))
                 .andExpect(jsonPath("$.imageHeight", is(5)));
 

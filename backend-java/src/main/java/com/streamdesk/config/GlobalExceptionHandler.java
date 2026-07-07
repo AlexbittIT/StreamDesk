@@ -6,6 +6,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.Map;
@@ -22,6 +23,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<Map<String, String>> handleApi(ApiException ex) {
         return ResponseEntity.status(ex.getStatus()).body(Map.of("message", ex.getMessage()));
+    }
+
+    /**
+     * Файл превысил лимит multipart (Tomcat/Spring режет запрос до контроллера) — отдаём наш
+     * 413 с понятным сообщением вместо сырой ошибки контейнера. Прикладной лимит проверяется
+     * раньше в MapPlanStorage; этот обработчик — страховка на границе парсера multipart.
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, String>> handleMaxUpload(MaxUploadSizeExceededException ex) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Map.of("message", "Файл слишком большой (максимум 20 МБ)"));
     }
 
     /** Ненайденный статический ресурс/маршрут — 404, а не 500. */
