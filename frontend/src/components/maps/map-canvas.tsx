@@ -22,6 +22,13 @@ type DrawMode =
   | { type: "redraw"; zone: MapZone }
   | null;
 
+/** Порядок наложения зон: выделенная — выше «Проблемы», «Проблема» — выше обычных. */
+function zoneStackRank(zone: MapZone, selectedZoneId?: string | null): number {
+  if (zone.id === selectedZoneId) return 2;
+  if (zone.status === "problem") return 1;
+  return 0;
+}
+
 interface MapCanvasProps {
   map: MapWithZones;
   selectedZoneId?: string | null;
@@ -184,18 +191,27 @@ export function MapCanvas({
             </>
           )}
 
-          {zones.map((zone) => {
+          {[...zones]
+            // Порядок отрисовки: обычные снизу, «Проблема» выше, выделенная — поверх всех.
+            .sort((a, b) => zoneStackRank(a, selectedZoneId) - zoneStackRank(b, selectedZoneId))
+            .map((zone) => {
             const color = getZoneColor(zone);
             const selected = selectedZoneId === zone.id;
+            const isProblem = zone.status === "problem";
             const points = zone.points.flatMap((point) => [point.x, point.y]);
             return (
               <Line
                 key={zone.id}
                 points={points}
                 closed
-                fill={`${color}55`}
-                stroke={selected ? "#111827" : color}
-                strokeWidth={selected ? 4 : 2}
+                fill={selected ? `${color}99` : isProblem ? `${color}66` : `${color}55`}
+                stroke={selected ? "#0f172a" : isProblem ? "#dc2626" : color}
+                strokeWidth={selected ? 5 : isProblem ? 4 : 2}
+                strokeScaleEnabled={false}
+                dash={isProblem && !selected ? [10, 6] : undefined}
+                shadowColor={selected ? color : isProblem ? "#ef4444" : undefined}
+                shadowBlur={selected ? 18 : isProblem ? 14 : 0}
+                shadowOpacity={selected ? 0.9 : isProblem ? 0.85 : 0}
                 listening={!drawMode}
                 onClick={(event) => {
                   event.cancelBubble = true;
@@ -209,18 +225,37 @@ export function MapCanvas({
             );
           })}
 
+          {selectedZone && selectedZone.points.map((point, index) => (
+            <Circle
+              key={`${selectedZone.id}-vertex-${index}`}
+              x={point.x}
+              y={point.y}
+              radius={5 / viewport.scale}
+              fill="#ffffff"
+              stroke="#0f172a"
+              strokeWidth={2 / viewport.scale}
+              listening={false}
+            />
+          ))}
+
           {zones.map((zone) => {
             const labelPoint = zone.points[0];
             if (!labelPoint) return null;
+            const selected = selectedZoneId === zone.id;
+            const isProblem = zone.status === "problem";
             return (
               <Text
                 key={`${zone.id}-label`}
                 x={labelPoint.x + 8}
                 y={labelPoint.y + 8}
-                text={zone.name}
-                fontSize={16}
+                text={isProblem ? `⚠ ${zone.name}` : zone.name}
+                fontSize={selected ? 18 : 16}
                 fontStyle="bold"
-                fill="#0f172a"
+                fill={isProblem ? "#b91c1c" : "#0f172a"}
+                stroke={selected || isProblem ? "#f8fafc" : undefined}
+                strokeWidth={selected || isProblem ? 3 : 0}
+                fillAfterStrokeEnabled={selected || isProblem}
+                strokeScaleEnabled={false}
                 listening={false}
               />
             );

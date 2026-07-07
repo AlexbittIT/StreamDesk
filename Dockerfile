@@ -6,9 +6,13 @@
 ###############################################
 FROM node:20-bookworm-slim AS frontend
 WORKDIR /src
-# Сначала манифесты — слой npm ci кешируется
-COPY package.json package-lock.json* ./
-RUN npm ci
+# Сначала манифесты (+ .npmrc и локальная заглушка) — слой npm ci кешируется
+COPY package.json package-lock.json* .npmrc ./
+# Заглушка @napi-rs/canvas: overrides в package.json подменяет тяжёлый нативный пакет pdfjs
+# (нужен только для рендера в Node) на пустышку. Иначе npm ci качает ~десятки МБ бинарников и «зависает».
+COPY stubs ./stubs
+# --install-links (также в .npmrc): file:-зависимость-заглушка ставится копией, чтобы npm ci не ругался на рассинхрон.
+RUN npm ci --install-links --no-audit --no-fund
 # Исходники фронта (+ shared, конфиги vite/tailwind/tsconfig)
 COPY . .
 RUN npx vite build

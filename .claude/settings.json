@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vite *)",
+      "Bash(node -e \"console.log\\(require\\('./node_modules/pdfjs-dist/package.json'\\).version\\)\")",
+      "Bash(node -e \"const l=require\\('./package-lock.json'\\); const p=l.packages['node_modules/pdfjs-dist']; console.log\\(JSON.stringify\\({deps:p&&p.dependencies, optional:p&&p.optionalDependencies, peer:p&&p.peerDependencies},null,2\\)\\);\")",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"const l=require\\('./package-lock.json'\\); const c=l.packages['node_modules/@napi-rs/canvas']; console.log\\(JSON.stringify\\(c,null,2\\).slice\\(0,400\\)\\);\")",
+      "Bash(node -e \"const l=require\\('./package-lock.json'\\); const p=l.packages['node_modules/pdfjs-dist']; console.log\\('optional:',JSON.stringify\\(p.optionalDependencies\\)\\);\")"
+    ]
+  }
+}
