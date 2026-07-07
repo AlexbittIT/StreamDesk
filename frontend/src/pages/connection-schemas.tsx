@@ -35,10 +35,14 @@ import {
   CheckCircle2,
   AlertTriangle,
   X,
-  Loader2
+  Loader2,
+  Upload
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiUrl, queryClient } from "@/lib/queryClient";
+import { AuthService } from "@/lib/auth";
+import { ZONE_STATUS_META, ZONE_STATUS_ORDER } from "@/lib/zone-status";
+import { uploadSchemaPlan } from "@/lib/schema-plan";
 import { cn } from "@/lib/utils";
 import { SchemaCanvas, type SchemaCanvasRef } from "@/components/connection-schemas/schema-canvas";
 import { AddEquipmentDialog } from "@/components/connection-schemas/add-equipment-dialog";
@@ -85,6 +89,13 @@ interface Zone {
   width: number;
   height: number;
   color?: string;
+  points?: { x: number; y: number }[];
+  // Метаданные обслуживания зоны (редактирует только администратор)
+  status?: string;
+  assigneeId?: string;
+  assigneeName?: string;
+  comment?: string;
+  photos?: string[];
 }
 
 interface Cable {
@@ -127,30 +138,220 @@ function normalizeConnections(
   return [];
 }
 
-function ZoneEditForm({
+interface ZoneUser { id: string; name?: string; username?: string; role?: string }
+
+interface ZoneDetailsData {
+  name: string;
+  status: string;
+  assigneeId: string;
+  assigneeName: string;
+  comment: string;
+  photos: string[];
+}
+
+/**
+ * Панель зоны. Администратор редактирует статус, ответственного, комментарий и фото.
+ * Работник видит те же данные только для чтения (и отметку «назначено вам»).
+ */
+function ZoneDetailsPanel({
   zone,
+  isAdmin,
+  users,
+  currentUserId,
+  saving,
   onSave,
   onClose,
 }: {
   zone: Zone;
-  onSave: (name: string, color: string) => void;
+  isAdmin: boolean;
+  users: ZoneUser[];
+  currentUserId?: string;
+  saving?: boolean;
+  onSave: (data: ZoneDetailsData) => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(zone.name);
-  const [color, setColor] = useState(zone.color || "#3b82f6");
-  return (
-    <>
-      <span className="text-white font-medium text-sm">Редактирование зоны</span>
-      <Input placeholder="Название" value={name} onChange={(e) => setName(e.target.value)} className="bg-slate-700 border-slate-600 text-white h-8" />
-      <div className="flex gap-2 items-center">
-        <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="w-8 h-8 rounded cursor-pointer" />
-        <Input value={color} onChange={(e) => setColor(e.target.value)} className="flex-1 bg-slate-700 border-slate-600 text-white h-8 text-sm" />
+  const [status, setStatus] = useState(zone.status || "not_started");
+  const [assigneeId, setAssigneeId] = useState(zone.assigneeId || "");
+  const [comment, setComment] = useState(zone.comment || "");
+  const [photos, setPhotos] = useState<string[]>(zone.photos || []);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
+
+  const assigneeName =
+    users.find((u) => u.id === assigneeId)?.name ||
+    users.find((u) => u.id === assigneeId)?.username ||
+    zone.assigneeName ||
+    "";
+  const statusMeta = ZONE_STATUS_META[status] || ZONE_STATUS_META.not_started;
+  const mine = !!currentUserId && zone.assigneeId === currentUserId;
+
+  const handleUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    try {
+      const uploaded: string[] = [];
+      for (const file of Array.from(files)) {
+        const formData = new FormData();
+        formData.append("photo", file);
+        const res = await fetch(apiUrl("/api/equipment/photos/upload"), {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        });
+        if (!res.ok) throw new Error("Не удалось загрузить фото");
+        const data = await res.json();
+        if (data?.url) uploaded.push(data.url as string);
+      }
+      setPhotos((prev) => [...prev, ...uploaded]);
+    } catch (e) {
+      toast({ title: "Ошибка", description: (e as Error)?.message || "Не удалось загрузить фото", variant: "destructive" });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // Только для чтения — работник
+  if (!isAdmin) {
+    return (
+      <div className="w-[280px] max-w-[85vw] flex flex-col gap-2 text-white">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-medium text-sm truncate">{zone.name}</span>
+          {mine && <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 whitespace-nowrap">Назначено вам</span>}
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: statusMeta.color }} />
+          <span>{statusMeta.label}</span>
+        </div>
+        <div className="text-xs text-slate-300">
+          Ответственный: <span className="text-white">{assigneeName || "Не назначен"}</span>
+        </div>
+        {comment ? (
+          <div className="text-xs text-slate-300 whitespace-pre-wrap break-words rounded bg-slate-700/60 p-2">{comment}</div>
+        ) : (
+          <div className="text-xs text-slate-500 italic">Комментариев нет</div>
+        )}
+        {photos.length > 0 && (
+          <div className="grid grid-cols-3 gap-1.5">
+            {photos.map((url, i) => (
+              <a key={i} href={apiUrl(url)} target="_blank" rel="noreferrer" className="block">
+                <img src={apiUrl(url)} alt="" className="h-16 w-full object-cover rounded border border-slate-600" />
+              </a>
+            ))}
+          </div>
+        )}
+        <Button size="sm" variant="outline" className="h-8 mt-1" onClick={onClose}>Закрыть</Button>
       </div>
-      <div className="flex gap-2">
-        <Button size="sm" className="flex-1 h-8" onClick={() => onSave(name.trim(), color)}>Сохранить</Button>
+    );
+  }
+
+  // Редактирование — администратор
+  return (
+    <div className="w-[300px] max-w-[85vw] max-h-[70vh] overflow-y-auto flex flex-col gap-2 text-white pr-0.5">
+      <span className="font-medium text-sm">Зона</span>
+      <Input placeholder="Название" value={name} onChange={(e) => setName(e.target.value)} className="bg-slate-700 border-slate-600 text-white h-8" />
+
+      <div>
+        <label className="text-xs text-slate-400">Статус</label>
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          className="w-full h-8 rounded bg-slate-700 border border-slate-600 text-white text-sm px-2"
+        >
+          {ZONE_STATUS_ORDER.map((s) => (
+            <option key={s} value={s}>{ZONE_STATUS_META[s].label}</option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="text-xs text-slate-400">Ответственный</label>
+        <select
+          value={assigneeId}
+          onChange={(e) => setAssigneeId(e.target.value)}
+          className="w-full h-8 rounded bg-slate-700 border border-slate-600 text-white text-sm px-2"
+        >
+          <option value="">Не назначен</option>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>{u.name || u.username || u.id}</option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="text-xs text-slate-400">Комментарий</label>
+        <textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          rows={3}
+          className="w-full rounded bg-slate-700 border border-slate-600 text-white text-sm p-2 resize-none"
+          placeholder="Заметка для работника"
+        />
+      </div>
+
+      <div>
+        <label className="text-xs text-slate-400">Фото</label>
+        {photos.length > 0 && (
+          <div className="grid grid-cols-3 gap-1.5 mb-1.5">
+            {photos.map((url, i) => (
+              <div key={i} className="relative group">
+                <img src={apiUrl(url)} alt="" className="h-16 w-full object-cover rounded border border-slate-600" />
+                <button
+                  type="button"
+                  onClick={() => setPhotos((prev) => prev.filter((_, idx) => idx !== i))}
+                  className="absolute -top-1.5 -right-1.5 bg-red-600 hover:bg-red-700 text-white rounded-full p-0.5"
+                  aria-label="Удалить фото"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => handleUpload(e.target.files)}
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 w-full gap-1.5"
+          disabled={uploading}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          {uploading ? "Загрузка…" : "Добавить фото"}
+        </Button>
+      </div>
+
+      <div className="flex gap-2 pt-1">
+        <Button
+          size="sm"
+          className="flex-1 h-8"
+          disabled={saving || uploading}
+          onClick={() =>
+            onSave({
+              name: name.trim() || zone.name,
+              status,
+              assigneeId,
+              assigneeName: assigneeName,
+              comment: comment.trim(),
+              photos,
+            })
+          }
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Сохранить"}
+        </Button>
         <Button size="sm" variant="outline" className="h-8" onClick={onClose}>Закрыть</Button>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -342,9 +543,10 @@ export default function ConnectionSchemas() {
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [newlyCreatedSchemaId, setNewlyCreatedSchemaId] = useState<string | null>(null);
   const [drawZoneMode, setDrawZoneMode] = useState(false);
-  const [pendingZoneRect, setPendingZoneRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [pendingZoneRect, setPendingZoneRect] = useState<{ x: number; y: number; width: number; height: number; points?: { x: number; y: number }[] } | null>(null);
   const [drawnZoneName, setDrawnZoneName] = useState("");
-  const [drawnZoneColor, setDrawnZoneColor] = useState("#3b82f6");
+  const [showGrid, setShowGrid] = useState(true);
+  const [uploadingPlan, setUploadingPlan] = useState(false);
   const schemaCanvasRef = useRef<SchemaCanvasRef>(null);
 
   const [buildViolations, setBuildViolations] = useState<Violation[] | null>(null);
@@ -360,6 +562,17 @@ export default function ConnectionSchemas() {
   // Получение всех схем
   const { data: schemas = [], refetch: refetchSchemas } = useQuery<ConnectionSchema[]>({
     queryKey: ["/api/connection-schemas"],
+  });
+
+  // Текущий пользователь и роль: редактировать зоны может только администратор
+  const currentUser = AuthService.getCurrentUser();
+  const isAdmin = currentUser?.role === "admin";
+  const currentUserId = currentUser?.id;
+
+  // Пользователи для выбора ответственного (нужны только администратору)
+  const { data: users = [] } = useQuery<ZoneUser[]>({
+    queryKey: ["/api/users"],
+    enabled: isAdmin,
   });
 
   useEffect(() => {
@@ -406,7 +619,7 @@ export default function ConnectionSchemas() {
     if (!selectedSchemaData?.components) return [];
     
     return selectedSchemaData.components
-      .filter(comp => comp.type !== "zone" && comp.type !== "cable")
+      .filter(comp => comp.type !== "zone" && comp.type !== "cable" && comp.type !== "background")
       .map(comp => ({
         id: comp.id,
         name: comp.name,
@@ -419,6 +632,30 @@ export default function ConnectionSchemas() {
         properties: comp.properties,
       }));
   }, [selectedSchemaData]);
+
+  // План-подложка схемы хранится как отдельный компонент type="background" в properties.
+  const background = useMemo(() => {
+    const comp = selectedSchemaData?.components?.find((c) => c.type === "background");
+    if (!comp) return null;
+    return {
+      id: comp.id,
+      url: comp.properties?.url as string | undefined,
+      width: comp.properties?.width as number | undefined,
+      height: comp.properties?.height as number | undefined,
+      x: comp.properties?.x as number | undefined,
+      y: comp.properties?.y as number | undefined,
+      showGrid: comp.properties?.showGrid as boolean | undefined,
+    };
+  }, [selectedSchemaData]);
+
+  // Синхронизируем режим фона с сохранённым: есть план → по умолчанию показываем план, иначе сетку.
+  useEffect(() => {
+    if (background?.url) {
+      setShowGrid(background.showGrid ?? false);
+    } else {
+      setShowGrid(true);
+    }
+  }, [background?.id, background?.url, background?.showGrid]);
 
   // Преобразование компонентов в зоны
   const zones: Zone[] = useMemo(() => {
@@ -433,6 +670,16 @@ export default function ConnectionSchemas() {
         width: comp.properties?.width as number || 300,
         height: comp.properties?.height as number || 200,
         color: comp.properties?.color as string,
+        points: Array.isArray(comp.properties?.points)
+          ? (comp.properties!.points as { x: number; y: number }[])
+          : undefined,
+        status: comp.properties?.status as string | undefined,
+        assigneeId: comp.properties?.assigneeId as string | undefined,
+        assigneeName: comp.properties?.assigneeName as string | undefined,
+        comment: comp.properties?.comment as string | undefined,
+        photos: Array.isArray(comp.properties?.photos)
+          ? (comp.properties!.photos as string[])
+          : undefined,
       }));
   }, [selectedSchemaData]);
 
@@ -941,11 +1188,10 @@ export default function ConnectionSchemas() {
     });
   };
 
-  const handleZoneDrawn = useCallback((rect: { x: number; y: number; width: number; height: number }) => {
+  const handleZoneDrawn = useCallback((zone: { x: number; y: number; width: number; height: number; points: { x: number; y: number }[] }) => {
     setDrawZoneMode(false);
-    setPendingZoneRect(rect);
+    setPendingZoneRect(zone);
     setDrawnZoneName("Зона");
-    setDrawnZoneColor("#3b82f6");
   }, []);
 
   const handleAddConnection = useCallback(
@@ -1008,10 +1254,82 @@ export default function ConnectionSchemas() {
       properties: {
         width: pendingZoneRect.width,
         height: pendingZoneRect.height,
-        color: drawnZoneColor,
+        // Цвет зоны определяется статусом; новая зона стартует со статуса «Не начато».
+        status: "not_started",
+        ...(pendingZoneRect.points ? { points: pendingZoneRect.points } : {}),
       },
     });
     setPendingZoneRect(null);
+  };
+
+  // Загрузка/замена плана-подложки. PDF конвертируется в PNG внутри uploadSchemaPlan.
+  const handleUploadPlan = async (file: File) => {
+    if (!selectedSchema) return;
+    setUploadingPlan(true);
+    try {
+      const plan = await uploadSchemaPlan(file);
+      const properties = { url: plan.url, width: plan.width, height: plan.height, showGrid: false };
+      if (background?.id) {
+        await apiRequest("PUT", `/api/connection-schemas/components/${background.id}`, {
+          position: { x: 0, y: 0 },
+          name: "План",
+          properties,
+        });
+      } else {
+        await apiRequest("POST", `/api/connection-schemas/${selectedSchema}/components`, {
+          type: "background",
+          name: "План",
+          position: { x: 0, y: 0 },
+          properties,
+        });
+      }
+      setShowGrid(false);
+      refetchSelectedSchema();
+      toast({ title: "План загружен" });
+    } catch (e) {
+      toast({ title: "Ошибка", description: (e as Error)?.message || "Не удалось загрузить план", variant: "destructive" });
+    } finally {
+      setUploadingPlan(false);
+    }
+  };
+
+  const handleToggleGrid = () => {
+    const next = !showGrid;
+    setShowGrid(next);
+    if (background?.id) {
+      apiRequest("PUT", `/api/connection-schemas/components/${background.id}`, {
+        position: { x: 0, y: 0 },
+        name: "План",
+        properties: { url: background.url, width: background.width, height: background.height, showGrid: next },
+      })
+        .then(() => refetchSelectedSchema())
+        .catch(() => {});
+    }
+  };
+
+  const handleRemovePlan = () => {
+    if (!background?.id) return;
+    deleteComponentMutation.mutate(background.id);
+    setShowGrid(true);
+  };
+
+  // Сохранение нового положения/размера плана после растягивания за угловые ручки.
+  const handleResizePlan = (rect: { x: number; y: number; width: number; height: number }) => {
+    if (!background?.id) return;
+    apiRequest("PUT", `/api/connection-schemas/components/${background.id}`, {
+      position: { x: 0, y: 0 },
+      name: "План",
+      properties: {
+        url: background.url,
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        showGrid: background.showGrid ?? false,
+      },
+    })
+      .then(() => refetchSelectedSchema())
+      .catch(() => {});
   };
 
   return (
@@ -1167,9 +1485,21 @@ export default function ConnectionSchemas() {
                 onDeleteConnection={handleDeleteConnection}
                 onZoneSelect={setSelectedZoneId}
                 selectedZoneId={selectedZoneId}
-                onZoneDelete={handleDeleteComponent}
+                currentUserId={currentUserId}
+                onZoneDelete={isAdmin ? handleDeleteComponent : undefined}
                 onDeviceDelete={handleDeleteComponent}
                 validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
+                planUrl={background?.url}
+                planWidth={background?.width}
+                planHeight={background?.height}
+                planX={background?.x}
+                planY={background?.y}
+                showGrid={showGrid}
+                onUploadPlan={handleUploadPlan}
+                onToggleGrid={handleToggleGrid}
+                onRemovePlan={handleRemovePlan}
+                onResizePlan={handleResizePlan}
+                uploadingPlan={uploadingPlan}
               />
               {((buildViolations && buildViolations.length > 0) || buildSuccess) && (
                 <div className="absolute top-14 right-4 z-50 w-[min(420px,calc(100vw-2rem))]">
@@ -1189,15 +1519,29 @@ export default function ConnectionSchemas() {
                   const zone = zones.find((z) => z.id === selectedZoneId);
                   if (!zone) return null;
                   return (
-                    <ZoneEditForm
+                    <ZoneDetailsPanel
+                      key={zone.id}
                       zone={zone}
-                      onSave={(name, color) => {
+                      isAdmin={isAdmin}
+                      users={users}
+                      currentUserId={currentUserId}
+                      saving={updateComponentMutation.isPending}
+                      onSave={(data) => {
                         const comp = selectedSchemaData?.components?.find((c) => c.id === zone.id);
                         if (!comp || !selectedSchema) return;
                         updateComponentMutation.mutate({
                           id: zone.id,
-                          name,
-                          properties: { ...comp.properties, width: zone.width, height: zone.height, color },
+                          name: data.name,
+                          properties: {
+                            ...comp.properties,
+                            width: zone.width,
+                            height: zone.height,
+                            status: data.status,
+                            assigneeId: data.assigneeId || undefined,
+                            assigneeName: data.assigneeId ? data.assigneeName : undefined,
+                            comment: data.comment || undefined,
+                            photos: data.photos,
+                          },
                         });
                         setSelectedZoneId(null);
                       }}
@@ -1242,7 +1586,7 @@ export default function ConnectionSchemas() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Название зоны</DialogTitle>
-              <DialogDescription>Выделена область на схеме. Введите название и цвет.</DialogDescription>
+              <DialogDescription>Выделена область на схеме. Цвет зоны задаётся её статусом.</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 pt-2">
               <div>
@@ -1252,22 +1596,6 @@ export default function ConnectionSchemas() {
                   onChange={(e) => setDrawnZoneName(e.target.value)}
                   placeholder="Например: Студия А"
                 />
-              </div>
-              <div>
-                <Label>Цвет</Label>
-                <div className="flex gap-2 items-center">
-                  <Input
-                    type="color"
-                    value={drawnZoneColor}
-                    onChange={(e) => setDrawnZoneColor(e.target.value)}
-                    className="w-14 h-9"
-                  />
-                  <Input
-                    value={drawnZoneColor}
-                    onChange={(e) => setDrawnZoneColor(e.target.value)}
-                    className="flex-1"
-                  />
-                </div>
               </div>
               <div className="flex gap-2">
                 <Button className="flex-1" onClick={confirmDrawnZone}>
@@ -1445,9 +1773,21 @@ export default function ConnectionSchemas() {
                       onDeleteConnection={handleDeleteConnection}
                       onZoneSelect={setSelectedZoneId}
                       selectedZoneId={selectedZoneId}
-                      onZoneDelete={handleDeleteComponent}
+                      currentUserId={currentUserId}
+                      onZoneDelete={isAdmin ? handleDeleteComponent : undefined}
                       onDeviceDelete={handleDeleteComponent}
                       validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
+                      planUrl={background?.url}
+                      planWidth={background?.width}
+                      planHeight={background?.height}
+                      planX={background?.x}
+                      planY={background?.y}
+                      showGrid={showGrid}
+                      onUploadPlan={handleUploadPlan}
+                      onToggleGrid={handleToggleGrid}
+                      onRemovePlan={handleRemovePlan}
+                      onResizePlan={handleResizePlan}
+                      uploadingPlan={uploadingPlan}
                     />
                   </div>
                 </CardContent>

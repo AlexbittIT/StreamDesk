@@ -1,9 +1,12 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { ZoomIn, ZoomOut, Maximize2, Undo2, Redo2, FileImage, FileText } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize2, Undo2, Redo2, FileImage, FileText, Image as ImageIcon, Grid3x3, Upload, X, Loader2, Scaling } from "lucide-react";
 import { CONNECTOR_STYLES } from "./signal-colors";
 import { ConnectorIconDefs, ConnectorIconUse } from "./connector-icons";
+import { ZONE_STATUS_META, ZONE_STATUS_ORDER, zoneStatusColor } from "@/lib/zone-status";
+import { apiUrl } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
 
 interface Port {
   id: string;
@@ -33,6 +36,12 @@ interface Zone {
   width: number;
   height: number;
   color?: string;
+  /** Вершины произвольного контура (в координатах сцены). Если заданы — зона рисуется полигоном. */
+  points?: { x: number; y: number }[];
+  /** ID ответственного за зону — для отметки «моих» зон у работника. */
+  assigneeId?: string;
+  /** Статус зоны — определяет цвет заливки и особую подсветку «Проблемы». */
+  status?: string;
 }
 
 interface Cable {
@@ -54,12 +63,14 @@ interface SchemaCanvasProps {
   onDeviceSelect?: (deviceId: string | null) => void;
   selectedDeviceId?: string | null;
   fullScreen?: boolean;
-  /** Режим выделения зоны: пользователь рисует прямоугольник на схеме */
+  /** Режим выделения зоны: пользователь рисует произвольный контур кликами */
   drawZoneMode?: boolean;
-  onZoneDrawn?: (rect: { x: number; y: number; width: number; height: number }) => void;
+  onZoneDrawn?: (zone: { x: number; y: number; width: number; height: number; points: { x: number; y: number }[] }) => void;
   onCancelDrawZone?: () => void;
   onZoneSelect?: (zoneId: string | null) => void;
   selectedZoneId?: string | null;
+  /** ID текущего пользователя — зоны, назначенные ему, помечаются на схеме. */
+  currentUserId?: string;
   /** Удаление зоны (правый клик → Удалить) */
   onZoneDelete?: (zoneId: string) => void;
   /** Создание кабеля: от выходного порта к входному */
@@ -70,11 +81,37 @@ interface SchemaCanvasProps {
   onDeviceDelete?: (deviceId: string) => void;
   /** ID компонентов с ошибками валидации — для красной подсветки на холсте. */
   validationComponentIds?: string[];
+  /** План-подложка: URL картинки и её размеры (в единицах сцены). */
+  planUrl?: string;
+  planWidth?: number;
+  planHeight?: number;
+  /** Положение плана на сцене (если не задано — центрируется). */
+  planX?: number;
+  planY?: number;
+  /** true — показывать сетку, false — показывать план (если он загружен). */
+  showGrid?: boolean;
+  /** Загрузка нового файла плана (png/jpeg/svg/pdf). */
+  onUploadPlan?: (file: File) => void;
+  /** Переключение между планом и сеткой. */
+  onToggleGrid?: () => void;
+  /** Удаление плана-подложки. */
+  onRemovePlan?: () => void;
+  /** Сохранение нового положения/размера плана после растягивания. */
+  onResizePlan?: (rect: { x: number; y: number; width: number; height: number }) => void;
+  /** Идёт загрузка плана. */
+  uploadingPlan?: boolean;
 }
 
 export interface SchemaCanvasRef {
   getViewportCenter: () => { x: number; y: number } | null;
   isReady: () => boolean;
+}
+
+/** Порядок наложения зон: выделенная — выше «Проблемы», «Проблема» — выше обычных. */
+function zoneStackRank(zone: Zone, selectedZoneId?: string | null): number {
+  if (zone.id === selectedZoneId) return 2;
+  if ((zone.status || "not_started") === "problem") return 1;
+  return 0;
 }
 
 const SCENE_WIDTH = 16000;
@@ -106,15 +143,44 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   onCancelDrawZone,
   onZoneSelect,
   selectedZoneId,
+  currentUserId,
   onZoneDelete,
   onAddConnection,
   onDeleteConnection,
   onDeviceDelete,
   validationComponentIds,
+  planUrl,
+  planWidth,
+  planHeight,
+  planX: planXProp,
+  planY: planYProp,
+  showGrid = true,
+  onUploadPlan,
+  onToggleGrid,
+  onRemovePlan,
+  onResizePlan,
+  uploadingPlan,
 }, ref) {
   const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const planInputRef = useRef<HTMLInputElement>(null);
+
+  // План-подложка: положение из props либо по центру сцены; показывается вместо сетки.
+  const hasPlan = !!planUrl && !!planWidth && !!planHeight;
+  const planX = hasPlan ? (planXProp ?? (SCENE_WIDTH - (planWidth as number)) / 2) : 0;
+  const planY = hasPlan ? (planYProp ?? (SCENE_HEIGHT - (planHeight as number)) / 2) : 0;
+  const showPlan = hasPlan && !showGrid;
+  // Режим растягивания плана (кнопка «Растянуть») и живой прямоугольник во время перетаскивания ручек.
+  const [resizingPlan, setResizingPlan] = useState(false);
+  const [livePlanRect, setLivePlanRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [planResizeDrag, setPlanResizeDrag] = useState<{
+    corner: "nw" | "ne" | "sw" | "se";
+    start: { x: number; y: number; width: number; height: number };
+    startScene: { x: number; y: number };
+  } | null>(null);
+  // Актуальный прямоугольник плана: во время перетаскивания — «живой», иначе — из props.
+  const planRect = livePlanRect ?? { x: planX, y: planY, width: planWidth || 0, height: planHeight || 0 };
   const [stageSize, setStageSize] = useState({ w: 800, h: 600 });
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -124,8 +190,9 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   const [draggingDeviceId, setDraggingDeviceId] = useState<string | null>(null);
   const [panState, setPanState] = useState<{ startX: number; startY: number; startPos: { x: number; y: number } } | null>(null);
   const [localPositions, setLocalPositions] = useState<Record<string, { x: number; y: number }>>({});
-  const [zoneDrawStart, setZoneDrawStart] = useState<{ x: number; y: number } | null>(null);
-  const [zoneDrawCurrent, setZoneDrawCurrent] = useState<{ x: number; y: number } | null>(null);
+  // Полигон зоны, рисуемый последовательными кликами (замыкается кликом по первой вершине)
+  const [zonePoints, setZonePoints] = useState<{ x: number; y: number }[]>([]);
+  const [zoneCursor, setZoneCursor] = useState<{ x: number; y: number } | null>(null);
   const [cableDrag, setCableDrag] = useState<{
     fromDeviceId: string;
     fromPortId: string;
@@ -210,6 +277,61 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
     };
   }, [position, scale]);
 
+  // Выход из режима растягивания, когда план не показывается (сетка/удалён).
+  useEffect(() => {
+    if (!showPlan) {
+      setResizingPlan(false);
+      setLivePlanRect(null);
+      setPlanResizeDrag(null);
+    }
+  }, [showPlan]);
+
+  // Перетаскивание угловой ручки: меняем размер плана, фиксируя противоположный угол.
+  useEffect(() => {
+    if (!planResizeDrag) return;
+    const MIN = 40;
+    let lastRect = planResizeDrag.start;
+    const onMove = (e: PointerEvent) => {
+      const scene = screenToScene(e.clientX, e.clientY);
+      const dx = scene.x - planResizeDrag.startScene.x;
+      const dy = scene.y - planResizeDrag.startScene.y;
+      const s = planResizeDrag.start;
+      let { x, y, width, height } = s;
+      if (planResizeDrag.corner === "se") {
+        width = Math.max(MIN, s.width + dx);
+        height = Math.max(MIN, s.height + dy);
+      } else if (planResizeDrag.corner === "sw") {
+        width = Math.max(MIN, s.width - dx);
+        height = Math.max(MIN, s.height + dy);
+        x = s.x + (s.width - width);
+      } else if (planResizeDrag.corner === "ne") {
+        width = Math.max(MIN, s.width + dx);
+        height = Math.max(MIN, s.height - dy);
+        y = s.y + (s.height - height);
+      } else {
+        width = Math.max(MIN, s.width - dx);
+        height = Math.max(MIN, s.height - dy);
+        x = s.x + (s.width - width);
+        y = s.y + (s.height - height);
+      }
+      lastRect = { x, y, width, height };
+      setLivePlanRect(lastRect);
+    };
+    const onUp = () => {
+      setPlanResizeDrag(null);
+      setLivePlanRect(null);
+      onResizePlan?.(lastRect);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [planResizeDrag, screenToScene, onResizePlan]);
+
   const handleWheel = useCallback((e: React.WheelEvent | WheelEvent) => {
     e.preventDefault();
     const delta = (e as WheelEvent).deltaY > 0 ? -0.08 : 0.08;
@@ -252,9 +374,9 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
     setAutoFitted(false);
   }, [schemaId]);
 
-  // Старт с центра холста при пустой схеме; при появлении устройств — «Показать все»
+  // Старт с центра холста при пустой схеме; при устройствах или плане — «Показать все»
   useEffect(() => {
-    if (!devices.length) {
+    if (!devices.length && !hasPlan) {
       setAutoFitted(false);
       setPosition({
         x: stageSize.w / 2 - SCENE_WIDTH / 2,
@@ -267,7 +389,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       handleFitAll();
       setAutoFitted(true);
     }
-  }, [devices.length, autoFitted, stageSize.w, stageSize.h]);
+  }, [devices.length, hasPlan, autoFitted, stageSize.w, stageSize.h]);
 
   /** Проверяет, пересекается ли прямоугольник с каким-либо устройством (кроме исключённого). */
   const checkDeviceCollision = (
@@ -330,33 +452,58 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
     onDeviceUpdate(deviceId, finalPos);
   }, [devices, onDeviceUpdate, saveToHistory]);
 
+  // Порог замыкания контура (в пикселях экрана) → в координатах сцены зависит от масштаба
+  const ZONE_CLOSE_PX = 12;
+
+  /** Завершает полигон: передаёт вершины и их габаритный прямоугольник, открывает окно названия. */
+  const finishZonePolygon = useCallback((points: { x: number; y: number }[]) => {
+    if (points.length < 3 || !onZoneDrawn) return;
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const x = Math.min(...xs);
+    const y = Math.min(...ys);
+    const width = Math.max(20, Math.max(...xs) - x);
+    const height = Math.max(20, Math.max(...ys) - y);
+    onZoneDrawn({ x, y, width, height, points: points.map((p) => ({ x: p.x, y: p.y })) });
+    setZonePoints([]);
+    setZoneCursor(null);
+  }, [onZoneDrawn]);
+
+  /** Клик в режиме выделения: ставит вершину либо замыкает контур по первой точке. */
+  const handleZoneClick = (scene: { x: number; y: number }) => {
+    if (zonePoints.length >= 3) {
+      const first = zonePoints[0];
+      const threshold = ZONE_CLOSE_PX / scale;
+      if (Math.hypot(scene.x - first.x, scene.y - first.y) <= threshold) {
+        finishZonePolygon(zonePoints);
+        return;
+      }
+    }
+    setZonePoints((prev) => [...prev, scene]);
+  };
+
+  // Выход из режима выделения — сбрасываем незавершённый полигон
   useEffect(() => {
-    if (!zoneDrawStart || !onZoneDrawn) return;
-    const onMove = (e: PointerEvent) => {
-      const scene = screenToScene(e.clientX, e.clientY);
-      setZoneDrawCurrent({ x: scene.x, y: scene.y });
+    if (!drawZoneMode) {
+      setZonePoints([]);
+      setZoneCursor(null);
+    }
+  }, [drawZoneMode]);
+
+  // Esc отменяет текущий полигон и выходит из режима выделения
+  useEffect(() => {
+    if (!drawZoneMode) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setZonePoints([]);
+        setZoneCursor(null);
+        onCancelDrawZone?.();
+      }
     };
-    const onUp = (e: PointerEvent) => {
-      const scene = screenToScene(e.clientX, e.clientY);
-      const x1 = Math.min(zoneDrawStart.x, scene.x);
-      const y1 = Math.min(zoneDrawStart.y, scene.y);
-      const x2 = Math.max(zoneDrawStart.x, scene.x);
-      const y2 = Math.max(zoneDrawStart.y, scene.y);
-      const width = Math.max(20, x2 - x1);
-      const height = Math.max(20, y2 - y1);
-      onZoneDrawn({ x: x1, y: y1, width, height });
-      setZoneDrawStart(null);
-      setZoneDrawCurrent(null);
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-  }, [zoneDrawStart, onZoneDrawn, screenToScene]);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [drawZoneMode, onCancelDrawZone]);
 
   useEffect(() => {
     if (!cableDrag || !onAddConnection) return;
@@ -720,16 +867,31 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   const handleZoomOut = () => setScale((s) => Math.max(s - 0.1, 0.5));
 
   const handleFitAll = () => {
-    if (!devices.length) return;
-    const minX = Math.min(...devices.map((d) => d.position.x));
-    const minY = Math.min(...devices.map((d) => d.position.y));
-    const maxX = Math.max(...devices.map((d) => d.position.x + getDeviceWidth(d)));
-    const maxY = Math.max(...devices.map((d) => d.position.y + calculateDeviceHeight(d)));
+    const lefts: number[] = [];
+    const tops: number[] = [];
+    const rights: number[] = [];
+    const bottoms: number[] = [];
+    devices.forEach((d) => {
+      const p = getDevicePosition(d);
+      lefts.push(p.x);
+      tops.push(p.y);
+      rights.push(p.x + getDeviceWidth(d));
+      bottoms.push(p.y + calculateDeviceHeight(d));
+    });
+    if (hasPlan) {
+      lefts.push(planX);
+      tops.push(planY);
+      rights.push(planX + (planWidth as number));
+      bottoms.push(planY + (planHeight as number));
+    }
+    if (!lefts.length) return;
+    const minX = Math.min(...lefts);
+    const minY = Math.min(...tops);
+    const maxX = Math.max(...rights);
+    const maxY = Math.max(...bottoms);
     const width = maxX - minX + 100;
     const height = maxY - minY + 100;
-    const scaleX = stageSize.w / width;
-    const scaleY = stageSize.h / height;
-    const newScale = Math.min(scaleX, scaleY, 1);
+    const newScale = Math.min(stageSize.w / width, stageSize.h / height, 1);
     setScale(newScale);
     setPosition({ x: -minX * newScale + 50, y: -minY * newScale + 50 });
   };
@@ -930,6 +1092,64 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
             PDF
           </Button>
         </div>
+
+        {(onUploadPlan || onToggleGrid) && (
+          <div className="flex items-center gap-1 border-l pl-2 ml-2">
+            {onUploadPlan && (
+              <>
+                <input
+                  ref={planInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/svg+xml,application/pdf,.png,.jpg,.jpeg,.svg,.pdf"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) onUploadPlan(file);
+                    if (planInputRef.current) planInputRef.current.value = "";
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => planInputRef.current?.click()}
+                  disabled={uploadingPlan}
+                  title="Загрузить план (PNG, JPEG, SVG, PDF)"
+                >
+                  {uploadingPlan ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Upload className="w-4 h-4 mr-1" />}
+                  План
+                </Button>
+              </>
+            )}
+            {hasPlan && onToggleGrid && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onToggleGrid}
+                title={showGrid ? "Показать план вместо сетки" : "Показать сетку вместо плана"}
+              >
+                {showGrid ? <ImageIcon className="w-4 h-4 mr-1" /> : <Grid3x3 className="w-4 h-4 mr-1" />}
+                {showGrid ? "План" : "Сетка"}
+              </Button>
+            )}
+            {showPlan && onResizePlan && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setResizingPlan((v) => !v)}
+                title={resizingPlan ? "Завершить редактирование" : "Редактировать план (тянуть за углы)"}
+                className={resizingPlan ? "text-primary bg-primary/10" : ""}
+              >
+                <Scaling className="w-4 h-4 mr-1" />
+                {resizingPlan ? "Готово" : "Редактировать"}
+              </Button>
+            )}
+            {hasPlan && onRemovePlan && (
+              <Button variant="ghost" size="sm" onClick={onRemovePlan} title="Удалить план" className="text-red-500 hover:text-red-600">
+                <X className="w-4 h-4" />
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       {!fullScreen && (
@@ -939,7 +1159,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       )}
       {drawZoneMode && (
         <div className="flex items-center justify-between gap-2 text-xs font-medium text-primary px-2 py-1.5 border-b bg-primary/10">
-          <span>Выделите область на схеме: нажмите и протяните мышь.</span>
+          <span>Кликайте по схеме, чтобы поставить вершины. Замкните контур (клик по первой точке), чтобы задать название зоны.</span>
           {onCancelDrawZone && (
             <Button type="button" variant="ghost" size="sm" className="h-7 text-primary" onClick={onCancelDrawZone}>
               Отмена
@@ -958,9 +1178,35 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
 
       <div
         ref={containerRef}
-        className={fullScreen ? "flex-1 min-h-0 w-full overflow-hidden" : "flex-1 min-h-[400px] bg-slate-100 dark:bg-slate-900 overflow-hidden"}
+        className={fullScreen ? "relative flex-1 min-h-0 w-full overflow-hidden" : "relative flex-1 min-h-[400px] bg-slate-100 dark:bg-slate-900 overflow-hidden"}
         style={{ touchAction: "none", willChange: "transform" }}
       >
+        {zones.length > 0 && (
+          <div className="pointer-events-none absolute bottom-3 left-3 z-20 flex max-w-[calc(100%-1.5rem)] flex-wrap gap-1.5">
+            {ZONE_STATUS_ORDER.map((status) => {
+              const count = zones.filter((z) => (z.status || "not_started") === status).length;
+              const isProblem = status === "problem";
+              return (
+                <span
+                  key={status}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md border border-slate-600 bg-slate-900/80 px-2 py-1 text-xs text-slate-200 backdrop-blur",
+                    isProblem && "border-red-500 bg-red-950/70 font-semibold text-red-300",
+                    isProblem && count > 0 && "animate-pulse",
+                  )}
+                >
+                  {isProblem ? (
+                    <span className="text-red-400">⚠</span>
+                  ) : (
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ZONE_STATUS_META[status].color }} />
+                  )}
+                  {ZONE_STATUS_META[status].label}
+                  <span className="opacity-70">{count}</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
         <div
           style={{
             transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
@@ -970,18 +1216,23 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
             cursor: panState ? "grabbing" : dragState ? "grabbing" : "default",
           }}
           onPointerDown={(e) => {
+            if (drawZoneMode && onZoneDrawn) {
+              e.preventDefault();
+              const scene = screenToScene(e.clientX, e.clientY);
+              handleZoneClick({ x: scene.x, y: scene.y });
+              return;
+            }
             if ((e.target as SVGElement).closest("[data-device-id]")) return;
             if ((e.target as SVGElement).closest("[data-zone-id]")) return;
             e.preventDefault();
+            onZoneSelect?.(null);
+            onDeviceSelect?.(null);
+            setPanState({ startX: e.clientX, startY: e.clientY, startPos: { ...position } });
+          }}
+          onPointerMove={(e) => {
+            if (!drawZoneMode) return;
             const scene = screenToScene(e.clientX, e.clientY);
-            if (drawZoneMode && onZoneDrawn) {
-              setZoneDrawStart({ x: scene.x, y: scene.y });
-              setZoneDrawCurrent({ x: scene.x, y: scene.y });
-            } else {
-              onZoneSelect?.(null);
-              onDeviceSelect?.(null);
-              setPanState({ startX: e.clientX, startY: e.clientY, startPos: { ...position } });
-            }
+            setZoneCursor({ x: scene.x, y: scene.y });
           }}
         >
           <svg
@@ -1025,26 +1276,129 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                 </g>
               </symbol>
             </defs>
-            <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="url(#grid)" />
+            {showPlan ? (
+              <image
+                href={apiUrl(planUrl as string)}
+                x={planRect.x}
+                y={planRect.y}
+                width={planRect.width}
+                height={planRect.height}
+                preserveAspectRatio={resizingPlan ? "none" : "xMidYMid meet"}
+                style={{ pointerEvents: "none" }}
+              />
+            ) : (
+              <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="url(#grid)" />
+            )}
             <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="transparent" style={{ pointerEvents: "none" }} />
 
-            {/* Превью зоны при выделении на карте */}
-            {drawZoneMode && zoneDrawStart && zoneDrawCurrent && (
-              <rect
-                x={Math.min(zoneDrawStart.x, zoneDrawCurrent.x)}
-                y={Math.min(zoneDrawStart.y, zoneDrawCurrent.y)}
-                width={Math.abs(zoneDrawCurrent.x - zoneDrawStart.x)}
-                height={Math.abs(zoneDrawCurrent.y - zoneDrawStart.y)}
-                fill="rgba(59, 130, 246, 0.2)"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                strokeDasharray="6 4"
-                rx={4}
-              />
-            )}
+            {/* Ручки растягивания плана — по углам, видны только в режиме «Растянуть». */}
+            {showPlan && resizingPlan && (() => {
+              const hs = 14 / scale;
+              const corners: Array<{ id: "nw" | "ne" | "sw" | "se"; cx: number; cy: number; cursor: string }> = [
+                { id: "nw", cx: planRect.x, cy: planRect.y, cursor: "nwse-resize" },
+                { id: "ne", cx: planRect.x + planRect.width, cy: planRect.y, cursor: "nesw-resize" },
+                { id: "sw", cx: planRect.x, cy: planRect.y + planRect.height, cursor: "nesw-resize" },
+                { id: "se", cx: planRect.x + planRect.width, cy: planRect.y + planRect.height, cursor: "nwse-resize" },
+              ];
+              return (
+                <g>
+                  <rect
+                    x={planRect.x}
+                    y={planRect.y}
+                    width={planRect.width}
+                    height={planRect.height}
+                    fill="none"
+                    stroke="#3b82f6"
+                    strokeWidth={2 / scale}
+                    strokeDasharray={`${8 / scale} ${5 / scale}`}
+                    pointerEvents="none"
+                  />
+                  {corners.map((c) => (
+                    <rect
+                      key={c.id}
+                      x={c.cx - hs / 2}
+                      y={c.cy - hs / 2}
+                      width={hs}
+                      height={hs}
+                      fill="#ffffff"
+                      stroke="#3b82f6"
+                      strokeWidth={2 / scale}
+                      style={{ cursor: c.cursor }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        setPlanResizeDrag({
+                          corner: c.id,
+                          start: { ...planRect },
+                          startScene: screenToScene(e.clientX, e.clientY),
+                        });
+                      }}
+                    />
+                  ))}
+                </g>
+              );
+            })()}
 
-            {zones.map((zone) => {
+            {/* Превью зоны: полигон, рисуемый кликами (замыкается по первой вершине) */}
+            {drawZoneMode && zonePoints.length > 0 && (() => {
+              const first = zonePoints[0];
+              const base = zonePoints.map((p) => `${p.x},${p.y}`).join(" ");
+              const preview = zoneCursor ? `${base} ${zoneCursor.x},${zoneCursor.y}` : base;
+              const nearFirst =
+                zoneCursor != null &&
+                zonePoints.length >= 3 &&
+                Math.hypot(zoneCursor.x - first.x, zoneCursor.y - first.y) <= ZONE_CLOSE_PX / scale;
+              return (
+                <g pointerEvents="none">
+                  <polyline
+                    points={preview}
+                    fill="rgba(59, 130, 246, 0.2)"
+                    stroke="#3b82f6"
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                    strokeLinejoin="round"
+                  />
+                  {zonePoints.map((p, i) => (
+                    <circle
+                      key={i}
+                      cx={p.x}
+                      cy={p.y}
+                      r={i === 0 ? (nearFirst ? 8 : 6) : 5}
+                      fill={i === 0 ? "#3b82f6" : "#ffffff"}
+                      stroke="#3b82f6"
+                      strokeWidth={2}
+                    />
+                  ))}
+                </g>
+              );
+            })()}
+
+            {[...zones]
+              // Порядок отрисовки: обычные снизу, «Проблема» выше, выделенная — поверх всех.
+              .sort((a, b) => zoneStackRank(a, selectedZoneId) - zoneStackRank(b, selectedZoneId))
+              .map((zone) => {
               const isSelected = selectedZoneId === zone.id;
+              const isProblem = (zone.status || "not_started") === "problem";
+              const statusColor = zoneStatusColor(zone.status);
+              const hasPolygon = Array.isArray(zone.points) && zone.points.length >= 3;
+              const mine = !!currentUserId && zone.assigneeId === currentUserId;
+              // Центр фигуры (габаритного прямоугольника) — для подписи по центру зоны.
+              const cx = zone.position.x + zone.width / 2;
+              const cy = zone.position.y + zone.height / 2;
+              // Заливка — по статусу. Выделение: белая рамка + свечение; «Проблема»: красная рамка + свечение.
+              const shapeProps = {
+                fill: statusColor,
+                fillOpacity: 1,
+                stroke: isSelected ? "#ffffff" : isProblem ? "#dc2626" : statusColor,
+                strokeWidth: isSelected ? 5 : isProblem ? 4 : 2,
+                strokeDasharray: isSelected ? undefined : "12 10",
+                style: {
+                  filter: isSelected
+                    ? "drop-shadow(0 0 7px rgba(255,255,255,0.85))"
+                    : isProblem
+                      ? "drop-shadow(0 0 7px rgba(239,68,68,0.9))"
+                      : undefined,
+                },
+              };
               return (
                 <g
                   key={zone.id}
@@ -1056,26 +1410,42 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                     if (!drawZoneMode) onZoneSelect?.(zone.id);
                   }}
                   onContextMenu={(e) => {
-                    if (drawZoneMode) return;
+                    if (drawZoneMode || !onZoneDelete) return;
                     e.preventDefault();
                     e.stopPropagation();
                     setZoneContextMenu({ x: e.clientX, y: e.clientY, zoneId: zone.id });
                   }}
                 >
-                  <rect
-                    x={zone.position.x}
-                    y={zone.position.y}
-                    width={zone.width}
-                    height={zone.height}
-                    fill={zone.color || "rgba(59, 130, 246, 0.08)"}
-                    fillOpacity={1}
-                    stroke={String(zone.color || "#3b82f6").startsWith("rgba") ? String(zone.color).replace(/,\s*0\.\d+\)/, ", 0.75)") : (zone.color || "#3b82f6")}
-                    strokeWidth={isSelected ? 4 : 2}
-                    strokeDasharray="12 10"
-                    rx={6}
-                  />
-                  <text x={zone.position.x + 14} y={zone.position.y + 24} fontSize={15} fontWeight="bold" fill="#cbd5e1" pointerEvents="none">
-                    {zone.name}
+                  {hasPolygon ? (
+                    <polygon
+                      points={zone.points!.map((p) => `${p.x},${p.y}`).join(" ")}
+                      strokeLinejoin="round"
+                      {...shapeProps}
+                    />
+                  ) : (
+                    <rect
+                      x={zone.position.x}
+                      y={zone.position.y}
+                      width={zone.width}
+                      height={zone.height}
+                      rx={6}
+                      {...shapeProps}
+                    />
+                  )}
+                  {mine && (
+                    <circle cx={zone.position.x + 8} cy={zone.position.y + 18} r={5} fill="#f59e0b" stroke="#fff" strokeWidth={1.5} pointerEvents="none" />
+                  )}
+                  <text
+                    x={cx}
+                    y={cy}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize={15}
+                    fontWeight="bold"
+                    fill={mine ? "#fcd34d" : "#f8fafc"}
+                    pointerEvents="none"
+                  >
+                    {isProblem ? `⚠ ${zone.name}` : zone.name}
                   </text>
                 </g>
               );

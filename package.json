@@ -66,6 +66,7 @@
     "konva": "^9.2.3",
     "lucide-react": "^0.453.0",
     "next-themes": "^0.4.6",
+    "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
     "react-dom": "^18.3.1",
@@ -100,5 +101,8 @@
     "typescript": "5.6.3",
     "vite": "^5.4.19",
     "vitest": "^2.1.9"
+  },
+  "overrides": {
+    "@napi-rs/canvas": "file:./stubs/empty-canvas"
   }
 }

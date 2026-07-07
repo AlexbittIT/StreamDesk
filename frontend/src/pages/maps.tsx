@@ -48,6 +48,7 @@ import {
 } from "@/lib/maps-api";
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   Calendar,
   Edit,
@@ -400,13 +401,32 @@ function MapLegend({ map }: { map: MapWithZones }) {
   }, {});
   return (
     <div className="flex flex-wrap gap-1.5">
-      {(Object.keys(MAP_STATUS_META) as ZoneStatus[]).map((status) => (
-        <Badge key={status} variant="outline" className="gap-1.5 rounded-md bg-background">
-          <span className={cn("h-2.5 w-2.5 rounded-full", MAP_STATUS_META[status].className)} />
-          {MAP_STATUS_META[status].label}
-          <span className="text-muted-foreground">{counts[status] || 0}</span>
-        </Badge>
-      ))}
+      {(Object.keys(MAP_STATUS_META) as ZoneStatus[]).map((status) => {
+        const isProblem = status === "problem";
+        const count = counts[status] || 0;
+        return (
+          <Badge
+            key={status}
+            variant="outline"
+            className={cn(
+              "gap-1.5 rounded-md bg-background",
+              isProblem &&
+                "border-red-500 bg-red-500/10 font-semibold text-red-600 ring-1 ring-red-500/50 dark:text-red-400",
+              isProblem && count > 0 && "animate-pulse",
+            )}
+          >
+            {isProblem ? (
+              <AlertTriangle className="h-3 w-3 text-red-500" />
+            ) : (
+              <span className={cn("h-2.5 w-2.5 rounded-full", MAP_STATUS_META[status].className)} />
+            )}
+            {MAP_STATUS_META[status].label}
+            <span className={cn("text-muted-foreground", isProblem && count > 0 && "text-red-600 dark:text-red-400")}>
+              {count}
+            </span>
+          </Badge>
+        );
+      })}
     </div>
   );
 }
@@ -433,6 +453,10 @@ function ZonePanel({
   pending?: boolean;
 }) {
   const [name, setName] = useState(zone?.name || "");
+  // Сбрасываем поле переименования при переключении на другую зону (панель не перемонтируется).
+  useEffect(() => {
+    setName(zone?.name || "");
+  }, [zone?.id]);
   const nextStatuses = zone ? getAllowedNextStatuses(zone.status) : [];
 
   return (
@@ -525,6 +549,12 @@ function MapDetailPage({ mapId }: { mapId: string }) {
     queryKey: ["/api/maps", mapId],
     queryFn: () => getMap(mapId),
     enabled: Boolean(mapId),
+    // Realtime без перезагрузки страницы: опрос сервера каждые 4с. WS-хаба в backend ещё нет
+    // (VM-06/VM-13), поэтому статус, ответственный, комментарии и фото подтягиваются поллингом.
+    // Мутации не оптимистичны, черновик рисования и выделение зоны — локальны, поэтому рефетч
+    // ничего не затирает.
+    refetchInterval: 4000,
+    refetchIntervalInBackground: true,
   });
 
   const selectedZone = (map?.zones || []).find((zone) => zone.id === selectedZoneId) || null;
