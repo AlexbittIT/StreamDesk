@@ -34,7 +34,7 @@ public class ShowMarker {
     @Column(name = "type", nullable = false)
     private String type;
 
-    @Column(name = "value")
+    @Column(name = "\"value\"")
     private String value;
 
     @Column(name = "note")

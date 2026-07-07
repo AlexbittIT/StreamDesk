@@ -107,7 +107,7 @@ export function BottomNav({ user, onOpenMenu }: BottomNavProps) {
       <div className="flex items-stretch justify-around min-h-[56px] max-w-[100vw] rounded-[22px] bg-background/50 dark:bg-background/40 backdrop-blur-xl border border-border/40 shadow-lg">
         {visibleItems.map((item, index) => {
           const Icon = item.icon;
-          const isActive = !item.isMore && location === item.href;
+          const isActive = !item.isMore && (location === item.href || (item.href === "/maps" && location.startsWith("/maps/")));
           const uniqueKey = item.isMore ? `more-${index}` : `nav-${item.key}-${index}`;
 
           if (item.isMore) {

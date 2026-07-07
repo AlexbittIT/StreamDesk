@@ -44,7 +44,7 @@ class MapsZoneFlowE2ETest extends AbstractE2ETest {
     @Test
     void statusHistoryAssigneeAndAlert_fullFlow() throws Exception {
         // Участники компании: менеджер (создаёт), исполнитель (может быть ответственным), админ (получает алерт).
-        AuthenticatedUser manager = user("manager-flow", "user", List.of());
+        AuthenticatedUser manager = user("manager-flow", "manager", List.of());
         companyMemberRepository.save(member("manager-flow", "member"));
         companyMemberRepository.save(member("worker-flow", "member"));
         companyMemberRepository.save(member("admin-flow", "owner"));

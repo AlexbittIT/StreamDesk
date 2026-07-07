@@ -91,6 +91,13 @@ function Router({ user }: { user: any }) {
           <Calendar />
         </ProtectedRoute>
       </Route>
+      <Route path="/maps/:mapId">
+        {(params) => (
+          <ProtectedRoute user={user}>
+            <Maps mapId={params.mapId} />
+          </ProtectedRoute>
+        )}
+      </Route>
       <Route path="/maps">
         <ProtectedRoute user={user}>
           <Maps />

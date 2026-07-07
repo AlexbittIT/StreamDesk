@@ -24,6 +24,11 @@ const PATH_TO_TAB: Record<string, string> = {
   "/vmix-scheduler": "vmix-scheduler",
 };
 
+function tabKeyForPath(path: string): string | undefined {
+  if (path === "/maps" || path.startsWith("/maps/")) return "maps";
+  return PATH_TO_TAB[path];
+}
+
 interface ProtectedRouteProps {
   children: React.ReactNode;
   requiredRole?: string | string[];
@@ -106,7 +111,7 @@ export function ProtectedRoute({ children, requiredRole, requiredPermission, use
     }
   }
 
-  const tabKey = PATH_TO_TAB[path];
+  const tabKey = tabKeyForPath(path);
   if (tabKey) {
     const perms = (currentUser.permissions as string[]) || [];
     const hasAnyTab = perms.some((p: string) => p.startsWith("tab:"));
@@ -130,4 +135,3 @@ export function ProtectedRoute({ children, requiredRole, requiredPermission, use
 
   return <>{children}</>;
 }
-

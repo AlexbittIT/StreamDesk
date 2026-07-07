@@ -154,6 +154,9 @@ export default function Sidebar({ user, isOpen, onClose, onLogout }: SidebarProp
       const itemTab = new URLSearchParams(href.split("?")[1] || "").get("tab") || "overview";
       return currentHref.startsWith("/platform-admin") && currentTab === itemTab;
     }
+    if (href === "/maps") {
+      return location === "/maps" || location.startsWith("/maps/");
+    }
     return location === href || currentHref === href;
   };
 
