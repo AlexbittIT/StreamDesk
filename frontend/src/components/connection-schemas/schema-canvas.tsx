@@ -1652,7 +1652,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                     );
                   })}
                 </g>
-              );
+             );
             })}
 
             {/* Перетаскиваемое устройство — рендерится последним (поверх всех) */}

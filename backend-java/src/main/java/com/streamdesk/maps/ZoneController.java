@@ -2,7 +2,9 @@ package com.streamdesk.maps;
 
 import com.streamdesk.auth.AuthenticatedUser;
 import com.streamdesk.maps.dto.ZoneAssigneeRequest;
+import com.streamdesk.maps.dto.ZoneCommentRequest;
 import com.streamdesk.maps.dto.ZoneCreateRequest;
+import com.streamdesk.maps.dto.ZonePhotoRequest;
 import com.streamdesk.maps.dto.ZoneStatusRequest;
 import com.streamdesk.maps.dto.ZoneUpdateRequest;
 import org.springframework.http.HttpStatus;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -23,7 +26,7 @@ import java.util.Map;
 
 /**
  * REST-контроллер зон — {@code /api/maps/{mapId}/zones/**} по контракту docs/openapi-maps.yaml.
- * Комментарии и фото зоны ({@code /comments}, {@code /photos}) — отдельная задача VM-16.
+ * Включая комментарии ({@code /comments}) и фото ({@code /photos}) зоны.
  */
 @RestController
 @RequestMapping("/api/maps/{mapId}/zones")
@@ -83,5 +86,33 @@ public class ZoneController {
                        @RequestBody ZoneAssigneeRequest req,
                        @AuthenticationPrincipal AuthenticatedUser user) {
         return zoneService.assign(mapId, zoneId, req, user);
+    }
+
+    @PostMapping("/{zoneId}/comments")
+    public Zone addComment(@PathVariable String mapId, @PathVariable String zoneId,
+                           @RequestBody ZoneCommentRequest req,
+                           @AuthenticationPrincipal AuthenticatedUser user) {
+        return zoneService.addComment(mapId, zoneId, req, user);
+    }
+
+    @DeleteMapping("/{zoneId}/comments/{commentId}")
+    public Zone deleteComment(@PathVariable String mapId, @PathVariable String zoneId,
+                              @PathVariable String commentId,
+                              @AuthenticationPrincipal AuthenticatedUser user) {
+        return zoneService.deleteComment(mapId, zoneId, commentId, user);
+    }
+
+    @PostMapping("/{zoneId}/photos")
+    public Zone addPhoto(@PathVariable String mapId, @PathVariable String zoneId,
+                         @RequestBody ZonePhotoRequest req,
+                         @AuthenticationPrincipal AuthenticatedUser user) {
+        return zoneService.addPhoto(mapId, zoneId, req, user);
+    }
+
+    @DeleteMapping("/{zoneId}/photos")
+    public Zone deletePhoto(@PathVariable String mapId, @PathVariable String zoneId,
+                            @RequestParam("url") String url,
+                            @AuthenticationPrincipal AuthenticatedUser user) {
+        return zoneService.deletePhoto(mapId, zoneId, url, user);
     }
 }
