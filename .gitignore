@@ -103,6 +103,7 @@ attached_assets/
 !create_connection_schemas_tables.sql
 !create_equipment_ports_tables.sql
 !add_role_data_scope.sql
+!create_staff_availability_tables.sql
 *.db-journal
 *.db-shm
 *.db-wal
