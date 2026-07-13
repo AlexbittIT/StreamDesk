@@ -7,6 +7,7 @@ public record NotificationRequest(
         String userId,
         String title,
         String message,
-        String type
+        String type,
+        String link
 ) {
 }

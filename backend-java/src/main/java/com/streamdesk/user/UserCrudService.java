@@ -154,6 +154,9 @@ public class UserCrudService {
         if (req.workspaceMode() != null) {
             user.setWorkspaceMode(req.workspaceMode());
         }
+        if (req.emailNotificationsEnabled() != null) {
+            user.setEmailNotificationsEnabled(req.emailNotificationsEnabled());
+        }
         if (req.password() != null && !req.password().isEmpty()) {
             user.setPassword(passwordService.hashPassword(req.password()));
         }

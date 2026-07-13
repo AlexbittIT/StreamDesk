@@ -19,6 +19,7 @@ public record UserWriteRequest(
         String avatar,
         Boolean active,
         Boolean onboardingCompleted,
-        String workspaceMode
+        String workspaceMode,
+        Boolean emailNotificationsEnabled
 ) {
 }

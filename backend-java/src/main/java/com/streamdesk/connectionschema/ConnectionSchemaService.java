@@ -1,6 +1,9 @@
 package com.streamdesk.connectionschema;
 
 import com.streamdesk.ai.DeepSeekClient;
+import com.streamdesk.auth.AuthenticatedUser;
+import com.streamdesk.company.CompanyMember;
+import com.streamdesk.company.CompanyService;
 import com.streamdesk.config.ApiException;
 import com.streamdesk.connectionschema.dto.AiSchemaRequest;
 import com.streamdesk.connectionschema.dto.AiSchemaResponse;
@@ -12,6 +15,11 @@ import com.streamdesk.connectionschema.validation.ConnectionValidator;
 import com.streamdesk.connectionschema.validation.ConnectorTypes;
 import com.streamdesk.connectionschema.validation.ValidationResult;
 import com.streamdesk.connectionschema.validation.Violation;
+import com.streamdesk.notification.NotificationService;
+import com.streamdesk.notification.email.EmailService;
+import com.streamdesk.user.User;
+import com.streamdesk.user.UserService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,9 +27,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -36,15 +46,30 @@ public class ConnectionSchemaService {
     private final ConnectionSchemaComponentRepository componentRepository;
     private final AiSchemaService aiSchemaService;
     private final DeepSeekClient deepSeek;
+    private final CompanyService companyService;
+    private final UserService userService;
+    private final NotificationService notificationService;
+    private final EmailService emailService;
+    private final String frontendUrl;
 
     public ConnectionSchemaService(ConnectionSchemaRepository schemaRepository,
                                    ConnectionSchemaComponentRepository componentRepository,
                                    AiSchemaService aiSchemaService,
-                                   DeepSeekClient deepSeek) {
+                                   DeepSeekClient deepSeek,
+                                   CompanyService companyService,
+                                   UserService userService,
+                                   NotificationService notificationService,
+                                   EmailService emailService,
+                                   @Value("${app.frontend-url:}") String frontendUrl) {
         this.schemaRepository = schemaRepository;
         this.componentRepository = componentRepository;
         this.aiSchemaService = aiSchemaService;
         this.deepSeek = deepSeek;
+        this.companyService = companyService;
+        this.userService = userService;
+        this.notificationService = notificationService;
+        this.emailService = emailService;
+        this.frontendUrl = frontendUrl;
     }
 
     public List<ConnectionSchema> list() {
@@ -117,9 +142,10 @@ public class ConnectionSchemaService {
     }
 
     @Transactional
-    public ConnectionSchemaComponent updateComponent(String id, ComponentRequest req) {
+    public ConnectionSchemaComponent updateComponent(String id, ComponentRequest req, AuthenticatedUser actor) {
         ConnectionSchemaComponent component = componentRepository.findById(id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Component not found"));
+        String previousStatus = asString(component.getProperties() != null ? component.getProperties().get("status") : null);
         if (!isBlank(req.type())) {
             component.setType(req.type());
         }
@@ -136,7 +162,56 @@ public class ConnectionSchemaService {
             component.setConnections(req.connections());
         }
         component.setUpdatedAt(Instant.now());
-        return componentRepository.save(component);
+        ConnectionSchemaComponent saved = componentRepository.save(component);
+
+        if ("zone".equals(saved.getType())) {
+            String newStatus = asString(saved.getProperties() != null ? saved.getProperties().get("status") : null);
+            if ("problem".equals(newStatus) && !"problem".equals(previousStatus)) {
+                notifyZoneProblem(saved, actor);
+            }
+        }
+        return saved;
+    }
+
+    /**
+     * Уведомляет админов компании о зоне, помеченной «Проблема» — in-app всегда,
+     * email — только тем, кто включил email-дублирование в настройках.
+     * Best-effort: сбой уведомления не должен ломать сохранение статуса зоны.
+     */
+    private void notifyZoneProblem(ConnectionSchemaComponent zone, AuthenticatedUser actor) {
+        if (actor == null || actor.id() == null) {
+            return;
+        }
+        ConnectionSchema schema = schemaRepository.findById(zone.getSchemaId()).orElse(null);
+        String schemaName = schema != null ? schema.getName() : "схема";
+        String link = "/connection-schemas?schemaId=" + zone.getSchemaId() + "&zoneId=" + zone.getId();
+
+        Set<String> adminUserIds = new HashSet<>();
+        for (String companyId : companyService.getUserCompanyIds(actor)) {
+            for (CompanyMember member : companyService.getCompanyMembers(companyId)) {
+                boolean isCompanyAdmin = "active".equals(member.getStatus())
+                        && ("owner".equals(member.getRole()) || "admin".equals(member.getRole()));
+                if (isCompanyAdmin && !actor.id().equals(member.getUserId())) {
+                    adminUserIds.add(member.getUserId());
+                }
+            }
+        }
+        if (adminUserIds.isEmpty()) {
+            return;
+        }
+
+        String title = "Проблема в зоне «" + zone.getName() + "»";
+        String message = actor.name() + " пометил(а) зону «" + zone.getName() + "» на схеме «" + schemaName
+                + "» как проблемную.";
+        String emailBody = message + (isBlank(frontendUrl) ? "\n\nСсылка: " + link : "\n\nСсылка: " + frontendUrl + link);
+
+        for (String userId : adminUserIds) {
+            notificationService.notify(userId, title, message, "warning", link);
+            User admin = userService.findById(userId).orElse(null);
+            if (admin != null && Boolean.TRUE.equals(admin.getEmailNotificationsEnabled()) && !isBlank(admin.getEmail())) {
+                emailService.send(admin.getEmail(), title, emailBody);
+            }
+        }
     }
 
     @Transactional

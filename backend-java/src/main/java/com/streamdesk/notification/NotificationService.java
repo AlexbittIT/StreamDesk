@@ -42,12 +42,19 @@ public class NotificationService {
         if (!isBlank(req.type())) {
             notification.setType(req.type());
         }
+        notification.setLink(req.link());
         return repository.save(notification);
     }
 
     /** Создать уведомление из другого сервиса. Ошибки только логируем, наружу не пробрасываем. */
     @Transactional
     public void notify(String userId, String title, String message, String type) {
+        notify(userId, title, message, type, null);
+    }
+
+    /** Тот же best-effort notify, но со ссылкой на фронтенде (например, на зону схемы). */
+    @Transactional
+    public void notify(String userId, String title, String message, String type, String link) {
         try {
             if (isBlank(userId)) {
                 return;
@@ -59,6 +66,7 @@ public class NotificationService {
             if (!isBlank(type)) {
                 notification.setType(type);
             }
+            notification.setLink(link);
             repository.save(notification);
         } catch (Exception e) {
             log.warn("[Notifications] Не удалось создать уведомление для {}: {}", userId, e.getMessage());
