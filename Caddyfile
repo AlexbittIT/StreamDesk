@@ -13,8 +13,18 @@
 #   {
 #       email admin@example.ru
 #   }
+#
+# ВАЖНО (streamdesk.ru): перед сервером стоит внешний edge/WAF-прокси
+# провайдера (виден как "Server: Angie"), который сам терминирует TLS для
+# браузеров и форвардит запросы на origin по обычному HTTP. ACME-провалидация
+# Let's Encrypt (TLS-ALPN-01 и HTTP-01) до этого Caddy не доходит — WAF её
+# либо блокирует (tls-alpn: "Network unreachable"), либо отвечает своим 404
+# на /.well-known/acme-challenge/. Поэтому здесь схема жёстко "http://":
+# Caddy НЕ пытается получить сертификат сам, а просто отдаёт HTTP, доверяя
+# TLS внешнему прокси. Если когда-нибудь домен уйдёт с этого edge/WAF
+# напрямую на сервер — верни автоматический HTTPS, убрав "http://".
 
-{$SITE_DOMAIN:localhost} {
+http://{$SITE_DOMAIN:localhost} {
 	encode gzip
 	# Единственный апстрим: приложение отдаёт и SPA, и /api на порту 5050
 	# по внутренней docker-сети (хост = имя сервиса "app").
