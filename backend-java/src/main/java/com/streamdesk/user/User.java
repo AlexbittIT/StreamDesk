@@ -68,6 +68,10 @@ public class User {
     @Column(name = "active")
     private Boolean active = true;
 
+    // Согласие на дублирование уведомлений почтой (помимо in-app). Подтверждается в настройках.
+    @Column(name = "email_notifications_enabled")
+    private Boolean emailNotificationsEnabled = true;
+
     @Column(name = "onboarding_completed")
     private Boolean onboardingCompleted = false;
 

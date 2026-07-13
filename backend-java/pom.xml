@@ -46,6 +46,12 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- Email-уведомления (дублирование in-app уведомлений почтой по согласию пользователя) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- Драйвер PostgreSQL -->
         <dependency>
             <groupId>org.postgresql</groupId>

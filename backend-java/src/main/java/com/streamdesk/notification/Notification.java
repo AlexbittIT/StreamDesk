@@ -36,6 +36,10 @@ public class Notification {
     @Column(name = "type", nullable = false)
     private String type = "info";
 
+    // Относительный путь фронтенда, куда ведёт уведомление (например, на зону схемы). Может быть null.
+    @Column(name = "link")
+    private String link;
+
     @Column(name = "read")
     private Boolean read = false;
 

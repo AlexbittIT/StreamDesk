@@ -92,8 +92,9 @@ public class ConnectionSchemaController {
     }
 
     @PutMapping("/components/{id}")
-    public ConnectionSchemaComponent updateComponent(@PathVariable String id, @RequestBody ComponentRequest req) {
-        return schemaService.updateComponent(id, req);
+    public ConnectionSchemaComponent updateComponent(@PathVariable String id, @RequestBody ComponentRequest req,
+                                                      @AuthenticationPrincipal AuthenticatedUser user) {
+        return schemaService.updateComponent(id, req, user);
     }
 
     @DeleteMapping("/components/{id}")

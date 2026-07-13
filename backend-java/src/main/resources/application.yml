@@ -43,11 +43,29 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
+  # SMTP для дублирования уведомлений почтой (email-нотификации админам компании и т.п.).
+  # Без MAIL_HOST письма не уходят: EmailService best-effort — ошибку только логирует.
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
 # Источники, которым разрешён доступ с куками (dev-сервер фронта и текущий бэкенд).
 # Переопределяется переменной CORS_ALLOWED_ORIGINS (через запятую).
 app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5000,http://localhost:3000}
+  # Публичный адрес фронтенда — для абсолютных ссылок в письмах (например, на проблемную зону).
+  frontend-url: ${FRONTEND_URL:}
+  mail:
+    from: ${MAIL_FROM:${MAIL_USERNAME:noreply@streamdesk.local}}
   # Fallback-админ для теста — как ALLOW_FALLBACK_ADMIN/ADMIN_* в Express.
   auth:
     fallback-admin-enabled: ${ALLOW_FALLBACK_ADMIN:true}
