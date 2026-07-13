@@ -3,7 +3,9 @@ package com.streamdesk.maps;
 import com.streamdesk.auth.AuthenticatedUser;
 import com.streamdesk.config.ApiException;
 import com.streamdesk.maps.dto.ZoneAssigneeRequest;
+import com.streamdesk.maps.dto.ZoneCommentRequest;
 import com.streamdesk.maps.dto.ZoneCreateRequest;
+import com.streamdesk.maps.dto.ZonePhotoRequest;
 import com.streamdesk.maps.dto.ZoneStatusRequest;
 import com.streamdesk.maps.dto.ZoneUpdateRequest;
 import com.streamdesk.maps.event.ZoneAssigneeChangedEvent;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -190,6 +193,81 @@ public class ZoneService {
         events.publishEvent(new ZoneAssigneeChangedEvent(
                 saved, saved.getAssigneeId(), saved.getAssigneeType(), user != null ? user.id() : null));
         return saved;
+    }
+
+    /**
+     * Добавить комментарий к зоне. Доступно любому, кто видит зону (в т.ч. ответственному-работнику).
+     * Автор и время фиксируются на сервере.
+     */
+    @Transactional
+    public Zone addComment(String mapId, String zoneId, ZoneCommentRequest req, AuthenticatedUser user) {
+        Zone zone = access.requireZone(mapId, zoneId, user);
+        String text = req != null ? req.text() : null;
+        if (isBlank(text)) {
+            throw ApiException.badRequest("Комментарий не может быть пустым");
+        }
+        String authorName = user != null ? (user.name() != null ? user.name() : user.username()) : null;
+        ZoneComment comment = new ZoneComment(user != null ? user.id() : null, authorName, text.trim());
+        List<ZoneComment> comments = zone.getComments() != null ? zone.getComments() : new ArrayList<>();
+        comments.add(comment);
+        zone.setComments(comments);
+        zone.setCommentsCount(comments.size());
+        zone.setUpdatedAt(Instant.now());
+        return zoneRepository.save(zone);
+    }
+
+    /** Удалить комментарий: может автор или менеджер площадок. */
+    @Transactional
+    public Zone deleteComment(String mapId, String zoneId, String commentId, AuthenticatedUser user) {
+        Zone zone = access.requireZone(mapId, zoneId, user);
+        List<ZoneComment> comments = zone.getComments() != null ? zone.getComments() : new ArrayList<>();
+        ZoneComment target = comments.stream()
+                .filter(c -> c.getId() != null && c.getId().equals(commentId))
+                .findFirst()
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Комментарий не найден"));
+        boolean isAuthor = user != null && user.id() != null && user.id().equals(target.getAuthorId());
+        if (!isAuthor && !access.canManageMaps(user, zone.getCompanyId())) {
+            throw ApiException.forbidden("Можно удалить только свой комментарий");
+        }
+        comments.remove(target);
+        zone.setComments(comments);
+        zone.setCommentsCount(comments.size());
+        zone.setUpdatedAt(Instant.now());
+        return zoneRepository.save(zone);
+    }
+
+    /** Прикрепить фото (URL уже загруженного файла) к зоне. Доступно любому, кто видит зону. */
+    @Transactional
+    public Zone addPhoto(String mapId, String zoneId, ZonePhotoRequest req, AuthenticatedUser user) {
+        Zone zone = access.requireZone(mapId, zoneId, user);
+        String url = req != null ? req.url() : null;
+        if (isBlank(url)) {
+            throw ApiException.badRequest("Не указан URL фото");
+        }
+        List<String> photos = zone.getPhotos() != null ? zone.getPhotos() : new ArrayList<>();
+        if (!photos.contains(url.trim())) {
+            photos.add(url.trim());
+        }
+        zone.setPhotos(photos);
+        zone.setPhotosCount(photos.size());
+        zone.setUpdatedAt(Instant.now());
+        return zoneRepository.save(zone);
+    }
+
+    /** Открепить фото по URL: только менеджер площадок. */
+    @Transactional
+    public Zone deletePhoto(String mapId, String zoneId, String url, AuthenticatedUser user) {
+        Zone zone = access.requireZone(mapId, zoneId, user);
+        access.requireCanManageMaps(user, zone.getCompanyId());
+        if (isBlank(url)) {
+            throw ApiException.badRequest("Не указан URL фото");
+        }
+        List<String> photos = zone.getPhotos() != null ? zone.getPhotos() : new ArrayList<>();
+        photos.remove(url.trim());
+        zone.setPhotos(photos);
+        zone.setPhotosCount(photos.size());
+        zone.setUpdatedAt(Instant.now());
+        return zoneRepository.save(zone);
     }
 
     // --- helpers ---

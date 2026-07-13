@@ -3,6 +3,7 @@ package com.streamdesk.maps;
 import com.streamdesk.auth.AuthenticatedUser;
 import com.streamdesk.maps.dto.MapCreateRequest;
 import com.streamdesk.maps.dto.MapResponse;
+import com.streamdesk.maps.dto.PlanRectRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -74,5 +75,20 @@ public class MapController {
                                   @RequestParam("file") MultipartFile file,
                                   @AuthenticationPrincipal AuthenticatedUser user) {
         return mapService.savePlan(mapId, file, user);
+    }
+
+    /** Удалить подложку (план) карты: очищает {@code imageUrl} и размеры/положение плана. */
+    @DeleteMapping("/{mapId}/plan")
+    public MapResponse removePlan(@PathVariable String mapId,
+                                  @AuthenticationPrincipal AuthenticatedUser user) {
+        return mapService.removePlan(mapId, user);
+    }
+
+    /** Сохранить прямоугольник отрисовки плана (ресайз за углы, в координатах сцены). */
+    @PutMapping("/{mapId}/plan/rect")
+    public MapResponse savePlanRect(@PathVariable String mapId,
+                                    @RequestBody PlanRectRequest req,
+                                    @AuthenticationPrincipal AuthenticatedUser user) {
+        return mapService.savePlanRect(mapId, req, user);
     }
 }

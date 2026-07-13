@@ -43,6 +43,21 @@ public class SiteMap {
     @Column(name = "image_height")
     private Integer imageHeight;
 
+    // Прямоугольник отрисовки плана на холсте (в координатах сцены = пикселях изображения).
+    // null → план рисуется во весь кадр (0,0,imageWidth,imageHeight). Меняется ресайзом за углы;
+    // зоны в этих же координатах не двигаются — как в схемах подключения.
+    @Column(name = "plan_x")
+    private Integer planX;
+
+    @Column(name = "plan_y")
+    private Integer planY;
+
+    @Column(name = "plan_width")
+    private Integer planWidth;
+
+    @Column(name = "plan_height")
+    private Integer planHeight;
+
     @Column(name = "created_by")
     private String createdBy;
 

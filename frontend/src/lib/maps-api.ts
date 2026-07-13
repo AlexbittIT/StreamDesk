@@ -13,6 +13,14 @@ export type ZonePoint = {
   y: number;
 };
 
+export type ZoneComment = {
+  id: string;
+  authorId?: string | null;
+  authorName?: string | null;
+  text: string;
+  createdAt?: string;
+};
+
 export type MapZone = {
   id: string;
   mapId: string;
@@ -24,6 +32,8 @@ export type MapZone = {
   assigneeType?: string | null;
   color?: string | null;
   version: number;
+  comments?: ZoneComment[] | null;
+  photos?: string[] | null;
   commentsCount?: number;
   photosCount?: number;
   createdBy?: string | null;
@@ -39,11 +49,18 @@ export type SiteMap = {
   imageUrl?: string | null;
   imageWidth?: number | null;
   imageHeight?: number | null;
+  /** Прямоугольник отрисовки плана на холсте (координаты сцены); null → во весь кадр. */
+  planX?: number | null;
+  planY?: number | null;
+  planWidth?: number | null;
+  planHeight?: number | null;
   zonesCount: number;
   createdBy?: string | null;
   createdAt?: string;
   updatedAt?: string;
 };
+
+export type PlanRect = { x: number; y: number; width: number; height: number };
 
 export type MapWithZones = SiteMap & {
   zones?: MapZone[];
@@ -152,6 +169,21 @@ export async function uploadMapPlan(mapId: string, file: File): Promise<SiteMap>
   return response.json();
 }
 
+export async function removeMapPlan(mapId: string): Promise<SiteMap> {
+  const response = await apiRequest("DELETE", `/api/maps/${mapId}/plan`);
+  return response.json();
+}
+
+export async function saveMapPlanRect(mapId: string, rect: PlanRect): Promise<SiteMap> {
+  const response = await apiRequest("PUT", `/api/maps/${mapId}/plan/rect`, {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  });
+  return response.json();
+}
+
 export async function createZone(mapId: string, payload: { name: string; points: ZonePoint[]; status?: ZoneStatus }): Promise<MapZone> {
   const response = await apiRequest("POST", `/api/maps/${mapId}/zones`, payload);
   return response.json();
@@ -169,6 +201,48 @@ export async function deleteZone(mapId: string, zoneId: string): Promise<void> {
 export async function changeZoneStatus(mapId: string, zoneId: string, status: ZoneStatus, version: number): Promise<MapZone> {
   const response = await apiRequest("PATCH", `/api/maps/${mapId}/zones/${zoneId}/status`, { status, version });
   return response.json();
+}
+
+export async function assignZone(
+  mapId: string,
+  zoneId: string,
+  assigneeId: string | null,
+  assigneeType: string = "user",
+): Promise<MapZone> {
+  const response = await apiRequest("PUT", `/api/maps/${mapId}/zones/${zoneId}/assignee`, {
+    assigneeId: assigneeId || null,
+    assigneeType,
+  });
+  return response.json();
+}
+
+export async function addZoneComment(mapId: string, zoneId: string, text: string): Promise<MapZone> {
+  const response = await apiRequest("POST", `/api/maps/${mapId}/zones/${zoneId}/comments`, { text });
+  return response.json();
+}
+
+export async function deleteZoneComment(mapId: string, zoneId: string, commentId: string): Promise<MapZone> {
+  const response = await apiRequest("DELETE", `/api/maps/${mapId}/zones/${zoneId}/comments/${commentId}`);
+  return response.json();
+}
+
+export async function addZonePhoto(mapId: string, zoneId: string, url: string): Promise<MapZone> {
+  const response = await apiRequest("POST", `/api/maps/${mapId}/zones/${zoneId}/photos`, { url });
+  return response.json();
+}
+
+export async function deleteZonePhoto(mapId: string, zoneId: string, url: string): Promise<MapZone> {
+  const response = await apiRequest("DELETE", `/api/maps/${mapId}/zones/${zoneId}/photos?url=${encodeURIComponent(url)}`);
+  return response.json();
+}
+
+/** Загрузить файл фото (переиспользуем общий эндпоинт) и получить его URL. */
+export async function uploadZonePhotoFile(file: File): Promise<string> {
+  const formData = new FormData();
+  formData.append("photo", file);
+  const response = await apiRequest("POST", "/api/equipment/photos/upload", formData, true);
+  const data = await response.json();
+  return data.url as string;
 }
 
 export function mapImageUrl(src?: string | null): string {

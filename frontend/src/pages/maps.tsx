@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapCanvas } from "@/components/maps/map-canvas";
@@ -22,30 +22,44 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
+  addZoneComment,
+  addZonePhoto,
+  assignZone,
   canEditMaps,
   changeZoneStatus,
   createMap,
   createZone,
   deleteMap,
   deleteZone,
+  deleteZoneComment,
+  deleteZonePhoto,
   filterMapsByName,
   getAllowedNextStatuses,
   getMap,
   listMaps,
   MAP_STATUS_META,
   mapImageUrl,
+  removeMapPlan,
+  saveMapPlanRect,
   updateMap,
   updateZone,
   uploadMapPlan,
+  uploadZonePhotoFile,
   type MapWithZones,
   type MapZone,
+  type PlanRect,
   type SiteMap,
+  type ZoneComment,
   type ZonePoint,
   type ZoneStatus,
 } from "@/lib/maps-api";
+
+/** Пользователь для выпадающего списка «Ответственный» (ответ /api/users). */
+type ZoneUser = { id: string; name?: string; username?: string; role?: string };
 import {
   AlertCircle,
   AlertTriangle,
@@ -53,11 +67,16 @@ import {
   Calendar,
   Edit,
   Loader2,
+  ImagePlus,
   Map,
+  MessageSquare,
   Plus,
+  Scaling,
   Search,
+  Send,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 
 function getCurrentUser() {
@@ -431,26 +450,198 @@ function MapLegend({ map }: { map: MapWithZones }) {
   );
 }
 
+/** Отображаемое имя ответственного по его id. */
+function assigneeLabel(users: ZoneUser[], assigneeId?: string | null): string {
+  if (!assigneeId) return "Не назначен";
+  const user = users.find((candidate) => candidate.id === assigneeId);
+  return user?.name || user?.username || assigneeId;
+}
+
+const UNASSIGNED = "__none__";
+
+function formatDateTime(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Комментарии и фото зоны: доступны всем, кто видит зону; удаление ограничено правами. */
+function ZoneMaterials({
+  zone,
+  users,
+  currentUserId,
+  canManage,
+  commentPending,
+  photoPending,
+  onAddComment,
+  onDeleteComment,
+  onAddPhotos,
+  onDeletePhoto,
+}: {
+  zone: MapZone;
+  users: ZoneUser[];
+  currentUserId?: string;
+  canManage: boolean;
+  commentPending?: boolean;
+  photoPending?: boolean;
+  onAddComment: (zone: MapZone, text: string) => void;
+  onDeleteComment: (zone: MapZone, commentId: string) => void;
+  onAddPhotos: (zone: MapZone, files: File[]) => void;
+  onDeletePhoto: (zone: MapZone, url: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const comments = zone.comments || [];
+  const photos = zone.photos || [];
+
+  const authorName = (comment: ZoneComment) => {
+    if (comment.authorName) return comment.authorName;
+    const user = users.find((candidate) => candidate.id === comment.authorId);
+    return user?.name || user?.username || "Аноним";
+  };
+  const canDeleteComment = (comment: ZoneComment) =>
+    canManage || (!!currentUserId && comment.authorId === currentUserId);
+
+  const submitComment = () => {
+    const value = text.trim();
+    if (!value) return;
+    onAddComment(zone, value);
+    setText("");
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="space-y-2">
+        <Label className="flex items-center gap-1.5">
+          <ImagePlus className="h-4 w-4" />
+          Фото ({photos.length})
+        </Label>
+        {photos.length > 0 && (
+          <div className="grid grid-cols-3 gap-1.5">
+            {photos.map((url) => (
+              <div key={url} className="group relative">
+                <a href={mapImageUrl(url)} target="_blank" rel="noreferrer">
+                  <img src={mapImageUrl(url)} alt="" className="h-20 w-full rounded-md border object-cover" />
+                </a>
+                {canManage && (
+                  <button
+                    type="button"
+                    onClick={() => onDeletePhoto(zone, url)}
+                    className="absolute -right-1.5 -top-1.5 rounded-full bg-destructive p-0.5 text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                    aria-label="Удалить фото"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            const files = Array.from(event.target.files || []);
+            if (files.length) onAddPhotos(zone, files);
+            if (fileRef.current) fileRef.current.value = "";
+          }}
+        />
+        <Button type="button" variant="outline" size="sm" className="w-full gap-1.5" disabled={photoPending} onClick={() => fileRef.current?.click()}>
+          {photoPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+          {photoPending ? "Загрузка…" : "Добавить фото"}
+        </Button>
+      </div>
+
+      <div className="space-y-2">
+        <Label className="flex items-center gap-1.5">
+          <MessageSquare className="h-4 w-4" />
+          Комментарии ({comments.length})
+        </Label>
+        <div className="space-y-2">
+          {comments.length === 0 ? (
+            <p className="text-sm italic text-muted-foreground">Комментариев пока нет</p>
+          ) : (
+            comments.map((comment) => (
+              <div key={comment.id} className="rounded-md border bg-muted/30 p-2 text-sm">
+                <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span className="truncate font-medium text-foreground">{authorName(comment)}</span>
+                  <span className="flex items-center gap-1.5 whitespace-nowrap">
+                    {formatDateTime(comment.createdAt)}
+                    {canDeleteComment(comment) && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteComment(zone, comment.id)}
+                        className="text-muted-foreground hover:text-destructive"
+                        aria-label="Удалить комментарий"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </span>
+                </div>
+                <p className="whitespace-pre-wrap break-words">{comment.text}</p>
+              </div>
+            ))
+          )}
+        </div>
+        <Textarea
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          rows={2}
+          placeholder="Написать комментарий…"
+          className="resize-none"
+        />
+        <Button type="button" size="sm" className="gap-1.5" disabled={commentPending || !text.trim()} onClick={submitComment}>
+          {commentPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          Отправить
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function ZonePanel({
   map,
   zone,
   open,
   canManage,
+  users,
+  currentUserId,
   onOpenChange,
   onRename,
   onDelete,
   onStatusChange,
+  onAssign,
+  onAddComment,
+  onDeleteComment,
+  onAddPhotos,
+  onDeletePhoto,
   pending,
+  commentPending,
+  photoPending,
 }: {
   map: MapWithZones;
   zone: MapZone | null;
   open: boolean;
   canManage: boolean;
+  users: ZoneUser[];
+  currentUserId?: string;
   onOpenChange: (open: boolean) => void;
   onRename: (zone: MapZone, name: string) => void;
   onDelete: (zone: MapZone) => void;
   onStatusChange: (zone: MapZone, status: ZoneStatus) => void;
+  onAssign: (zone: MapZone, assigneeId: string | null) => void;
+  onAddComment: (zone: MapZone, text: string) => void;
+  onDeleteComment: (zone: MapZone, commentId: string) => void;
+  onAddPhotos: (zone: MapZone, files: File[]) => void;
+  onDeletePhoto: (zone: MapZone, url: string) => void;
   pending?: boolean;
+  commentPending?: boolean;
+  photoPending?: boolean;
 }) {
   const [name, setName] = useState(zone?.name || "");
   // Сбрасываем поле переименования при переключении на другую зону (панель не перемонтируется).
@@ -498,16 +689,44 @@ function ZonePanel({
               </Select>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <div className="rounded-lg border p-3">
-                <p className="text-muted-foreground">Ответственный</p>
-                <p className="truncate font-medium">{zone.assigneeId || "Не назначен"}</p>
-              </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-muted-foreground">Материалы</p>
-                <p className="font-medium">{zone.commentsCount || 0} комм. · {zone.photosCount || 0} фото</p>
-              </div>
+            <div className="space-y-2">
+              <Label>Ответственный</Label>
+              {canManage ? (
+                <Select
+                  value={zone.assigneeId || UNASSIGNED}
+                  onValueChange={(value) => onAssign(zone, value === UNASSIGNED ? null : value)}
+                  disabled={pending}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Не назначен" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={UNASSIGNED}>Не назначен</SelectItem>
+                    {users.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        {user.name || user.username || user.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <p className="truncate font-medium">{assigneeLabel(users, zone.assigneeId)}</p>
+              )}
             </div>
+
+            <ZoneMaterials
+              key={zone.id}
+              zone={zone}
+              users={users}
+              currentUserId={currentUserId}
+              canManage={canManage}
+              commentPending={commentPending}
+              photoPending={photoPending}
+              onAddComment={onAddComment}
+              onDeleteComment={onDeleteComment}
+              onAddPhotos={onAddPhotos}
+              onDeletePhoto={onDeletePhoto}
+            />
 
             {canManage && (
               <div className="space-y-3 rounded-lg border p-3">
@@ -544,6 +763,16 @@ function MapDetailPage({ mapId }: { mapId: string }) {
   const canManage = canEditMaps(currentUser);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [planFile, setPlanFile] = useState<File | null>(null);
+  const [planEditMode, setPlanEditMode] = useState(false);
+  // Нарисованный полигон ждёт имени в диалоге, затем создаётся зона.
+  const [pendingPoints, setPendingPoints] = useState<ZonePoint[] | null>(null);
+  const [newZoneName, setNewZoneName] = useState("");
+
+  // Пользователи для выпадающего «Ответственный» (только менеджерам).
+  const { data: users = [] } = useQuery<ZoneUser[]>({
+    queryKey: ["/api/users"],
+    enabled: canManage,
+  });
 
   const { data: map, isLoading, isError, error, refetch } = useQuery<MapWithZones>({
     queryKey: ["/api/maps", mapId],
@@ -576,14 +805,95 @@ function MapDetailPage({ mapId }: { mapId: string }) {
     },
   });
 
+  const removePlanMutation = useMutation({
+    mutationFn: () => removeMapPlan(mapId),
+    onSuccess: () => {
+      invalidateMap();
+      setPlanEditMode(false);
+      toast({ title: "План удалён" });
+    },
+    onError: (e: any) => {
+      toast({ title: "Ошибка", description: e?.message || "Не удалось удалить план", variant: "destructive" });
+    },
+  });
+
+  const resizePlanMutation = useMutation({
+    // Срабатывает на каждое завершение перетаскивания/ресайза — без тоста, чтобы не спамить.
+    mutationFn: (rect: PlanRect) => saveMapPlanRect(mapId, rect),
+    onSuccess: () => invalidateMap(),
+    onError: (e: any) => {
+      invalidateMap();
+      toast({ title: "Ошибка", description: e?.message || "Не удалось сохранить размер плана", variant: "destructive" });
+    },
+  });
+
   const createZoneMutation = useMutation({
     mutationFn: ({ name, points }: { name: string; points: ZonePoint[] }) => createZone(mapId, { name, points }),
     onSuccess: (zone) => {
       invalidateMap();
       setSelectedZoneId(zone.id);
+      setPendingPoints(null);
+      setNewZoneName("");
       toast({ title: "Зона создана" });
     },
     onError: (e: any) => toast({ title: "Ошибка", description: e?.message || "Не удалось создать зону", variant: "destructive" }),
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: ({ zone, assigneeId }: { zone: MapZone; assigneeId: string | null }) => assignZone(mapId, zone.id, assigneeId),
+    onSuccess: (zone) => {
+      invalidateMap();
+      setSelectedZoneId(zone.id);
+      toast({ title: "Ответственный обновлён" });
+    },
+    onError: (e: any) => {
+      invalidateMap();
+      toast({ title: "Ошибка", description: e?.message || "Не удалось назначить ответственного", variant: "destructive" });
+    },
+  });
+
+  const addCommentMutation = useMutation({
+    mutationFn: ({ zone, text }: { zone: MapZone; text: string }) => addZoneComment(mapId, zone.id, text),
+    onSuccess: (zone) => {
+      invalidateMap();
+      setSelectedZoneId(zone.id);
+    },
+    onError: (e: any) => toast({ title: "Ошибка", description: e?.message || "Не удалось добавить комментарий", variant: "destructive" }),
+  });
+
+  const deleteCommentMutation = useMutation({
+    mutationFn: ({ zone, commentId }: { zone: MapZone; commentId: string }) => deleteZoneComment(mapId, zone.id, commentId),
+    onSuccess: (zone) => {
+      invalidateMap();
+      setSelectedZoneId(zone.id);
+    },
+    onError: (e: any) => toast({ title: "Ошибка", description: e?.message || "Не удалось удалить комментарий", variant: "destructive" }),
+  });
+
+  const addPhotosMutation = useMutation({
+    mutationFn: async ({ zone, files }: { zone: MapZone; files: File[] }) => {
+      let latest = zone;
+      for (const file of files) {
+        const url = await uploadZonePhotoFile(file);
+        latest = await addZonePhoto(mapId, zone.id, url);
+      }
+      return latest;
+    },
+    onSuccess: (zone) => {
+      invalidateMap();
+      setSelectedZoneId(zone.id);
+      toast({ title: "Фото добавлено" });
+    },
+    onError: (e: any) => toast({ title: "Ошибка", description: e?.message || "Не удалось загрузить фото", variant: "destructive" }),
+  });
+
+  const deletePhotoMutation = useMutation({
+    mutationFn: ({ zone, url }: { zone: MapZone; url: string }) => deleteZonePhoto(mapId, zone.id, url),
+    onSuccess: (zone) => {
+      invalidateMap();
+      setSelectedZoneId(zone.id);
+    },
+    onError: (e: any) => toast({ title: "Ошибка", description: e?.message || "Не удалось удалить фото", variant: "destructive" }),
   });
 
   const updateZoneMutation = useMutation({
@@ -623,7 +933,18 @@ function MapDetailPage({ mapId }: { mapId: string }) {
     },
   });
 
-  const pending = uploadPlanMutation.isPending || createZoneMutation.isPending || updateZoneMutation.isPending || deleteZoneMutation.isPending || statusMutation.isPending;
+  const pending = uploadPlanMutation.isPending || createZoneMutation.isPending || updateZoneMutation.isPending || deleteZoneMutation.isPending || statusMutation.isPending || assignMutation.isPending;
+
+  const openNameDialog = (points: ZonePoint[]) => {
+    setPendingPoints(points);
+    setNewZoneName(`Зона ${(map?.zones?.length || 0) + 1}`);
+  };
+
+  const confirmCreateZone = () => {
+    const name = newZoneName.trim();
+    if (!pendingPoints || pendingPoints.length < 3 || !name) return;
+    createZoneMutation.mutate({ name, points: pendingPoints });
+  };
 
   if (isLoading) {
     return (
@@ -667,17 +988,45 @@ function MapDetailPage({ mapId }: { mapId: string }) {
           <MapLegend map={map} />
         </div>
         {canManage && (
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Input
-              type="file"
-              accept="image/png,image/jpeg"
-              onChange={(event) => setPlanFile(event.target.files?.[0] || null)}
-              className="max-w-xs"
-            />
-            <Button type="button" variant="outline" disabled={!planFile || uploadPlanMutation.isPending} onClick={() => planFile && uploadPlanMutation.mutate(planFile)} className="gap-1.5">
-              {uploadPlanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              Загрузить план
-            </Button>
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Input
+                type="file"
+                accept="image/png,image/jpeg"
+                onChange={(event) => setPlanFile(event.target.files?.[0] || null)}
+                className="max-w-xs"
+              />
+              <Button type="button" variant="outline" disabled={!planFile || uploadPlanMutation.isPending} onClick={() => planFile && uploadPlanMutation.mutate(planFile)} className="gap-1.5">
+                {uploadPlanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                Загрузить план
+              </Button>
+            </div>
+            {map.imageUrl && (
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 text-destructive hover:text-destructive"
+                  disabled={removePlanMutation.isPending}
+                  onClick={() => removePlanMutation.mutate()}
+                  title="Удалить план"
+                >
+                  {removePlanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                </Button>
+                <Button
+                  type="button"
+                  variant={planEditMode ? "default" : "outline"}
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => setPlanEditMode((value) => !value)}
+                  title={planEditMode ? "Завершить редактирование плана" : "Редактировать план: двигать и тянуть за углы"}
+                >
+                  <Scaling className="h-4 w-4" />
+                  {planEditMode ? "Готово" : "Редактировать"}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -688,8 +1037,11 @@ function MapDetailPage({ mapId }: { mapId: string }) {
         canEditZones={canManage}
         isMutating={pending}
         onZoneSelect={(zone) => setSelectedZoneId(zone?.id || null)}
-        onCreateZone={(name, points) => createZoneMutation.mutate({ name, points })}
+        onZoneDrawn={openNameDialog}
         onUpdateZonePoints={(zone, points) => updateZoneMutation.mutate({ zone, points })}
+        onZoneDelete={(zone) => deleteZoneMutation.mutate(zone)}
+        planEditMode={planEditMode}
+        onResizePlan={(rect) => resizePlanMutation.mutate(rect)}
       />
 
       <ZonePanel
@@ -697,12 +1049,52 @@ function MapDetailPage({ mapId }: { mapId: string }) {
         zone={selectedZone}
         open={Boolean(selectedZone)}
         canManage={canManage}
+        users={users}
+        currentUserId={currentUser?.id}
         pending={pending}
+        commentPending={addCommentMutation.isPending || deleteCommentMutation.isPending}
+        photoPending={addPhotosMutation.isPending || deletePhotoMutation.isPending}
         onOpenChange={(open) => !open && setSelectedZoneId(null)}
         onRename={(zone, name) => updateZoneMutation.mutate({ zone, name })}
         onDelete={(zone) => deleteZoneMutation.mutate(zone)}
         onStatusChange={(zone, status) => statusMutation.mutate({ zone, status })}
+        onAssign={(zone, assigneeId) => assignMutation.mutate({ zone, assigneeId })}
+        onAddComment={(zone, text) => addCommentMutation.mutate({ zone, text })}
+        onDeleteComment={(zone, commentId) => deleteCommentMutation.mutate({ zone, commentId })}
+        onAddPhotos={(zone, files) => addPhotosMutation.mutate({ zone, files })}
+        onDeletePhoto={(zone, url) => deletePhotoMutation.mutate({ zone, url })}
       />
+
+      <Dialog open={Boolean(pendingPoints)} onOpenChange={(open) => !open && setPendingPoints(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Название зоны</DialogTitle>
+            <DialogDescription>Область выделена на плане. Цвет зоны задаётся её статусом.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="new-zone-name">Название</Label>
+            <Input
+              id="new-zone-name"
+              value={newZoneName}
+              onChange={(event) => setNewZoneName(event.target.value)}
+              placeholder="Например: Сцена"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") confirmCreateZone();
+              }}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPendingPoints(null)}>
+              Отмена
+            </Button>
+            <Button type="button" onClick={confirmCreateZone} disabled={!newZoneName.trim() || createZoneMutation.isPending}>
+              {createZoneMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Создать зону
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -59,6 +59,14 @@ public class Zone {
     @Column(name = "version", nullable = false)
     private int version = 1;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "comments", columnDefinition = "jsonb")
+    private List<ZoneComment> comments = new ArrayList<>();
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "photos", columnDefinition = "jsonb")
+    private List<String> photos = new ArrayList<>();
+
     @Column(name = "comments_count", nullable = false)
     private int commentsCount = 0;
 

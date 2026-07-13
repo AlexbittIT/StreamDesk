@@ -4,6 +4,7 @@ import com.streamdesk.auth.AuthenticatedUser;
 import com.streamdesk.config.ApiException;
 import com.streamdesk.maps.dto.MapCreateRequest;
 import com.streamdesk.maps.dto.MapResponse;
+import com.streamdesk.maps.dto.PlanRectRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -94,6 +95,47 @@ public class MapService {
         map.setImageUrl(plan.url());
         map.setImageWidth(plan.width());
         map.setImageHeight(plan.height());
+        // Новый план рисуется во весь кадр: сбрасываем прежний прямоугольник ресайза.
+        map.setPlanX(null);
+        map.setPlanY(null);
+        map.setPlanWidth(null);
+        map.setPlanHeight(null);
+        map.setUpdatedAt(Instant.now());
+        return MapResponse.of(mapRepository.save(map), zoneRepository.countByMapId(mapId));
+    }
+
+    /** Удалить подложку: очищает ссылку на файл, натуральные размеры и прямоугольник ресайза. */
+    @Transactional
+    public MapResponse removePlan(String mapId, AuthenticatedUser user) {
+        SiteMap map = access.requireEditableMap(mapId, user);
+        map.setImageUrl(null);
+        map.setImageWidth(null);
+        map.setImageHeight(null);
+        map.setPlanX(null);
+        map.setPlanY(null);
+        map.setPlanWidth(null);
+        map.setPlanHeight(null);
+        map.setUpdatedAt(Instant.now());
+        return MapResponse.of(mapRepository.save(map), zoneRepository.countByMapId(mapId));
+    }
+
+    /**
+     * Сохранить прямоугольник отрисовки плана (ресайз за углы). Ширина/высота — не меньше 1;
+     * значения округляются к целым пикселям сцены.
+     */
+    @Transactional
+    public MapResponse savePlanRect(String mapId, PlanRectRequest req, AuthenticatedUser user) {
+        SiteMap map = access.requireEditableMap(mapId, user);
+        if (map.getImageUrl() == null) {
+            throw ApiException.badRequest("У карты нет плана");
+        }
+        if (req == null || req.width() == null || req.height() == null || req.x() == null || req.y() == null) {
+            throw ApiException.badRequest("Укажите x, y, width и height плана");
+        }
+        map.setPlanX(req.x());
+        map.setPlanY(req.y());
+        map.setPlanWidth(Math.max(1, req.width()));
+        map.setPlanHeight(Math.max(1, req.height()));
         map.setUpdatedAt(Instant.now());
         return MapResponse.of(mapRepository.save(map), zoneRepository.countByMapId(mapId));
     }

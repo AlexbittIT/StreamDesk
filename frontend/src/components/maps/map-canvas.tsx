@@ -12,15 +12,19 @@ import {
   zoomAtPoint,
   type MapWithZones,
   type MapZone,
+  type PlanRect,
   type Viewport,
   type ZonePoint,
 } from "@/lib/maps-api";
-import { Check, Edit3, LocateFixed, Minus, MousePointer2, Plus, RotateCcw, X } from "lucide-react";
+import { Check, Edit3, LocateFixed, Minus, MousePointer2, Plus, RotateCcw, Trash2, X } from "lucide-react";
 
 type DrawMode =
-  | { type: "create"; name: string }
+  | { type: "create" }
   | { type: "redraw"; zone: MapZone }
   | null;
+
+/** Порог замыкания контура кликом по первой вершине — в пикселях экрана (делится на масштаб). */
+const ZONE_CLOSE_PX = 14;
 
 /** Порядок наложения зон: выделенная — выше «Проблемы», «Проблема» — выше обычных. */
 function zoneStackRank(zone: MapZone, selectedZoneId?: string | null): number {
@@ -35,9 +39,19 @@ interface MapCanvasProps {
   canEditZones: boolean;
   isMutating?: boolean;
   onZoneSelect: (zone: MapZone | null) => void;
-  onCreateZone: (name: string, points: ZonePoint[]) => void;
+  /** Новый полигон нарисован — родитель спрашивает имя и создаёт зону. */
+  onZoneDrawn: (points: ZonePoint[]) => void;
   onUpdateZonePoints: (zone: MapZone, points: ZonePoint[]) => void;
+  /** Удаление зоны (правый клик → «Удалить»). */
+  onZoneDelete?: (zone: MapZone) => void;
+  /** Режим редактирования плана: перетаскивание и ресайз подложки за углы. */
+  planEditMode?: boolean;
+  /** Сохранение нового прямоугольника плана после перетаскивания/ресайза. */
+  onResizePlan?: (rect: PlanRect) => void;
 }
+
+/** Минимальный размер плана при ресайзе (в пикселях сцены). */
+const PLAN_MIN_SIZE = 40;
 
 export function MapCanvas({
   map,
@@ -45,8 +59,11 @@ export function MapCanvas({
   canEditZones,
   isMutating,
   onZoneSelect,
-  onCreateZone,
+  onZoneDrawn,
   onUpdateZonePoints,
+  onZoneDelete,
+  planEditMode = false,
+  onResizePlan,
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<any>(null);
@@ -55,11 +72,63 @@ export function MapCanvas({
   const [planImage, setPlanImage] = useState<HTMLImageElement | null>(null);
   const [drawMode, setDrawMode] = useState<DrawMode>(null);
   const [draftPoints, setDraftPoints] = useState<ZonePoint[]>([]);
+  // Позиция курсора (в координатах карты) для «резиновой» линии предпросмотра во время рисования.
+  const [cursorPoint, setCursorPoint] = useState<ZonePoint | null>(null);
+  // Контекстное меню зоны (координаты — относительно контейнера холста).
+  const [zoneMenu, setZoneMenu] = useState<{ x: number; y: number; zone: MapZone } | null>(null);
+  // Живой прямоугольник плана во время перетаскивания/ресайза (иначе — из props карты).
+  const [livePlanRect, setLivePlanRect] = useState<PlanRect | null>(null);
 
   const imageWidth = map.imageWidth || planImage?.naturalWidth || 1000;
   const imageHeight = map.imageHeight || planImage?.naturalHeight || 700;
   const zones = map.zones || [];
   const selectedZone = zones.find((zone) => zone.id === selectedZoneId) || null;
+
+  // Прямоугольник отрисовки плана: из props (planX/Y/W/H) либо во весь кадр; во время
+  // перетаскивания/ресайза — «живой».
+  const planRect: PlanRect = livePlanRect ?? {
+    x: map.planX ?? 0,
+    y: map.planY ?? 0,
+    width: map.planWidth ?? imageWidth,
+    height: map.planHeight ?? imageHeight,
+  };
+  const hasPlan = Boolean(planImage);
+
+  // Сбрасываем «живой» прямоугольник при выходе из режима редактирования плана.
+  useEffect(() => {
+    if (!planEditMode) setLivePlanRect(null);
+  }, [planEditMode]);
+
+  // Перетаскивание тела плана — смещение (размер не меняется).
+  const handlePlanDrag = (event: any, commit: boolean) => {
+    const rect = { x: event.target.x(), y: event.target.y(), width: planRect.width, height: planRect.height };
+    if (commit) {
+      setLivePlanRect(null);
+      onResizePlan?.(rect);
+    } else {
+      setLivePlanRect(rect);
+    }
+  };
+
+  // Перетаскивание угловой ручки — ресайз, противоположный угол зафиксирован.
+  const handleCornerDrag = (corner: "nw" | "ne" | "sw" | "se", event: any, commit: boolean) => {
+    const base = planRect;
+    const fixedX = corner === "nw" || corner === "sw" ? base.x + base.width : base.x;
+    const fixedY = corner === "nw" || corner === "ne" ? base.y + base.height : base.y;
+    const px = event.target.x();
+    const py = event.target.y();
+    const x = Math.min(fixedX, px);
+    const y = Math.min(fixedY, py);
+    const width = Math.max(PLAN_MIN_SIZE, Math.abs(px - fixedX));
+    const height = Math.max(PLAN_MIN_SIZE, Math.abs(py - fixedY));
+    const rect = { x, y, width, height };
+    if (commit) {
+      setLivePlanRect(null);
+      onResizePlan?.(rect);
+    } else {
+      setLivePlanRect(rect);
+    }
+  };
 
   useEffect(() => {
     const element = containerRef.current;
@@ -92,35 +161,51 @@ export function MapCanvas({
     setViewport(fitViewport(size.width, size.height, imageWidth, imageHeight));
   }, [size.width, size.height, imageWidth, imageHeight, map.id]);
 
+  // Порог замыкания в координатах карты (зависит от текущего масштаба).
+  const closeThreshold = ZONE_CLOSE_PX / viewport.scale;
+  // Курсор рядом с первой вершиной — можно замкнуть контур.
+  const canCloseAtCursor =
+    !!drawMode &&
+    draftPoints.length >= 3 &&
+    !!cursorPoint &&
+    Math.hypot(cursorPoint.x - draftPoints[0].x, cursorPoint.y - draftPoints[0].y) <= closeThreshold;
+
   const flattenedDraft = useMemo(() => draftPoints.flatMap((point) => [point.x, point.y]), [draftPoints]);
+  // «Резиновая» линия: контур + сегмент до курсора (пока контур не замыкаем).
+  const previewLine = useMemo(() => {
+    if (!draftPoints.length) return [] as number[];
+    if (cursorPoint && !canCloseAtCursor) return [...flattenedDraft, cursorPoint.x, cursorPoint.y];
+    return flattenedDraft;
+  }, [flattenedDraft, draftPoints.length, cursorPoint, canCloseAtCursor]);
 
   const resetView = () => setViewport(fitViewport(size.width, size.height, imageWidth, imageHeight));
 
   const startCreate = () => {
-    const name = window.prompt("Название зоны", `Зона ${(zones.length || 0) + 1}`);
-    if (!name?.trim()) return;
     setDraftPoints([]);
-    setDrawMode({ type: "create", name: name.trim() });
+    setCursorPoint(null);
+    setDrawMode({ type: "create" });
     onZoneSelect(null);
   };
 
   const startRedraw = () => {
     if (!selectedZone) return;
     setDraftPoints([]);
+    setCursorPoint(null);
     setDrawMode({ type: "redraw", zone: selectedZone });
   };
 
   const cancelDraw = () => {
     setDrawMode(null);
     setDraftPoints([]);
+    setCursorPoint(null);
   };
 
-  const finishDraw = () => {
-    if (!drawMode || draftPoints.length < 3) return;
+  const finishDraw = (points: ZonePoint[]) => {
+    if (!drawMode || points.length < 3) return;
     if (drawMode.type === "create") {
-      onCreateZone(drawMode.name, draftPoints);
+      onZoneDrawn(points);
     } else {
-      onUpdateZonePoints(drawMode.zone, draftPoints);
+      onUpdateZonePoints(drawMode.zone, points);
     }
     cancelDraw();
   };
@@ -138,12 +223,27 @@ export function MapCanvas({
   const handleStageClick = (event: any) => {
     if (drawMode) {
       const point = stageToMapPoint();
-      if (point) setDraftPoints((prev) => [...prev, point]);
+      if (!point) return;
+      // Клик рядом с первой вершиной замыкает контур.
+      if (draftPoints.length >= 3) {
+        const first = draftPoints[0];
+        if (Math.hypot(point.x - first.x, point.y - first.y) <= closeThreshold) {
+          finishDraw(draftPoints);
+          return;
+        }
+      }
+      setDraftPoints((prev) => [...prev, point]);
       return;
     }
     if (event.target === event.target.getStage()) {
       onZoneSelect(null);
     }
+  };
+
+  const handleStageMouseMove = () => {
+    if (!drawMode) return;
+    const point = stageToMapPoint();
+    if (point) setCursorPoint(point);
   };
 
   const handleWheel = (event: any) => {
@@ -157,6 +257,50 @@ export function MapCanvas({
     setViewport((current) => zoomAtPoint(current, { x: size.width / 2, y: size.height / 2 }, direction));
   };
 
+  const openZoneMenu = (event: any, zone: MapZone) => {
+    event.evt?.preventDefault?.();
+    event.cancelBubble = true;
+    if (!canEditZones || !onZoneDelete || drawMode) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    const clientX = event.evt?.clientX ?? 0;
+    const clientY = event.evt?.clientY ?? 0;
+    setZoneMenu({
+      x: clientX - (rect?.left ?? 0),
+      y: clientY - (rect?.top ?? 0),
+      zone,
+    });
+    onZoneSelect(zone);
+  };
+
+  // Esc отменяет рисование либо закрывает контекстное меню.
+  useEffect(() => {
+    if (!drawMode && !zoneMenu) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (zoneMenu) setZoneMenu(null);
+        if (drawMode) cancelDraw();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [drawMode, zoneMenu]);
+
+  // Закрытие контекстного меню по клику вне его.
+  useEffect(() => {
+    if (!zoneMenu) return;
+    const close = () => setZoneMenu(null);
+    const timer = setTimeout(() => {
+      window.addEventListener("click", close);
+      window.addEventListener("contextmenu", close);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+    };
+  }, [zoneMenu]);
+
   return (
     <div ref={containerRef} className="relative h-[calc(100vh-12rem)] min-h-[420px] w-full overflow-hidden rounded-lg border bg-slate-950">
       <Stage
@@ -168,15 +312,32 @@ export function MapCanvas({
         scaleX={viewport.scale}
         scaleY={viewport.scale}
         draggable={!drawMode}
-        onDragEnd={(event) => setViewport((current) => ({ ...current, x: event.target.x(), y: event.target.y() }))}
+        onDragEnd={(event) => {
+          // Только собственное перетаскивание Stage (панорама). Событие dragend от плана/ручек
+          // всплывает сюда же — без этой проверки координаты дочернего узла улетали бы в позицию камеры.
+          if (event.target === event.target.getStage()) {
+            setViewport((current) => ({ ...current, x: event.target.x(), y: event.target.y() }));
+          }
+        }}
         onWheel={handleWheel}
         onClick={handleStageClick}
         onTap={handleStageClick}
+        onMouseMove={handleStageMouseMove}
       >
         <Layer>
           <Rect x={0} y={0} width={imageWidth} height={imageHeight} fill="#f8fafc" listening={false} />
           {planImage ? (
-            <KonvaImage image={planImage} x={0} y={0} width={imageWidth} height={imageHeight} listening={false} />
+            <KonvaImage
+              image={planImage}
+              x={planRect.x}
+              y={planRect.y}
+              width={planRect.width}
+              height={planRect.height}
+              listening={planEditMode}
+              draggable={planEditMode}
+              onDragMove={(event) => handlePlanDrag(event, false)}
+              onDragEnd={(event) => handlePlanDrag(event, true)}
+            />
           ) : (
             <>
               <Rect x={0} y={0} width={imageWidth} height={imageHeight} fill="#f8fafc" stroke="#cbd5e1" strokeWidth={2} listening={false} />
@@ -212,7 +373,7 @@ export function MapCanvas({
                 shadowColor={selected ? color : isProblem ? "#ef4444" : undefined}
                 shadowBlur={selected ? 18 : isProblem ? 14 : 0}
                 shadowOpacity={selected ? 0.9 : isProblem ? 0.85 : 0}
-                listening={!drawMode}
+                listening={!drawMode && !planEditMode}
                 onClick={(event) => {
                   event.cancelBubble = true;
                   onZoneSelect(zone);
@@ -221,6 +382,7 @@ export function MapCanvas({
                   event.cancelBubble = true;
                   onZoneSelect(zone);
                 }}
+                onContextMenu={(event) => openZoneMenu(event, zone)}
               />
             );
           })}
@@ -239,15 +401,26 @@ export function MapCanvas({
           ))}
 
           {zones.map((zone) => {
-            const labelPoint = zone.points[0];
-            if (!labelPoint) return null;
+            if (!zone.points.length) return null;
+            // Центрируем подпись по габаритному прямоугольнику полигона (обе оси).
+            const xs = zone.points.map((point) => point.x);
+            const ys = zone.points.map((point) => point.y);
+            const minX = Math.min(...xs);
+            const minY = Math.min(...ys);
+            const boxWidth = Math.max(Math.max(...xs) - minX, 1);
+            const boxHeight = Math.max(Math.max(...ys) - minY, 1);
             const selected = selectedZoneId === zone.id;
             const isProblem = zone.status === "problem";
             return (
               <Text
                 key={`${zone.id}-label`}
-                x={labelPoint.x + 8}
-                y={labelPoint.y + 8}
+                x={minX}
+                y={minY}
+                width={boxWidth}
+                height={boxHeight}
+                align="center"
+                verticalAlign="middle"
+                wrap="none"
                 text={isProblem ? `⚠ ${zone.name}` : zone.name}
                 fontSize={selected ? 18 : 16}
                 fontStyle="bold"
@@ -263,9 +436,61 @@ export function MapCanvas({
 
           {drawMode && draftPoints.length > 0 && (
             <>
-              <Line points={flattenedDraft} closed={draftPoints.length >= 3} stroke="#7c3aed" fill="#7c3aed33" strokeWidth={3} dash={[8, 5]} listening={false} />
+              <Line
+                points={previewLine}
+                closed={canCloseAtCursor}
+                stroke="#7c3aed"
+                fill={draftPoints.length >= 3 ? "#7c3aed33" : undefined}
+                strokeWidth={3}
+                strokeScaleEnabled={false}
+                dash={[8, 5]}
+                listening={false}
+              />
               {draftPoints.map((point, index) => (
-                <Circle key={`${point.x}-${point.y}-${index}`} x={point.x} y={point.y} radius={6} fill="#7c3aed" stroke="#fff" strokeWidth={2} listening={false} />
+                <Circle
+                  key={`${point.x}-${point.y}-${index}`}
+                  x={point.x}
+                  y={point.y}
+                  radius={(index === 0 && canCloseAtCursor ? 9 : 6) / viewport.scale}
+                  fill={index === 0 && canCloseAtCursor ? "#22c55e" : "#7c3aed"}
+                  stroke="#fff"
+                  strokeWidth={2 / viewport.scale}
+                  listening={false}
+                />
+              ))}
+            </>
+          )}
+
+          {planEditMode && planImage && (
+            <>
+              <Rect
+                x={planRect.x}
+                y={planRect.y}
+                width={planRect.width}
+                height={planRect.height}
+                stroke="#2563eb"
+                strokeWidth={2 / viewport.scale}
+                dash={[10 / viewport.scale, 6 / viewport.scale]}
+                listening={false}
+              />
+              {([
+                { key: "nw", x: planRect.x, y: planRect.y },
+                { key: "ne", x: planRect.x + planRect.width, y: planRect.y },
+                { key: "sw", x: planRect.x, y: planRect.y + planRect.height },
+                { key: "se", x: planRect.x + planRect.width, y: planRect.y + planRect.height },
+              ] as const).map((handle) => (
+                <Circle
+                  key={handle.key}
+                  x={handle.x}
+                  y={handle.y}
+                  radius={8 / viewport.scale}
+                  fill="#2563eb"
+                  stroke="#ffffff"
+                  strokeWidth={2 / viewport.scale}
+                  draggable
+                  onDragMove={(event) => handleCornerDrag(handle.key, event, false)}
+                  onDragEnd={(event) => handleCornerDrag(handle.key, event, true)}
+                />
               ))}
             </>
           )}
@@ -274,9 +499,15 @@ export function MapCanvas({
 
       <div className="absolute left-2 top-2 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1.5">
         <Badge variant="secondary" className="rounded-md bg-background/90 backdrop-blur">
-          {drawMode ? "Рисование: кликайте по точкам полигона" : "Перетаскивание и зум"}
+          {planEditMode
+            ? "Редактирование плана: двигайте план и тяните за синие углы"
+            : drawMode
+              ? canCloseAtCursor
+                ? "Кликните по зелёной точке, чтобы замкнуть"
+                : "Рисование: кликайте по точкам, замкните по первой"
+              : "Перетаскивание и зум"}
         </Badge>
-        {selectedZone && (
+        {selectedZone && !drawMode && !planEditMode && (
           <Badge variant="outline" className="rounded-md bg-background/90 backdrop-blur">
             {selectedZone.name}: {MAP_STATUS_META[selectedZone.status]?.label}
           </Badge>
@@ -310,7 +541,7 @@ export function MapCanvas({
         </Tooltip>
       </div>
 
-      {canEditZones && (
+      {canEditZones && !planEditMode && (
         <div className="absolute bottom-2 left-2 right-2 flex flex-wrap items-center gap-1.5">
           {!drawMode ? (
             <>
@@ -325,9 +556,9 @@ export function MapCanvas({
             </>
           ) : (
             <>
-              <Button type="button" size="sm" onClick={finishDraw} disabled={draftPoints.length < 3 || isMutating} className="gap-1.5">
+              <Button type="button" size="sm" onClick={() => finishDraw(draftPoints)} disabled={draftPoints.length < 3 || isMutating} className="gap-1.5">
                 <Check className="h-4 w-4" />
-                Сохранить полигон
+                Готово
               </Button>
               <Button type="button" size="sm" variant="secondary" onClick={cancelDraw} className="gap-1.5">
                 <X className="h-4 w-4" />
@@ -341,10 +572,31 @@ export function MapCanvas({
         </div>
       )}
 
-      {!drawMode && (
+      {!drawMode && !planEditMode && (
         <div className={cn("pointer-events-none absolute bottom-3 right-3 hidden items-center gap-1.5 rounded-md bg-background/90 px-2 py-1 text-xs text-muted-foreground backdrop-blur sm:flex")}>
           <MousePointer2 className="h-3.5 w-3.5" />
-          Клик по зоне откроет панель
+          Клик по зоне — панель, правый клик — удалить
+        </div>
+      )}
+
+      {zoneMenu && (
+        <div
+          className="absolute z-20 min-w-[160px] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md"
+          style={{ left: Math.min(zoneMenu.x, size.width - 170), top: Math.min(zoneMenu.y, size.height - 60) }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="border-b px-3 py-1.5 text-xs font-medium text-muted-foreground truncate">{zoneMenu.zone.name}</div>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
+            onClick={() => {
+              onZoneDelete?.(zoneMenu.zone);
+              setZoneMenu(null);
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+            Удалить зону
+          </button>
         </div>
       )}
     </div>
