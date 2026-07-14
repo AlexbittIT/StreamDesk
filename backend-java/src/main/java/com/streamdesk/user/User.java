@@ -68,6 +68,11 @@ public class User {
     @Column(name = "active")
     private Boolean active = true;
 
+    // Перманентный бан администратором: вход навсегда закрыт (в отличие от active=false,
+    // который лишь «ожидает подтверждения» и может быть реактивирован по приглашению).
+    @Column(name = "banned")
+    private Boolean banned = false;
+
     // Согласие на дублирование уведомлений почтой (помимо in-app). Подтверждается в настройках.
     @Column(name = "email_notifications_enabled")
     private Boolean emailNotificationsEnabled = true;

@@ -10,6 +10,7 @@ import com.streamdesk.onboarding.dto.OnboardingDtos.InviteRequest;
 import com.streamdesk.onboarding.dto.OnboardingDtos.JoinRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -80,6 +81,13 @@ public class OnboardingController {
                                    @AuthenticationPrincipal AuthenticatedUser user) {
         requireAuth(user);
         return onboardingService.addMember(user, companyId, req);
+    }
+
+    @DeleteMapping("/api/companies/{companyId}")
+    public Map<String, Object> deleteCompany(@PathVariable String companyId,
+                                             @AuthenticationPrincipal AuthenticatedUser user) {
+        requireAuth(user);
+        return onboardingService.deleteCompany(user, companyId);
     }
 
     private void requireAuth(AuthenticatedUser user) {

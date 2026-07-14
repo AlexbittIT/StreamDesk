@@ -40,6 +40,7 @@ import {
   filterMapsByName,
   getAllowedNextStatuses,
   getMap,
+  getZoneStatusHistory,
   listMaps,
   MAP_STATUS_META,
   mapImageUrl,
@@ -56,6 +57,7 @@ import {
   type ZoneComment,
   type ZonePoint,
   type ZoneStatus,
+  type ZoneStatusHistoryEntry,
 } from "@/lib/maps-api";
 
 /** Пользователь для выпадающего списка «Ответственный» (ответ /api/users). */
@@ -78,6 +80,15 @@ import {
   Upload,
   X,
 } from "lucide-react";
+
+/** Правильное склонение слова «зона» по числу: 1 зона, 2 зоны, 5 зон, 0 зон. */
+function zonesWord(count: number): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return "зона";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return "зоны";
+  return "зон";
+}
 
 function getCurrentUser() {
   if (typeof window === "undefined") return null;
@@ -346,7 +357,7 @@ function MapsListPage() {
                   )}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  <Badge variant="secondary" className="rounded-md">{map.zonesCount || 0} зон</Badge>
+                  <Badge variant="secondary" className="rounded-md">{map.zonesCount || 0} {zonesWord(map.zonesCount || 0)}</Badge>
                   {map.imageUrl ? <Badge className="rounded-md">План загружен</Badge> : <Badge variant="outline" className="rounded-md">Без плана</Badge>}
                 </div>
               </CardHeader>
@@ -464,6 +475,63 @@ function formatDateTime(value?: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Бейдж версии зоны — по клику разворачивает инлайн-историю смен статуса (кто/когда/из→в). */
+function ZoneHistory({ mapId, zone, users }: { mapId: string; zone: MapZone; users: ZoneUser[] }) {
+  const [open, setOpen] = useState(false);
+  const { data: history = [], isLoading } = useQuery<ZoneStatusHistoryEntry[]>({
+    queryKey: ["/api/maps", mapId, "zones", zone.id, "status-history"],
+    queryFn: () => getZoneStatusHistory(mapId, zone.id),
+    enabled: open,
+  });
+  const authorName = (id?: string | null) => {
+    if (!id) return "Система";
+    const user = users.find((candidate) => candidate.id === id);
+    return user?.name || user?.username || id;
+  };
+  return (
+    <>
+      <button type="button" onClick={() => setOpen((value) => !value)} title="История статусов">
+        <Badge variant="outline" className={cn("cursor-pointer rounded-md hover:bg-muted", open && "bg-muted")}>
+          v{zone.version}
+        </Badge>
+      </button>
+      {open && (
+        <div className="mt-1 w-full basis-full rounded-md border p-2">
+          <div className="mb-2 text-sm font-medium">История статусов</div>
+          {isLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Загрузка…
+            </div>
+          ) : history.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Изменений статуса ещё не было.</p>
+          ) : (
+            <ul className="max-h-64 space-y-2 overflow-y-auto">
+              {[...history].reverse().map((entry) => (
+                <li key={entry.id} className="rounded-md border bg-background p-2 text-sm">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="flex items-center gap-1">
+                      <span className={cn("h-2 w-2 rounded-full", MAP_STATUS_META[entry.fromStatus]?.className)} />
+                      {MAP_STATUS_META[entry.fromStatus]?.label || entry.fromStatus}
+                    </span>
+                    <span className="text-muted-foreground">→</span>
+                    <span className="flex items-center gap-1">
+                      <span className={cn("h-2 w-2 rounded-full", MAP_STATUS_META[entry.toStatus]?.className)} />
+                      {MAP_STATUS_META[entry.toStatus]?.label || entry.toStatus}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {authorName(entry.changedBy)} · {formatDateTime(entry.changedAt)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </>
+  );
 }
 
 /** Комментарии и фото зоны: доступны всем, кто видит зону; удаление ограничено правами. */
@@ -666,10 +734,10 @@ function ZonePanel({
           <div className="mt-5 space-y-5">
             <div className="space-y-2">
               <Label>Статус</Label>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className={cn("h-3 w-3 rounded-full", MAP_STATUS_META[zone.status].className)} />
                 <span className="font-medium">{MAP_STATUS_META[zone.status].label}</span>
-                <Badge variant="outline" className="rounded-md">v{zone.version}</Badge>
+                <ZoneHistory mapId={map.id} zone={zone} users={users} />
               </div>
               <Select
                 value=""

@@ -111,6 +111,11 @@ public class AuthController {
             }
         }
 
+        // Перманентный бан: вход закрыт навсегда, никакой реактивации.
+        if (Boolean.TRUE.equals(user.getBanned())) {
+            throw ApiException.forbidden("Ваш аккаунт заблокирован администратором. Доступ закрыт.");
+        }
+
         // Неактивный аккаунт: пробуем реактивировать по приглашению/членству, иначе 403.
         if (Boolean.FALSE.equals(user.getActive())) {
             user = companyService.reactivateInactiveUser(user, inviteToken)

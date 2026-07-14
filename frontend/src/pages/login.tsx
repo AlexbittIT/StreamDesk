@@ -13,6 +13,12 @@ interface LoginProps {
   onLogin: (user: any) => void;
 }
 
+// Базовая проверка почты: обязательно имя@домен.зона (а не просто «имя@домен»).
+const EMAIL_PATTERN = "[^\\s@]+@[^\\s@]+\\.[^\\s@]+";
+function isValidEmail(email: string): boolean {
+  return new RegExp(`^${EMAIL_PATTERN}$`).test(email.trim());
+}
+
 export default function Login({ onLogin }: LoginProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -192,10 +198,19 @@ export default function Login({ onLogin }: LoginProps) {
                     onSubmit={(e) => {
                       e.preventDefault();
                       const formData = new FormData(e.currentTarget);
+                      const email = String(formData.get("reg_email") || "").trim();
+                      if (!isValidEmail(email)) {
+                        toast({
+                          title: "Некорректная почта",
+                          description: "Укажите адрес вида имя@домен.зона, например name@company.ru",
+                          variant: "destructive",
+                        });
+                        return;
+                      }
                       registerMutation.mutate({
                         name: String(formData.get("reg_name") || ""),
                         username: String(formData.get("reg_username") || ""),
-                        email: String(formData.get("reg_email") || "") || undefined,
+                        email,
                         password: String(formData.get("reg_password") || ""),
                         invite: inviteToken || undefined,
                       });
@@ -205,7 +220,7 @@ export default function Login({ onLogin }: LoginProps) {
                       <Input name="reg_name" placeholder="Имя *" required className="border-gray-700 bg-gray-800/50 text-white placeholder:text-gray-500" />
                       <Input name="reg_username" placeholder="Логин *" required className="border-gray-700 bg-gray-800/50 text-white placeholder:text-gray-500" />
                     </div>
-                    <Input name="reg_email" type="email" placeholder="Почта *" required className="border-gray-700 bg-gray-800/50 text-white placeholder:text-gray-500" />
+                    <Input name="reg_email" type="email" pattern={EMAIL_PATTERN} title="Формат: имя@домен.зона, например name@company.ru" placeholder="Почта *" required className="border-gray-700 bg-gray-800/50 text-white placeholder:text-gray-500" />
                     <Input name="reg_password" type="password" placeholder="Пароль *" required className="border-gray-700 bg-gray-800/50 text-white placeholder:text-gray-500" />
                     <Button type="submit" className="w-full bg-gray-800 text-white hover:bg-gray-700" disabled={registerMutation.isPending}>
                       {registerMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserPlus className="mr-2 h-4 w-4" />}

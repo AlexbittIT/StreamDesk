@@ -3,6 +3,7 @@ import { Stage, Layer, Image as KonvaImage, Line, Circle, Text, Rect } from "rea
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   fitViewport,
@@ -25,6 +26,45 @@ type DrawMode =
 
 /** Порог замыкания контура кликом по первой вершине — в пикселях экрана (делится на масштаб). */
 const ZONE_CLOSE_PX = 14;
+
+/** Строгое пересечение двух отрезков (без учёта касаний в общих вершинах). */
+function segmentsIntersect(a: ZonePoint, b: ZonePoint, c: ZonePoint, d: ZonePoint): boolean {
+  const orient = (p: ZonePoint, q: ZonePoint, r: ZonePoint) =>
+    (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+  const d1 = orient(c, d, a);
+  const d2 = orient(c, d, b);
+  const d3 = orient(a, b, c);
+  const d4 = orient(a, b, d);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** Есть ли самопересечение у замкнутого полигона (пересекаются несмежные рёбра). */
+function polygonSelfIntersects(points: ZonePoint[]): boolean {
+  const n = points.length;
+  if (n < 4) return false;
+  for (let i = 0; i < n; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    for (let j = i + 1; j < n; j++) {
+      const adjacent = j === i + 1 || (i === 0 && j === n - 1);
+      if (adjacent) continue;
+      if (segmentsIntersect(a, b, points[j], points[(j + 1) % n])) return true;
+    }
+  }
+  return false;
+}
+
+/** Пересечёт ли новое ребро (последняя точка → кандидат) уже нарисованную ломаную. */
+function chainCrosses(points: ZonePoint[], candidate: ZonePoint): boolean {
+  const n = points.length;
+  if (n < 2) return false;
+  const a = points[n - 1];
+  // Рёбра 0..n-3: ребро n-2 смежно новому (общая последняя вершина), его пропускаем.
+  for (let k = 0; k < n - 2; k++) {
+    if (segmentsIntersect(a, candidate, points[k], points[k + 1])) return true;
+  }
+  return false;
+}
 
 /** Порядок наложения зон: выделенная — выше «Проблемы», «Проблема» — выше обычных. */
 function zoneStackRank(zone: MapZone, selectedZoneId?: string | null): number {
@@ -65,6 +105,7 @@ export function MapCanvas({
   planEditMode = false,
   onResizePlan,
 }: MapCanvasProps) {
+  const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<any>(null);
   const [size, setSize] = useState({ width: 900, height: 560 });
@@ -202,6 +243,14 @@ export function MapCanvas({
 
   const finishDraw = (points: ZonePoint[]) => {
     if (!drawMode || points.length < 3) return;
+    if (polygonSelfIntersects(points)) {
+      toast({
+        title: "Зона пересекает саму себя",
+        description: "Контур не должен пересекаться. Уберите точку и обведите зону без пересечений.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (drawMode.type === "create") {
       onZoneDrawn(points);
     } else {
@@ -231,6 +280,15 @@ export function MapCanvas({
           finishDraw(draftPoints);
           return;
         }
+      }
+      // Не даём поставить точку так, чтобы новое ребро пересекло уже нарисованное.
+      if (chainCrosses(draftPoints, point)) {
+        toast({
+          title: "Пересечение контура",
+          description: "Линия зоны пересекла бы саму себя — поставьте точку в другом месте.",
+          variant: "destructive",
+        });
+        return;
       }
       setDraftPoints((prev) => [...prev, point]);
       return;

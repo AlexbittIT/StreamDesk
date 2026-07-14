@@ -102,18 +102,6 @@ export default function Onboarding() {
     enabled: !!state?.user?.id,
   });
 
-  const normalizedInviteToken = normalizeInviteToken(inviteToken);
-  const { data: inviteDetails, isLoading: inviteDetailsLoading } = useQuery<InviteResolve | null>({
-    queryKey: ["/api/company-invites/resolve", normalizedInviteToken],
-    queryFn: async () => {
-      if (!normalizedInviteToken) return null;
-      const res = await apiRequest("GET", `/api/company-invites/resolve/${encodeURIComponent(normalizedInviteToken)}`);
-      return res.json();
-    },
-    enabled: normalizedInviteToken.length > 0,
-    retry: false,
-  });
-
   const personalMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/onboarding/personal", {});
@@ -236,16 +224,6 @@ export default function Onboarding() {
       }
       return prev.filter((item) => item !== needId);
     });
-  };
-
-  const declineInvite = () => {
-    setInviteToken("");
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.delete("invite");
-      window.history.replaceState({}, "", url.pathname + url.search);
-    }
-    toast({ title: "Приглашение отклонено", description: "Вы можете выбрать личное пространство или создать свою компанию." });
   };
 
   if (isLoading || !state) {
@@ -375,44 +353,6 @@ export default function Onboarding() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {inviteDetailsLoading && normalizedInviteToken && (
-              <div className="rounded-xl border border-border/60 bg-background/60 p-3 text-sm text-muted-foreground">
-                Проверяю приглашение компании...
-              </div>
-            )}
-            {inviteDetails?.company && (
-              <div className={`rounded-2xl border p-4 ${inviteDetails.valid ? "border-primary/30 bg-primary/5" : "border-amber-500/30 bg-amber-500/5"}`}>
-                <div className="space-y-1">
-                  <div className="text-sm text-muted-foreground">Приглашение в компанию</div>
-                  <div className="text-base font-semibold">{inviteDetails.company.name}</div>
-                  {inviteDetails.company.description && (
-                    <div className="text-sm text-muted-foreground">{inviteDetails.company.description}</div>
-                  )}
-                  <div className="flex flex-wrap gap-2 pt-2">
-                    <Badge variant="outline">Роль: {inviteDetails.invite.role || "member"}</Badge>
-                    {inviteDetails.expired && <Badge variant="destructive">Срок истёк</Badge>}
-                    {!inviteDetails.valid && !inviteDetails.expired && <Badge variant="secondary">Недоступно</Badge>}
-                  </div>
-                  {inviteDetails.invite.note && (
-                    <div className="rounded-xl border border-border/60 bg-background/70 px-3 py-2 text-sm text-muted-foreground">
-                      {inviteDetails.invite.note}
-                    </div>
-                  )}
-                </div>
-
-                {inviteDetails.valid && (
-                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                    <Button className="sm:flex-1" onClick={() => joinMutation.mutate()} disabled={joinMutation.isPending}>
-                      {joinMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Принять приглашение
-                    </Button>
-                    <Button className="sm:flex-1" variant="outline" onClick={declineInvite} disabled={joinMutation.isPending}>
-                      Отказаться
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
             <Input
               value={inviteToken}
               onChange={(e) => setInviteToken(e.target.value)}

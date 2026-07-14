@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
-import { ZoomIn, ZoomOut, Maximize2, Undo2, Redo2, FileImage, FileText, Image as ImageIcon, Grid3x3, Upload, X, Loader2, Scaling } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize2, Undo2, Redo2, FileImage, FileText } from "lucide-react";
 import { CONNECTOR_STYLES } from "./signal-colors";
 import { ConnectorIconDefs, ConnectorIconUse } from "./connector-icons";
 import { ZONE_STATUS_META, ZONE_STATUS_ORDER, zoneStatusColor } from "@/lib/zone-status";
-import { apiUrl } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
 interface Port {
@@ -81,25 +80,6 @@ interface SchemaCanvasProps {
   onDeviceDelete?: (deviceId: string) => void;
   /** ID компонентов с ошибками валидации — для красной подсветки на холсте. */
   validationComponentIds?: string[];
-  /** План-подложка: URL картинки и её размеры (в единицах сцены). */
-  planUrl?: string;
-  planWidth?: number;
-  planHeight?: number;
-  /** Положение плана на сцене (если не задано — центрируется). */
-  planX?: number;
-  planY?: number;
-  /** true — показывать сетку, false — показывать план (если он загружен). */
-  showGrid?: boolean;
-  /** Загрузка нового файла плана (png/jpeg/svg/pdf). */
-  onUploadPlan?: (file: File) => void;
-  /** Переключение между планом и сеткой. */
-  onToggleGrid?: () => void;
-  /** Удаление плана-подложки. */
-  onRemovePlan?: () => void;
-  /** Сохранение нового положения/размера плана после растягивания. */
-  onResizePlan?: (rect: { x: number; y: number; width: number; height: number }) => void;
-  /** Идёт загрузка плана. */
-  uploadingPlan?: boolean;
 }
 
 export interface SchemaCanvasRef {
@@ -149,38 +129,11 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
   onDeleteConnection,
   onDeviceDelete,
   validationComponentIds,
-  planUrl,
-  planWidth,
-  planHeight,
-  planX: planXProp,
-  planY: planYProp,
-  showGrid = true,
-  onUploadPlan,
-  onToggleGrid,
-  onRemovePlan,
-  onResizePlan,
-  uploadingPlan,
 }, ref) {
   const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const planInputRef = useRef<HTMLInputElement>(null);
 
-  // План-подложка: положение из props либо по центру сцены; показывается вместо сетки.
-  const hasPlan = !!planUrl && !!planWidth && !!planHeight;
-  const planX = hasPlan ? (planXProp ?? (SCENE_WIDTH - (planWidth as number)) / 2) : 0;
-  const planY = hasPlan ? (planYProp ?? (SCENE_HEIGHT - (planHeight as number)) / 2) : 0;
-  const showPlan = hasPlan && !showGrid;
-  // Режим растягивания плана (кнопка «Растянуть») и живой прямоугольник во время перетаскивания ручек.
-  const [resizingPlan, setResizingPlan] = useState(false);
-  const [livePlanRect, setLivePlanRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
-  const [planResizeDrag, setPlanResizeDrag] = useState<{
-    corner: "nw" | "ne" | "sw" | "se";
-    start: { x: number; y: number; width: number; height: number };
-    startScene: { x: number; y: number };
-  } | null>(null);
-  // Актуальный прямоугольник плана: во время перетаскивания — «живой», иначе — из props.
-  const planRect = livePlanRect ?? { x: planX, y: planY, width: planWidth || 0, height: planHeight || 0 };
   const [stageSize, setStageSize] = useState({ w: 800, h: 600 });
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -277,61 +230,6 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
     };
   }, [position, scale]);
 
-  // Выход из режима растягивания, когда план не показывается (сетка/удалён).
-  useEffect(() => {
-    if (!showPlan) {
-      setResizingPlan(false);
-      setLivePlanRect(null);
-      setPlanResizeDrag(null);
-    }
-  }, [showPlan]);
-
-  // Перетаскивание угловой ручки: меняем размер плана, фиксируя противоположный угол.
-  useEffect(() => {
-    if (!planResizeDrag) return;
-    const MIN = 40;
-    let lastRect = planResizeDrag.start;
-    const onMove = (e: PointerEvent) => {
-      const scene = screenToScene(e.clientX, e.clientY);
-      const dx = scene.x - planResizeDrag.startScene.x;
-      const dy = scene.y - planResizeDrag.startScene.y;
-      const s = planResizeDrag.start;
-      let { x, y, width, height } = s;
-      if (planResizeDrag.corner === "se") {
-        width = Math.max(MIN, s.width + dx);
-        height = Math.max(MIN, s.height + dy);
-      } else if (planResizeDrag.corner === "sw") {
-        width = Math.max(MIN, s.width - dx);
-        height = Math.max(MIN, s.height + dy);
-        x = s.x + (s.width - width);
-      } else if (planResizeDrag.corner === "ne") {
-        width = Math.max(MIN, s.width + dx);
-        height = Math.max(MIN, s.height - dy);
-        y = s.y + (s.height - height);
-      } else {
-        width = Math.max(MIN, s.width - dx);
-        height = Math.max(MIN, s.height - dy);
-        x = s.x + (s.width - width);
-        y = s.y + (s.height - height);
-      }
-      lastRect = { x, y, width, height };
-      setLivePlanRect(lastRect);
-    };
-    const onUp = () => {
-      setPlanResizeDrag(null);
-      setLivePlanRect(null);
-      onResizePlan?.(lastRect);
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-  }, [planResizeDrag, screenToScene, onResizePlan]);
-
   const handleWheel = useCallback((e: React.WheelEvent | WheelEvent) => {
     e.preventDefault();
     const delta = (e as WheelEvent).deltaY > 0 ? -0.08 : 0.08;
@@ -374,9 +272,9 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
     setAutoFitted(false);
   }, [schemaId]);
 
-  // Старт с центра холста при пустой схеме; при устройствах или плане — «Показать все»
+  // Старт с центра холста при пустой схеме; при устройствах — «Показать все»
   useEffect(() => {
-    if (!devices.length && !hasPlan) {
+    if (!devices.length) {
       setAutoFitted(false);
       setPosition({
         x: stageSize.w / 2 - SCENE_WIDTH / 2,
@@ -389,7 +287,7 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       handleFitAll();
       setAutoFitted(true);
     }
-  }, [devices.length, hasPlan, autoFitted, stageSize.w, stageSize.h]);
+  }, [devices.length, autoFitted, stageSize.w, stageSize.h]);
 
   /** Проверяет, пересекается ли прямоугольник с каким-либо устройством (кроме исключённого). */
   const checkDeviceCollision = (
@@ -878,12 +776,6 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
       rights.push(p.x + getDeviceWidth(d));
       bottoms.push(p.y + calculateDeviceHeight(d));
     });
-    if (hasPlan) {
-      lefts.push(planX);
-      tops.push(planY);
-      rights.push(planX + (planWidth as number));
-      bottoms.push(planY + (planHeight as number));
-    }
     if (!lefts.length) return;
     const minX = Math.min(...lefts);
     const minY = Math.min(...tops);
@@ -1093,63 +985,6 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
           </Button>
         </div>
 
-        {(onUploadPlan || onToggleGrid) && (
-          <div className="flex items-center gap-1 border-l pl-2 ml-2">
-            {onUploadPlan && (
-              <>
-                <input
-                  ref={planInputRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/svg+xml,application/pdf,.png,.jpg,.jpeg,.svg,.pdf"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) onUploadPlan(file);
-                    if (planInputRef.current) planInputRef.current.value = "";
-                  }}
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => planInputRef.current?.click()}
-                  disabled={uploadingPlan}
-                  title="Загрузить план (PNG, JPEG, SVG, PDF)"
-                >
-                  {uploadingPlan ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Upload className="w-4 h-4 mr-1" />}
-                  План
-                </Button>
-              </>
-            )}
-            {hasPlan && onToggleGrid && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onToggleGrid}
-                title={showGrid ? "Показать план вместо сетки" : "Показать сетку вместо плана"}
-              >
-                {showGrid ? <ImageIcon className="w-4 h-4 mr-1" /> : <Grid3x3 className="w-4 h-4 mr-1" />}
-                {showGrid ? "План" : "Сетка"}
-              </Button>
-            )}
-            {showPlan && onResizePlan && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setResizingPlan((v) => !v)}
-                title={resizingPlan ? "Завершить редактирование" : "Редактировать план (тянуть за углы)"}
-                className={resizingPlan ? "text-primary bg-primary/10" : ""}
-              >
-                <Scaling className="w-4 h-4 mr-1" />
-                {resizingPlan ? "Готово" : "Редактировать"}
-              </Button>
-            )}
-            {hasPlan && onRemovePlan && (
-              <Button variant="ghost" size="sm" onClick={onRemovePlan} title="Удалить план" className="text-red-500 hover:text-red-600">
-                <X className="w-4 h-4" />
-              </Button>
-            )}
-          </div>
-        )}
       </div>
 
       {!fullScreen && (
@@ -1276,67 +1111,8 @@ export const SchemaCanvas = forwardRef<SchemaCanvasRef, SchemaCanvasProps>(funct
                 </g>
               </symbol>
             </defs>
-            {showPlan ? (
-              <image
-                href={apiUrl(planUrl as string)}
-                x={planRect.x}
-                y={planRect.y}
-                width={planRect.width}
-                height={planRect.height}
-                preserveAspectRatio={resizingPlan ? "none" : "xMidYMid meet"}
-                style={{ pointerEvents: "none" }}
-              />
-            ) : (
-              <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="url(#grid)" />
-            )}
+            <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="url(#grid)" />
             <rect width={SCENE_WIDTH} height={SCENE_HEIGHT} fill="transparent" style={{ pointerEvents: "none" }} />
-
-            {/* Ручки растягивания плана — по углам, видны только в режиме «Растянуть». */}
-            {showPlan && resizingPlan && (() => {
-              const hs = 14 / scale;
-              const corners: Array<{ id: "nw" | "ne" | "sw" | "se"; cx: number; cy: number; cursor: string }> = [
-                { id: "nw", cx: planRect.x, cy: planRect.y, cursor: "nwse-resize" },
-                { id: "ne", cx: planRect.x + planRect.width, cy: planRect.y, cursor: "nesw-resize" },
-                { id: "sw", cx: planRect.x, cy: planRect.y + planRect.height, cursor: "nesw-resize" },
-                { id: "se", cx: planRect.x + planRect.width, cy: planRect.y + planRect.height, cursor: "nwse-resize" },
-              ];
-              return (
-                <g>
-                  <rect
-                    x={planRect.x}
-                    y={planRect.y}
-                    width={planRect.width}
-                    height={planRect.height}
-                    fill="none"
-                    stroke="#3b82f6"
-                    strokeWidth={2 / scale}
-                    strokeDasharray={`${8 / scale} ${5 / scale}`}
-                    pointerEvents="none"
-                  />
-                  {corners.map((c) => (
-                    <rect
-                      key={c.id}
-                      x={c.cx - hs / 2}
-                      y={c.cy - hs / 2}
-                      width={hs}
-                      height={hs}
-                      fill="#ffffff"
-                      stroke="#3b82f6"
-                      strokeWidth={2 / scale}
-                      style={{ cursor: c.cursor }}
-                      onPointerDown={(e) => {
-                        e.stopPropagation();
-                        setPlanResizeDrag({
-                          corner: c.id,
-                          start: { ...planRect },
-                          startScene: screenToScene(e.clientX, e.clientY),
-                        });
-                      }}
-                    />
-                  ))}
-                </g>
-              );
-            })()}
 
             {/* Превью зоны: полигон, рисуемый кликами (замыкается по первой вершине) */}
             {drawZoneMode && zonePoints.length > 0 && (() => {

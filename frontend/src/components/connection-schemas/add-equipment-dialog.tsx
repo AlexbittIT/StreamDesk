@@ -96,6 +96,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
   const [review, setReview] = useState<ReviewState | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  // Плейсхолдер: выбор библиотеки пока ни на что не влияет (Команда/Сообщество — на будущее).
   const [libraryFilter, setLibraryFilter] = useState<"my" | "team" | "community">("my");
   const [typeFilters, setTypeFilters] = useState<string[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -109,6 +110,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
     portsIn: [],
     portsOut: [],
   });
+  const [customNameError, setCustomNameError] = useState(false);
   const [stockDropdownOpen, setStockDropdownOpen] = useState(false);
   const [searchSuggestionsOpen, setSearchSuggestionsOpen] = useState(false);
   const stockInputRef = useRef<HTMLDivElement>(null);
@@ -120,9 +122,12 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
     enabled: open,
   });
 
-  // Сбрасываем ревью при закрытии диалога.
+  // Сбрасываем ревью и ошибку валидации при закрытии диалога.
   useEffect(() => {
-    if (!open) setReview(null);
+    if (!open) {
+      setReview(null);
+      setCustomNameError(false);
+    }
   }, [open]);
 
   // Поиск через ИИ: короткий список (до 10) моделей-подсказок с портами.
@@ -443,7 +448,8 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
   };
 
   const handleAddCustom = () => {
-    if (!customEquipment.name) {
+    if (!customEquipment.name?.trim()) {
+      setCustomNameError(true);
       toast({
         title: "Ошибка",
         description: "Введите название оборудования",
@@ -451,6 +457,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
       });
       return;
     }
+    setCustomNameError(false);
 
     onAdd(customEquipment as EquipmentTemplate);
     setCustomEquipment({
@@ -546,7 +553,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
           </TabsList>
 
           <TabsContent value="stock" className="flex-1 flex flex-col min-h-0 mt-4">
-            <div className="space-y-4">
+            <div className="flex flex-1 min-h-0 flex-col space-y-4">
               {/* Быстрое добавление: беспроводные блоки */}
               <div className="rounded-lg border bg-muted/40 p-3">
                 <Label className="text-xs font-medium text-muted-foreground mb-2 block">Беспроводная связь</Label>
@@ -632,8 +639,8 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                 )}
               </div>
 
-              <div className="flex gap-4">
-                <div className="w-48 space-y-4">
+              <div className="flex gap-4 flex-1 min-h-0">
+                <div className="w-48 shrink-0 space-y-4 overflow-y-auto">
                   <div>
                     <Label className="mb-2 block">Библиотека</Label>
                     <RadioGroup value={libraryFilter} onValueChange={(v) => setLibraryFilter(v as any)}>
@@ -677,7 +684,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                   </div>
                 </div>
 
-                <ScrollArea className="flex-1 h-[500px]">
+                <ScrollArea className="flex-1 min-h-0">
                   {isLoadingEquipment ? (
                     <div className="flex items-center justify-center h-full">
                       <Loader2 className="w-6 h-6 animate-spin" />
@@ -741,7 +748,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
           </TabsContent>
 
           <TabsContent value="search" className="flex-1 flex flex-col min-h-0 mt-4">
-            <div className="space-y-4">
+            <div className="flex flex-1 min-h-0 flex-col space-y-4">
               <p className="text-xs text-muted-foreground">
                 Введите производителя и модель — ИИ опознает устройство и предложит порты на проверку. Нажмите «Поиск» или Enter.
               </p>
@@ -812,7 +819,7 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                 </Button>
               </div>
 
-              <ScrollArea className="h-[500px]">
+              <ScrollArea className="flex-1 min-h-0">
                 {searchResults.length === 0 && !isSearching ? (
                   <div className="text-center py-8 text-muted-foreground">
                     <p>Введите название и нажмите «Поиск» — здесь появится список</p>
@@ -879,10 +886,16 @@ export function AddEquipmentDialog({ open, onClose, onAdd }: AddEquipmentDialogP
                   <Label>Название *</Label>
                   <Input
                     value={customEquipment.name}
-                    onChange={(e) => setCustomEquipment({ ...customEquipment, name: e.target.value })}
+                    onChange={(e) => {
+                      setCustomEquipment({ ...customEquipment, name: e.target.value });
+                      if (customNameError) setCustomNameError(false);
+                    }}
                     placeholder="Например: ECHO_1"
-                    className="flex-1 min-w-[200px]"
+                    className={`flex-1 min-w-[200px] ${customNameError ? "border-destructive focus-visible:ring-destructive" : ""}`}
                   />
+                  {customNameError && (
+                    <p className="mt-1 text-xs text-destructive">Введите название оборудования</p>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">

@@ -42,7 +42,6 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiUrl, queryClient } from "@/lib/queryClient";
 import { AuthService } from "@/lib/auth";
 import { ZONE_STATUS_META, ZONE_STATUS_ORDER } from "@/lib/zone-status";
-import { uploadSchemaPlan } from "@/lib/schema-plan";
 import { cn } from "@/lib/utils";
 import { SchemaCanvas, type SchemaCanvasRef } from "@/components/connection-schemas/schema-canvas";
 import { AddEquipmentDialog } from "@/components/connection-schemas/add-equipment-dialog";
@@ -545,8 +544,6 @@ export default function ConnectionSchemas() {
   const [drawZoneMode, setDrawZoneMode] = useState(false);
   const [pendingZoneRect, setPendingZoneRect] = useState<{ x: number; y: number; width: number; height: number; points?: { x: number; y: number }[] } | null>(null);
   const [drawnZoneName, setDrawnZoneName] = useState("");
-  const [showGrid, setShowGrid] = useState(true);
-  const [uploadingPlan, setUploadingPlan] = useState(false);
   const schemaCanvasRef = useRef<SchemaCanvasRef>(null);
 
   const [buildViolations, setBuildViolations] = useState<Violation[] | null>(null);
@@ -632,30 +629,6 @@ export default function ConnectionSchemas() {
         properties: comp.properties,
       }));
   }, [selectedSchemaData]);
-
-  // План-подложка схемы хранится как отдельный компонент type="background" в properties.
-  const background = useMemo(() => {
-    const comp = selectedSchemaData?.components?.find((c) => c.type === "background");
-    if (!comp) return null;
-    return {
-      id: comp.id,
-      url: comp.properties?.url as string | undefined,
-      width: comp.properties?.width as number | undefined,
-      height: comp.properties?.height as number | undefined,
-      x: comp.properties?.x as number | undefined,
-      y: comp.properties?.y as number | undefined,
-      showGrid: comp.properties?.showGrid as boolean | undefined,
-    };
-  }, [selectedSchemaData]);
-
-  // Синхронизируем режим фона с сохранённым: есть план → по умолчанию показываем план, иначе сетку.
-  useEffect(() => {
-    if (background?.url) {
-      setShowGrid(background.showGrid ?? false);
-    } else {
-      setShowGrid(true);
-    }
-  }, [background?.id, background?.url, background?.showGrid]);
 
   // Преобразование компонентов в зоны
   const zones: Zone[] = useMemo(() => {
@@ -1262,76 +1235,6 @@ export default function ConnectionSchemas() {
     setPendingZoneRect(null);
   };
 
-  // Загрузка/замена плана-подложки. PDF конвертируется в PNG внутри uploadSchemaPlan.
-  const handleUploadPlan = async (file: File) => {
-    if (!selectedSchema) return;
-    setUploadingPlan(true);
-    try {
-      const plan = await uploadSchemaPlan(file);
-      const properties = { url: plan.url, width: plan.width, height: plan.height, showGrid: false };
-      if (background?.id) {
-        await apiRequest("PUT", `/api/connection-schemas/components/${background.id}`, {
-          position: { x: 0, y: 0 },
-          name: "План",
-          properties,
-        });
-      } else {
-        await apiRequest("POST", `/api/connection-schemas/${selectedSchema}/components`, {
-          type: "background",
-          name: "План",
-          position: { x: 0, y: 0 },
-          properties,
-        });
-      }
-      setShowGrid(false);
-      refetchSelectedSchema();
-      toast({ title: "План загружен" });
-    } catch (e) {
-      toast({ title: "Ошибка", description: (e as Error)?.message || "Не удалось загрузить план", variant: "destructive" });
-    } finally {
-      setUploadingPlan(false);
-    }
-  };
-
-  const handleToggleGrid = () => {
-    const next = !showGrid;
-    setShowGrid(next);
-    if (background?.id) {
-      apiRequest("PUT", `/api/connection-schemas/components/${background.id}`, {
-        position: { x: 0, y: 0 },
-        name: "План",
-        properties: { url: background.url, width: background.width, height: background.height, showGrid: next },
-      })
-        .then(() => refetchSelectedSchema())
-        .catch(() => {});
-    }
-  };
-
-  const handleRemovePlan = () => {
-    if (!background?.id) return;
-    deleteComponentMutation.mutate(background.id);
-    setShowGrid(true);
-  };
-
-  // Сохранение нового положения/размера плана после растягивания за угловые ручки.
-  const handleResizePlan = (rect: { x: number; y: number; width: number; height: number }) => {
-    if (!background?.id) return;
-    apiRequest("PUT", `/api/connection-schemas/components/${background.id}`, {
-      position: { x: 0, y: 0 },
-      name: "План",
-      properties: {
-        url: background.url,
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
-        x: Math.round(rect.x),
-        y: Math.round(rect.y),
-        showGrid: background.showGrid ?? false,
-      },
-    })
-      .then(() => refetchSelectedSchema())
-      .catch(() => {});
-  };
-
   return (
     <div className="min-h-screen min-w-0 overflow-x-hidden bg-gradient-to-br from-slate-50 via-blue-50/30 to-purple-50/30 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
       <div className="container max-w-[1920px] mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6">
@@ -1489,17 +1392,6 @@ export default function ConnectionSchemas() {
                 onZoneDelete={isAdmin ? handleDeleteComponent : undefined}
                 onDeviceDelete={handleDeleteComponent}
                 validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
-                planUrl={background?.url}
-                planWidth={background?.width}
-                planHeight={background?.height}
-                planX={background?.x}
-                planY={background?.y}
-                showGrid={showGrid}
-                onUploadPlan={handleUploadPlan}
-                onToggleGrid={handleToggleGrid}
-                onRemovePlan={handleRemovePlan}
-                onResizePlan={handleResizePlan}
-                uploadingPlan={uploadingPlan}
               />
               {((buildViolations && buildViolations.length > 0) || buildSuccess) && (
                 <div className="absolute top-14 right-4 z-50 w-[min(420px,calc(100vw-2rem))]">
@@ -1777,17 +1669,6 @@ export default function ConnectionSchemas() {
                       onZoneDelete={isAdmin ? handleDeleteComponent : undefined}
                       onDeviceDelete={handleDeleteComponent}
                       validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
-                      planUrl={background?.url}
-                      planWidth={background?.width}
-                      planHeight={background?.height}
-                      planX={background?.x}
-                      planY={background?.y}
-                      showGrid={showGrid}
-                      onUploadPlan={handleUploadPlan}
-                      onToggleGrid={handleToggleGrid}
-                      onRemovePlan={handleRemovePlan}
-                      onResizePlan={handleResizePlan}
-                      uploadingPlan={uploadingPlan}
                     />
                   </div>
                 </CardContent>

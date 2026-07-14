@@ -60,8 +60,14 @@ public class UserCrudService {
 
         Set<String> visibleIds = new HashSet<>();
         visibleIds.add(user.id());
-        for (String companyId : companyService.getUserCompanyIds(user)) {
-            for (CompanyMember member : companyService.getCompanyMembers(companyId)) {
+        // Только компании, где пользователь реально активный участник. Через getUserCompanyIds
+        // нельзя: для role=admin он возвращает ВСЕ компании, из-за чего админ компании видел
+        // участников чужих компаний («всех из БД»).
+        for (CompanyMember myMembership : companyService.getUserMemberships(user.id())) {
+            if (!"active".equals(myMembership.getStatus())) {
+                continue;
+            }
+            for (CompanyMember member : companyService.getCompanyMembers(myMembership.getCompanyId())) {
                 if ("active".equals(member.getStatus()) && member.getUserId() != null) {
                     visibleIds.add(member.getUserId());
                 }
@@ -160,6 +166,15 @@ public class UserCrudService {
         if (req.password() != null && !req.password().isEmpty()) {
             user.setPassword(passwordService.hashPassword(req.password()));
         }
+        return strip(userService.save(user));
+    }
+
+    /** Перманентный бан/разбан пользователя. */
+    @Transactional
+    public Map<String, Object> setBanned(String id, boolean banned) {
+        User user = userService.findById(id)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "User not found"));
+        user.setBanned(banned);
         return strip(userService.save(user));
     }
 

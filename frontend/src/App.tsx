@@ -289,6 +289,42 @@ function App() {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
+  // Синхронизация текущего пользователя с сервером. Роль и права хранятся в localStorage
+  // с момента входа, поэтому изменения, сделанные администратором, раньше не применялись
+  // до перелогина. Тянем /api/auth/me на старте, при переходах между вкладками и при
+  // возврате фокуса — и обновляем user/localStorage, если что-то изменилось.
+  // cache: 'no-store' — иначе браузер может отдать закэшированный /me со старыми правами.
+  useEffect(() => {
+    const syncUser = async () => {
+      if (!localStorage.getItem('streamstudio_user')) return;
+      try {
+        const res = await fetch(apiUrl('/api/auth/me'), { credentials: 'include', cache: 'no-store' });
+        if (res.status === 401) {
+          // Сессия истекла/сброшена — выходим, чтобы не показывать устаревшие права.
+          localStorage.removeItem('streamstudio_user');
+          setUser(null);
+          return;
+        }
+        if (!res.ok) return;
+        const data = await res.json();
+        const fresh = data?.user;
+        if (!fresh?.id) return;
+        const next = JSON.stringify(fresh);
+        if (localStorage.getItem('streamstudio_user') !== next) {
+          localStorage.setItem('streamstudio_user', next);
+          setUser(fresh);
+        }
+      } catch {
+        /* офлайн/сеть недоступна — оставляем локальный кэш как есть */
+      }
+    };
+    syncUser();
+    window.addEventListener('focus', syncUser);
+    return () => window.removeEventListener('focus', syncUser);
+    // Пересинхронизация при каждом переходе между разделами — права применяются
+    // по мере навигации, без ручного обновления страницы.
+  }, [location]);
+
   const handleLogin = (userData: any) => {
     // Сбрасываем кэш предыдущего пользователя, чтобы не показывать его данные новому.
     queryClient.clear();

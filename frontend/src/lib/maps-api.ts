@@ -203,6 +203,20 @@ export async function changeZoneStatus(mapId: string, zoneId: string, status: Zo
   return response.json();
 }
 
+export type ZoneStatusHistoryEntry = {
+  id: string;
+  zoneId: string;
+  fromStatus: ZoneStatus;
+  toStatus: ZoneStatus;
+  changedBy?: string | null;
+  changedAt: string;
+};
+
+export async function getZoneStatusHistory(mapId: string, zoneId: string): Promise<ZoneStatusHistoryEntry[]> {
+  const response = await apiRequest("GET", `/api/maps/${mapId}/zones/${zoneId}/status-history`);
+  return response.json();
+}
+
 export async function assignZone(
   mapId: string,
   zoneId: string,

@@ -2,6 +2,7 @@ package com.streamdesk.user;
 
 import com.streamdesk.auth.AuthenticatedUser;
 import com.streamdesk.config.ApiException;
+import com.streamdesk.user.dto.BanRequest;
 import com.streamdesk.user.dto.PermissionsRequest;
 import com.streamdesk.user.dto.UserWriteRequest;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -83,6 +84,29 @@ public class UserController {
     @PutMapping("/{id}/permissions")
     public Map<String, Object> permissions(@PathVariable String id, @RequestBody PermissionsRequest req) {
         return userCrudService.updatePermissions(id, req);
+    }
+
+    // PUT /api/users/{id}/ban — перманентный бан/разбан (админ/менеджер)
+    @PutMapping("/{id}/ban")
+    public Map<String, Object> ban(@PathVariable String id, @RequestBody BanRequest req,
+                                   @AuthenticationPrincipal AuthenticatedUser user) {
+        requireUserAdmin(user);
+        if (user.id() != null && user.id().equals(id)) {
+            throw ApiException.badRequest("Нельзя заблокировать самого себя");
+        }
+        return userCrudService.setBanned(id, Boolean.TRUE.equals(req.banned()));
+    }
+
+    private void requireUserAdmin(AuthenticatedUser user) {
+        boolean ok = user != null
+                && ("admin".equals(user.role())
+                || "manager".equals(user.role())
+                || (user.permissions() != null
+                    && (user.permissions().contains("users:manage")
+                        || user.permissions().contains("platform:admin"))));
+        if (!ok) {
+            throw ApiException.forbidden("Недостаточно прав для блокировки пользователей");
+        }
     }
 
     private void requirePlatformAdmin(AuthenticatedUser user) {

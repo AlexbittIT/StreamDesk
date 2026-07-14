@@ -200,13 +200,24 @@ export default function Admin() {
   });
 
   const banUserMutation = useMutation({
-    mutationFn: (userId: string) => apiRequest("PUT", `/api/users/${userId}`, { active: false }),
+    mutationFn: (userId: string) => apiRequest("PUT", `/api/users/${userId}/ban`, { banned: true }),
     onSuccess: () => {
       refreshCompanyAdminData();
-      toast({ title: "Готово", description: "Пользователь заблокирован" });
+      toast({ title: "Готово", description: "Пользователь заблокирован — вход для него закрыт" });
     },
     onError: (error: any) => {
       toast({ title: "Ошибка", description: error?.message || "Не удалось заблокировать пользователя", variant: "destructive" });
+    },
+  });
+
+  const unbanUserMutation = useMutation({
+    mutationFn: (userId: string) => apiRequest("PUT", `/api/users/${userId}/ban`, { banned: false }),
+    onSuccess: () => {
+      refreshCompanyAdminData();
+      toast({ title: "Готово", description: "Блокировка снята" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Ошибка", description: error?.message || "Не удалось снять блокировку", variant: "destructive" });
     },
   });
 
@@ -490,7 +501,12 @@ export default function Admin() {
                             <Badge className={getRoleColor(user.role)}>
                               {getRoleLabel(user.role)}
                             </Badge>
-                            {user.active === false && (
+                            {(user as any).banned && (
+                              <Badge variant="outline" className="text-xs bg-red-100 text-red-800 border-red-300 dark:bg-red-900/30 dark:text-red-300">
+                                Заблокирован
+                              </Badge>
+                            )}
+                            {user.active === false && !(user as any).banned && (
                               <Badge variant="outline" className="text-xs bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/30 dark:text-yellow-300">
                                 Ожидает подтверждения
                               </Badge>
@@ -547,7 +563,17 @@ export default function Admin() {
                           <Key className="w-4 h-4 mr-1" />
                           Права
                         </Button>
-                        {user.id !== currentUser.id && user.active !== false && (
+                        {user.id !== currentUser.id && ((user as any).banned ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => unbanUserMutation.mutate(user.id)}
+                            className="text-green-600 hover:text-green-700"
+                          >
+                            <Check className="w-4 h-4 mr-1" />
+                            Разбанить
+                          </Button>
+                        ) : (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -557,7 +583,7 @@ export default function Admin() {
                             <X className="w-4 h-4 mr-1" />
                             Бан
                           </Button>
-                        )}
+                        ))}
                       </div>
                     </div>
                   ))}
@@ -841,7 +867,7 @@ export default function Admin() {
           
           {selectedUser && (
             <div className="space-y-6">
-              <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
+              <div className="flex items-center gap-4 rounded-lg border bg-muted/50 p-4">
                 <Avatar className="w-12 h-12">
                   <AvatarImage src={selectedUser.avatar || undefined} />
                   <AvatarFallback>
@@ -849,8 +875,8 @@ export default function Admin() {
                   </AvatarFallback>
                 </Avatar>
                 <div>
-                  <div className="font-medium">{selectedUser.name}</div>
-                  <div className="text-sm text-gray-500">@{selectedUser.username}</div>
+                  <div className="font-medium text-foreground">{selectedUser.name}</div>
+                  <div className="text-sm text-muted-foreground">@{selectedUser.username}</div>
                 </div>
               </div>
 

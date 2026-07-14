@@ -45,13 +45,21 @@ public class SessionAuthenticationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         HttpSession session = request.getSession(false);
-        if (session != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+        if (session != null) {
             Object userId = session.getAttribute(AuthConstants.SESSION_USER_ID);
             if (userId instanceof String sid && !sid.isBlank()) {
+                // Всегда перечитываем пользователя из БД по userId сессии и перезаписываем
+                // Authentication. Нельзя полагаться на SecurityContext, который Spring Security
+                // сохраняет в HTTP-сессии: иначе роль/права/состояние онбординга «замерзают»
+                // на момент входа, а при смене аккаунта в том же браузере (регистрация поверх
+                // старой сессии) запрос остаётся под прежним принципалом.
                 AuthenticatedUser principal = resolve(sid);
+                var context = SecurityContextHolder.getContext();
                 if (principal != null) {
-                    var auth = new UsernamePasswordAuthenticationToken(principal, null, authorities(principal));
-                    SecurityContextHolder.getContext().setAuthentication(auth);
+                    context.setAuthentication(
+                            new UsernamePasswordAuthenticationToken(principal, null, authorities(principal)));
+                } else {
+                    context.setAuthentication(null);
                 }
             }
         }
@@ -64,7 +72,11 @@ public class SessionAuthenticationFilter extends OncePerRequestFilter {
             return AuthConstants.fallbackAdmin(fallbackAdminUsername);
         }
         Optional<User> user = userService.findById(userId);
-        return user.map(AuthenticatedUser::fromEntity).orElse(null);
+        // Забаненный пользователь трактуется как неаутентифицированный — его активные сессии
+        // перестают работать сразу после бана.
+        return user.filter(u -> !Boolean.TRUE.equals(u.getBanned()))
+                .map(AuthenticatedUser::fromEntity)
+                .orElse(null);
     }
 
     /** ROLE_<role> + по одной authority на каждое разрешение (для будущих @PreAuthorize). */

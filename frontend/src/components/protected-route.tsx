@@ -112,7 +112,8 @@ export function ProtectedRoute({ children, requiredRole, requiredPermission, use
   }
 
   const tabKey = tabKeyForPath(path);
-  if (tabKey) {
+  // Уведомления и настройки доступны всем всегда, независимо от прав.
+  if (tabKey && tabKey !== "notifications" && tabKey !== "settings") {
     const perms = (currentUser.permissions as string[]) || [];
     const hasAnyTab = perms.some((p: string) => p.startsWith("tab:"));
     if (hasAnyTab && !perms.includes(tabPermission(tabKey))) {

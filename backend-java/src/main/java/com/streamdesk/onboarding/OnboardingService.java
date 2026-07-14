@@ -304,6 +304,43 @@ public class OnboardingService {
         return member;
     }
 
+    /**
+     * DELETE /api/companies/{companyId} — удалить компанию. Разрешено владельцу или админу платформы.
+     * Удаляет приглашения и участников, затем саму компанию, и пересчитывает состояние пользователя
+     * (если активных членств не осталось — возвращаем его в онбординг).
+     */
+    @Transactional
+    public Map<String, Object> deleteCompany(AuthenticatedUser user, String companyId) {
+        Company company = companyRepository.findById(companyId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Компания не найдена"));
+
+        boolean isOwner = user.id() != null && user.id().equals(company.getOwnerId());
+        boolean isPlatformAdmin = "admin".equals(user.role());
+        if (!isOwner && !isPlatformAdmin) {
+            throw ApiException.forbidden("Удалить компанию может только её владелец");
+        }
+
+        // Сначала зависимые записи (приглашения, участники), затем саму компанию.
+        inviteRepository.deleteAll(inviteRepository.findByCompanyId(companyId));
+        memberRepository.deleteAll(memberRepository.findByCompanyId(companyId));
+        companyRepository.delete(company);
+
+        // Пересчёт: остались ли у пользователя активные членства в других компаниях.
+        User updated = userService.findById(user.id()).map(u -> {
+            boolean hasActive = memberRepository.findByUserId(u.getId()).stream()
+                    .anyMatch(m -> "active".equals(m.getStatus()));
+            u.setActive(true);
+            u.setOnboardingCompleted(hasActive);
+            u.setWorkspaceMode(hasActive ? "company_member" : "pending");
+            return userService.save(u);
+        }).orElse(null);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", true);
+        response.put("user", stripUser(updated));
+        return response;
+    }
+
     // --- helpers ---
 
     private Map<String, Object> joinResponse(CompanyMember membership, User user, String message) {
