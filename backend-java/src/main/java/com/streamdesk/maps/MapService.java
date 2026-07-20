@@ -2,15 +2,23 @@ package com.streamdesk.maps;
 
 import com.streamdesk.auth.AuthenticatedUser;
 import com.streamdesk.config.ApiException;
+import com.streamdesk.maps.dto.MapAssignee;
 import com.streamdesk.maps.dto.MapCreateRequest;
 import com.streamdesk.maps.dto.MapResponse;
 import com.streamdesk.maps.dto.PlanRectRequest;
+import com.streamdesk.user.User;
+import com.streamdesk.user.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * CRUD карт (планов площадок). Изоляция компаний — через {@link MapsAccess}.
@@ -24,29 +32,101 @@ public class MapService {
     private final ZoneStatusHistoryRepository historyRepository;
     private final MapsAccess access;
     private final MapPlanStorage planStorage;
+    private final UserRepository userRepository;
 
     public MapService(MapRepository mapRepository,
                       ZoneRepository zoneRepository,
                       ZoneStatusHistoryRepository historyRepository,
                       MapsAccess access,
-                      MapPlanStorage planStorage) {
+                      MapPlanStorage planStorage,
+                      UserRepository userRepository) {
         this.mapRepository = mapRepository;
         this.zoneRepository = zoneRepository;
         this.historyRepository = historyRepository;
         this.access = access;
         this.planStorage = planStorage;
+        this.userRepository = userRepository;
     }
 
-    /** Список карт компании пользователя (опц. по venueId). */
+    /**
+     * Список карт компании пользователя (опц. по venueId) со сводкой по зонам: разбивка по
+     * статусам, число зон без ответственного, сами ответственные и названия зон (для поиска
+     * по зоне в списке). Зоны всех карт читаются одним запросом-проекцией, пользователи —
+     * одним {@code findAllById}, поэтому число запросов не зависит от числа карт.
+     */
     public List<MapResponse> list(AuthenticatedUser user, String venueId) {
         List<String> companyIds = access.companyIds(user);
-        return companyIds.stream()
+        List<SiteMap> maps = companyIds.stream()
                 .flatMap(companyId -> (venueId != null && !venueId.isBlank()
                         ? mapRepository.findByCompanyIdAndVenueIdOrderByCreatedAtDesc(companyId, venueId)
                         : mapRepository.findByCompanyIdOrderByCreatedAtDesc(companyId)).stream())
                 .filter(map -> access.canViewMap(map, user))
-                .map(map -> MapResponse.of(map, zoneRepository.countByMapId(map.getId())))
                 .toList();
+        if (maps.isEmpty()) {
+            return List.of();
+        }
+
+        List<ZoneRepository.ZoneSummaryRow> rows = zoneRepository.findSummariesByMapIds(
+                maps.stream().map(SiteMap::getId).toList());
+        Map<String, List<ZoneRepository.ZoneSummaryRow>> rowsByMap = rows.stream()
+                .collect(Collectors.groupingBy(ZoneRepository.ZoneSummaryRow::getMapId));
+        Map<String, MapAssignee> assigneeById = loadAssignees(rows);
+
+        return maps.stream()
+                .map(map -> summarize(map, rowsByMap.getOrDefault(map.getId(), List.of()), assigneeById))
+                .toList();
+    }
+
+    /** Имена ответственных одним запросом: id → карточка ответственного. */
+    private Map<String, MapAssignee> loadAssignees(List<ZoneRepository.ZoneSummaryRow> rows) {
+        Set<String> ids = rows.stream()
+                .map(ZoneRepository.ZoneSummaryRow::getAssigneeId)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(Collectors.toSet());
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        return userRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(User::getId, MapService::toAssignee, (a, b) -> a));
+    }
+
+    private static MapAssignee toAssignee(User user) {
+        String name = user.getName() != null && !user.getName().isBlank() ? user.getName() : user.getUsername();
+        return new MapAssignee(user.getId(), name, user.getAvatar());
+    }
+
+    /** Свести зоны одной карты в счётчики для карточки в списке. */
+    private static MapResponse summarize(SiteMap map,
+                                         List<ZoneRepository.ZoneSummaryRow> zoneRows,
+                                         Map<String, MapAssignee> assigneeById) {
+        // Все шесть статусов присутствуют всегда (в т.ч. с нулём), чтобы клиенту не нужен fallback.
+        Map<String, Long> statusCounts = new LinkedHashMap<>();
+        for (ZoneStatus status : ZoneStatus.values()) {
+            statusCounts.put(status.apiValue(), 0L);
+        }
+        long unassigned = 0;
+        List<String> zoneNames = new ArrayList<>(zoneRows.size());
+        // LinkedHashMap: ответственные без дублей, в порядке появления зон.
+        Map<String, MapAssignee> assignees = new LinkedHashMap<>();
+
+        for (ZoneRepository.ZoneSummaryRow row : zoneRows) {
+            statusCounts.merge(row.getStatus(), 1L, Long::sum);
+            zoneNames.add(row.getName());
+            String assigneeId = row.getAssigneeId();
+            if (assigneeId == null || assigneeId.isBlank()) {
+                unassigned++;
+            } else {
+                // Ответственный-не-пользователь (команда и т.п.) зону не «обезличивает»,
+                // но и в стопку аватаров не попадает — показывать нечего.
+                MapAssignee assignee = assigneeById.get(assigneeId);
+                if (assignee != null) {
+                    assignees.putIfAbsent(assignee.id(), assignee);
+                }
+            }
+        }
+
+        return MapResponse.withSummary(map, zoneRows.size(), statusCounts, unassigned,
+                List.copyOf(assignees.values()), List.copyOf(zoneNames));
     }
 
     /** Одна карта с зонами (MapWithZones). */

@@ -45,6 +45,7 @@ import { ZONE_STATUS_META, ZONE_STATUS_ORDER } from "@/lib/zone-status";
 import { cn } from "@/lib/utils";
 import { SchemaCanvas, type SchemaCanvasRef } from "@/components/connection-schemas/schema-canvas";
 import { AddEquipmentDialog } from "@/components/connection-schemas/add-equipment-dialog";
+import { SignalCategoryChips } from "@/components/connection-schemas/signal-category-chips";
 
 interface ConnectionSchema {
   id: string;
@@ -545,6 +546,8 @@ export default function ConnectionSchemas() {
   const [pendingZoneRect, setPendingZoneRect] = useState<{ x: number; y: number; width: number; height: number; points?: { x: number; y: number }[] } | null>(null);
   const [drawnZoneName, setDrawnZoneName] = useState("");
   const schemaCanvasRef = useRef<SchemaCanvasRef>(null);
+  /** Категории сигналов, выбранные чипами. Пустой набор — фильтр не применён, видно всё. */
+  const [activeCategories, setActiveCategories] = useState<string[]>([]);
 
   const [buildViolations, setBuildViolations] = useState<Violation[] | null>(null);
   const [buildSuccess, setBuildSuccess] = useState(false);
@@ -1370,6 +1373,10 @@ export default function ConnectionSchemas() {
                 </Button>
               </div>
             </div>
+            {/* Чипы — отдельной строкой: поверх холста они накрывали его тулбар с зумом и экспортом. */}
+            <div className="border-b border-slate-800 px-3 py-2">
+              <SignalCategoryChips value={activeCategories} onChange={setActiveCategories} />
+            </div>
             <div className="flex-1 min-h-0 relative">
               <SchemaCanvas
                 ref={schemaCanvasRef}
@@ -1392,6 +1399,7 @@ export default function ConnectionSchemas() {
                 onZoneDelete={isAdmin ? handleDeleteComponent : undefined}
                 onDeviceDelete={handleDeleteComponent}
                 validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
+                activeCategories={activeCategories}
               />
               {((buildViolations && buildViolations.length > 0) || buildSuccess) && (
                 <div className="absolute top-14 right-4 z-50 w-[min(420px,calc(100vw-2rem))]">
@@ -1647,6 +1655,9 @@ export default function ConnectionSchemas() {
                       onJumpToDevice={(deviceId) => setSelectedDeviceId(deviceId)}
                     />
                   )}
+                  <div className="px-1 pb-2">
+                    <SignalCategoryChips value={activeCategories} onChange={setActiveCategories} />
+                  </div>
                   <div className="flex-1 min-h-0">
                     <SchemaCanvas
                       ref={schemaCanvasRef}
@@ -1669,6 +1680,7 @@ export default function ConnectionSchemas() {
                       onZoneDelete={isAdmin ? handleDeleteComponent : undefined}
                       onDeviceDelete={handleDeleteComponent}
                       validationComponentIds={buildViolations?.map((v) => v.componentId).filter(Boolean) as string[] | undefined}
+                      activeCategories={activeCategories}
                     />
                   </div>
                 </CardContent>

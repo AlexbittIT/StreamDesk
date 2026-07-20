@@ -47,6 +47,20 @@ public final class ConnectorTypes {
             Set.of("ETHERNET", "ETHERCON")
     );
 
+    /**
+     * Протоколы, идущие поверх Ethernet (физически RJ45), и то, что именно они несут.
+     * Разные домены смешивать нельзя: NDI (видео по IP) — это не Dante (звук по IP).
+     */
+    private static final Map<String, String> IP_PROTOCOL_DOMAIN = Map.of(
+            "NDI", "video",
+            "DANTE", "audio",
+            "AES67", "audio",
+            "ARTNET", "control",
+            "SACN", "control"
+    );
+
+    private static final Set<String> ETHERNET_TRANSPORT = Set.of("ETHERNET", "ETHERCON");
+
     static {
         loadCatalog();
         registerLegacyAliases();
@@ -136,9 +150,14 @@ public final class ConnectorTypes {
     }
 
     /**
-     * Совместимость разъёмов: одинаковый нормализованный код (с учётом синонимов)
-     * либо одна группа взаимозаменяемых (ETHERNET/ETHERCON). Если тип у одного из
-     * портов не указан — не блокируем, т.к. определить несовместимость невозможно.
+     * Совместимость разъёмов.
+     *
+     * Раньше правило было «только полностью совпадающий код плюс ETHERNET/ETHERCON»,
+     * из-за чего отклонялась любая конвертация — например HDMI → SDI, хотя это видео в видео
+     * через штатный конвертер. Теперь переход допустим внутри одной категории, но не между
+     * категориями: видео не превращается в аудио, а питание вообще не смешивается с сигналом.
+     *
+     * Если тип у одного из портов не указан — не блокируем, определить несовместимость нельзя.
      */
     public static boolean compatible(String a, String b) {
         String na = normalize(a);
@@ -149,12 +168,35 @@ public final class ConnectorTypes {
         if (na.equals(nb)) {
             return true;
         }
+
+        String catA = categoryOf(na);
+        String catB = categoryOf(nb);
+
+        // Питание изолировано в обе стороны.
+        if ("power".equals(catA) || "power".equals(catB)) {
+            return catA.equals(catB);
+        }
+
+        String ipA = IP_PROTOCOL_DOMAIN.get(na);
+        String ipB = IP_PROTOCOL_DOMAIN.get(nb);
+        if (ipA != null && ipB != null) {
+            // Оба идут по одному кабелю, но несут разное — это подмена сигнала, а не конвертация.
+            return ipA.equals(ipB);
+        }
+        if (ipA != null || ipB != null) {
+            // IP-протокол включают в сеть: порт Dante идёт в коммутатор. В аналоговый разъём — нет.
+            String other = ipA != null ? nb : na;
+            return ETHERNET_TRANSPORT.contains(other);
+        }
+
         for (Set<String> group : COMPAT_GROUPS) {
             if (group.contains(na) && group.contains(nb)) {
                 return true;
             }
         }
-        return false;
+
+        // Конвертация внутри категории: HDMI → SDI, XLR → Jack.
+        return catA.equals(catB);
     }
 
     /**
