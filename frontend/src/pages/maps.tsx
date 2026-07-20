@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MapCanvas } from "@/components/maps/map-canvas";
+import { MapCanvas, type MapCanvasHandle } from "@/components/maps/map-canvas";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,26 +37,39 @@ import {
   addZoneComment,
   addZonePhoto,
   assignZone,
+  assigneeInitials,
   canEditMaps,
   changeZoneStatus,
+  countZonesByStatus,
   createMap,
   createZone,
   deleteMap,
   deleteZone,
   deleteZoneComment,
   deleteZonePhoto,
-  filterMapsByName,
+  filterMaps,
   getAllowedNextStatuses,
   getMap,
+  getZoneStatusHistory,
   listMaps,
   MAP_STATUS_META,
+  MAPS_FILTER_META,
   mapImageUrl,
+  mapSummaryLine,
+  plural,
   removeMapPlan,
   saveMapPlanRect,
+  sortZonesForPanel,
+  summarizeMaps,
+  unassignedCount,
   updateMap,
   updateZone,
   uploadMapPlan,
   uploadZonePhotoFile,
+  zonesWord,
+  zoneStatusCount,
+  type MapAssignee,
+  type MapsFilter,
   type MapWithZones,
   type MapZone,
   type PlanRect,
@@ -56,6 +77,7 @@ import {
   type ZoneComment,
   type ZonePoint,
   type ZoneStatus,
+  type ZoneStatusHistoryEntry,
 } from "@/lib/maps-api";
 
 /** Пользователь для выпадающего списка «Ответственный» (ответ /api/users). */
@@ -64,14 +86,13 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
-  Calendar,
   Edit,
   Loader2,
   ImagePlus,
   Map,
   MessageSquare,
+  MoreVertical,
   Plus,
-  Scaling,
   Search,
   Send,
   Trash2,
@@ -86,13 +107,6 @@ function getCurrentUser() {
   } catch {
     return null;
   }
-}
-
-function formatDate(value?: string) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
 function CreateMapDialog({
@@ -199,6 +213,241 @@ function RenameMapDialog({
   );
 }
 
+/** «Обновлено сегодня, 10:10» для свежих правок и «Обновлено 12.07» для остальных. */
+function formatUpdated(value?: string): string {
+  if (!value) return "Дата неизвестна";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Дата неизвестна";
+  const isToday = date.toDateString() === new Date().toDateString();
+  if (isToday) {
+    return `Обновлено сегодня, ${date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+  return `Обновлено ${date.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })}`;
+}
+
+/**
+ * Плитка-показатель над списком. Если у показателя есть парный быстрый фильтр — плитка
+ * кликабельна и применяет его; иначе это просто цифра.
+ */
+function StatTile({
+  value,
+  label,
+  accentClassName,
+  active,
+  onClick,
+}: {
+  value: number;
+  label: string;
+  accentClassName: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const body = (
+    <>
+      <span className={cn("h-9 w-1 shrink-0 rounded-full", accentClassName)} />
+      <span className="min-w-0">
+        <span className="block text-xl font-bold leading-none sm:text-2xl">{value}</span>
+        <span className="mt-1 block truncate text-xs text-muted-foreground">{label}</span>
+      </span>
+    </>
+  );
+  const className = cn(
+    "flex items-center gap-3 rounded-lg border bg-card p-3 text-left sm:p-4",
+    onClick && "transition-colors hover:bg-accent/50",
+    active && "border-primary ring-1 ring-primary",
+  );
+
+  if (!onClick) {
+    return <div className={className}>{body}</div>;
+  }
+  return (
+    <button type="button" onClick={onClick} aria-pressed={active} className={className}>
+      {body}
+    </button>
+  );
+}
+
+/** Сколько аватаров показываем до сворачивания в «+N» — ответственных может быть много. */
+const MAX_VISIBLE_ASSIGNEES = 3;
+
+function AssigneeStack({ assignees }: { assignees: MapAssignee[] }) {
+  if (assignees.length === 0) {
+    return <span className="truncate text-xs italic text-muted-foreground">не назначены</span>;
+  }
+  const visible = assignees.slice(0, MAX_VISIBLE_ASSIGNEES);
+  const hidden = assignees.slice(MAX_VISIBLE_ASSIGNEES);
+  return (
+    <div className="flex items-center -space-x-2">
+      {visible.map((assignee) => (
+        <Tooltip key={assignee.id}>
+          <TooltipTrigger asChild>
+            <Avatar className="h-7 w-7 border-2 border-background">
+              {assignee.avatar && <AvatarImage src={mapImageUrl(assignee.avatar)} alt="" />}
+              <AvatarFallback className="text-[10px] font-medium">{assigneeInitials(assignee.name)}</AvatarFallback>
+            </Avatar>
+          </TooltipTrigger>
+          <TooltipContent>{assignee.name || "Без имени"}</TooltipContent>
+        </Tooltip>
+      ))}
+      {hidden.length > 0 && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-muted text-[10px] font-medium">
+              +{hidden.length}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{hidden.map((assignee) => assignee.name || "Без имени").join(", ")}</TooltipContent>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+/** Полоса готовности: доли зон по статусам. Нулевые статусы сегмента не занимают. */
+function MapStatusBar({ map }: { map: SiteMap }) {
+  const segments = (Object.keys(MAP_STATUS_META) as ZoneStatus[])
+    .map((status) => ({ status, count: zoneStatusCount(map, status) }))
+    .filter((segment) => segment.count > 0);
+  const total = segments.reduce((sum, segment) => sum + segment.count, 0);
+  if (total === 0) {
+    return <div className="h-1.5 w-full rounded-full bg-muted" />;
+  }
+  return (
+    <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted">
+      {segments.map((segment) => (
+        <Tooltip key={segment.status}>
+          <TooltipTrigger asChild>
+            <div
+              className={cn("h-full", MAP_STATUS_META[segment.status].className)}
+              style={{ width: `${(segment.count / total) * 100}%` }}
+            />
+          </TooltipTrigger>
+          <TooltipContent>
+            {MAP_STATUS_META[segment.status].label}: {segment.count}
+          </TooltipContent>
+        </Tooltip>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Карточка площадки: готовность зон, проблемы и ответственные видны до перехода в редактор.
+ * Переименование и удаление — в меню «⋯», чтобы не путать их с основным действием «Открыть».
+ */
+function MapCard({
+  map,
+  canManage,
+  onOpen,
+  onRename,
+  onDelete,
+}: {
+  map: SiteMap;
+  canManage: boolean;
+  onOpen: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  const zones = map.zonesCount || 0;
+  const problems = zoneStatusCount(map, "problem");
+  const unassigned = unassignedCount(map);
+
+  return (
+    <Card className="flex flex-col overflow-hidden rounded-lg transition-shadow hover:shadow-md">
+      <div className="relative">
+        <button type="button" onClick={onOpen} className="block w-full" aria-label={`Открыть площадку ${map.name}`}>
+          <div className="flex h-36 items-center justify-center border-b bg-muted/40 text-muted-foreground">
+            {map.imageUrl ? (
+              <img src={mapImageUrl(map.imageUrl)} alt="" className="h-full w-full object-cover" draggable={false} />
+            ) : (
+              <div className="flex flex-col items-center gap-1">
+                <Map className="h-8 w-8" />
+                <span className="text-xs">Плана нет</span>
+              </div>
+            )}
+          </div>
+        </button>
+        {canManage && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                className="absolute right-2 top-2 h-8 w-8 shadow-sm"
+                aria-label="Действия с площадкой"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onRename} className="gap-2">
+                <Edit className="h-4 w-4" />
+                Переименовать
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onDelete} className="gap-2 text-destructive focus:text-destructive">
+                <Trash2 className="h-4 w-4" />
+                Удалить
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+
+      <CardContent className="flex flex-1 flex-col gap-3 p-4">
+        <MapStatusBar map={map} />
+
+        <div className="min-w-0">
+          <h3 className="truncate font-semibold" title={map.name}>
+            {map.name}
+          </h3>
+          <p className="truncate text-xs text-muted-foreground">
+            {map.imageUrl ? formatUpdated(map.updatedAt || map.createdAt) : "План не загружен"}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          <Badge variant="secondary" className="rounded-md font-normal">
+            {zones} {zonesWord(zones)}
+          </Badge>
+          <Badge
+            variant="outline"
+            className={cn(
+              "rounded-md font-normal",
+              problems > 0
+                ? "border-red-500/50 bg-red-500/10 font-medium text-red-600 dark:text-red-400"
+                : "text-muted-foreground",
+            )}
+          >
+            {problems} {plural(problems, "проблема", "проблемы", "проблем")}
+          </Badge>
+          <Badge
+            variant="outline"
+            className={cn(
+              "rounded-md font-normal",
+              unassigned > 0
+                ? "border-amber-500/50 bg-amber-500/10 font-medium text-amber-600 dark:text-amber-400"
+                : "text-muted-foreground",
+            )}
+          >
+            {unassigned} без отв.
+          </Badge>
+        </div>
+
+        <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 text-xs text-muted-foreground">Ответственные</span>
+            <AssigneeStack assignees={map.assignees || []} />
+          </div>
+          <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={onOpen}>
+            Открыть
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function MapsListPage() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
@@ -206,6 +455,7 @@ function MapsListPage() {
   const currentUser = getCurrentUser();
   const canManage = canEditMaps(currentUser);
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<MapsFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [renameMap, setRenameMap] = useState<SiteMap | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SiteMap | null>(null);
@@ -215,7 +465,13 @@ function MapsListPage() {
     queryFn: listMaps,
   });
 
-  const visibleMaps = useMemo(() => filterMapsByName(maps, search), [maps, search]);
+  const visibleMaps = useMemo(() => filterMaps(maps, search, filter), [maps, search, filter]);
+  // Показатели считаем по всем картам, а не по выборке: иначе плитки описывают сами себя.
+  const overview = useMemo(() => summarizeMaps(maps), [maps]);
+  const isFiltered = Boolean(search.trim()) || filter !== "all";
+
+  /** Повторный клик по активной плитке снимает фильтр — иначе из него не выйти одним движением. */
+  const toggleFilter = (next: MapsFilter) => setFilter((current) => (current === next ? "all" : next));
 
   const createMutation = useMutation({
     mutationFn: async ({ name, file }: { name: string; file: File | null }) => {
@@ -277,9 +533,56 @@ function MapsListPage() {
         )}
       </div>
 
-      <div className="relative max-w-xl">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Поиск по названию" className="pl-9" />
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+        <div className="relative w-full lg:max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Поиск по названию, зоне или ответственному"
+            className="pl-9"
+          />
+        </div>
+        {/* Чипы могут не влезть на узком экране — прокручиваем их горизонтально, а не переносим. */}
+        <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:pb-0">
+          {(Object.keys(MAPS_FILTER_META) as MapsFilter[]).map((key) => (
+            <Button
+              key={key}
+              type="button"
+              size="sm"
+              variant={filter === key ? "default" : "outline"}
+              className="shrink-0 rounded-full"
+              onClick={() => setFilter(key)}
+            >
+              {MAPS_FILTER_META[key].label}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4 lg:gap-3">
+        <StatTile
+          value={overview.maps}
+          label={plural(overview.maps, "карта", "карты", "карт")}
+          accentClassName="bg-primary"
+          active={filter === "all"}
+          onClick={() => setFilter("all")}
+        />
+        <StatTile value={overview.inProgress} label="зоны в работе" accentClassName="bg-yellow-500" />
+        <StatTile
+          value={overview.problems}
+          label={plural(overview.problems, "проблема", "проблемы", "проблем")}
+          accentClassName="bg-red-500"
+          active={filter === "problems"}
+          onClick={() => toggleFilter("problems")}
+        />
+        <StatTile
+          value={overview.unassigned}
+          label="без ответственного"
+          accentClassName="bg-blue-500"
+          active={filter === "unassigned"}
+          onClick={() => toggleFilter("unassigned")}
+        />
       </div>
 
       {isError && (
@@ -314,65 +617,49 @@ function MapsListPage() {
           <CardContent className="flex min-h-[260px] flex-col items-center justify-center gap-3 text-center">
             <Map className="h-12 w-12 text-primary/60" />
             <div>
-              <p className="font-medium">{search ? "Ничего не найдено" : "Площадок пока нет"}</p>
+              <p className="font-medium">{isFiltered ? "Ничего не найдено" : "Площадок пока нет"}</p>
               <p className="text-sm text-muted-foreground">
-                {search ? "Измените поисковый запрос." : "Создайте первую площадку и загрузите план."}
+                {isFiltered
+                  ? "Измените запрос или сбросьте фильтр."
+                  : "Создайте первую площадку и загрузите план."}
               </p>
             </div>
-            {!search && canManage && (
-              <Button type="button" onClick={() => setCreateOpen(true)} className="gap-1.5">
-                <Plus className="h-4 w-4" />
-                Создать площадку
+            {isFiltered ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setSearch("");
+                  setFilter("all");
+                }}
+              >
+                Сбросить фильтры
               </Button>
+            ) : (
+              canManage && (
+                <Button type="button" onClick={() => setCreateOpen(true)} className="gap-1.5">
+                  <Plus className="h-4 w-4" />
+                  Создать площадку
+                </Button>
+              )
             )}
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {visibleMaps.map((map) => (
-            <Card key={map.id} className="rounded-lg transition-shadow hover:shadow-md">
-              <CardHeader className="space-y-2 pb-2">
-                <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="min-w-0 truncate text-base">{map.name}</CardTitle>
-                  {canManage && (
-                    <div className="flex shrink-0 items-center gap-1">
-                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setRenameMap(map)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setDeleteTarget(map)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  <Badge variant="secondary" className="rounded-md">{map.zonesCount || 0} зон</Badge>
-                  {map.imageUrl ? <Badge className="rounded-md">План загружен</Badge> : <Badge variant="outline" className="rounded-md">Без плана</Badge>}
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Link href={`/maps/${map.id}`}>
-                  <div className="flex h-32 cursor-pointer items-center justify-center rounded-lg border bg-muted/40 text-muted-foreground">
-                    {map.imageUrl ? (
-                      <img src={mapImageUrl(map.imageUrl)} alt={map.name} className="h-full w-full rounded-lg object-cover" draggable={false} />
-                    ) : (
-                      <Map className="h-10 w-10" />
-                    )}
-                  </div>
-                </Link>
-                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <Calendar className="h-3.5 w-3.5" />
-                    {formatDate(map.updatedAt || map.createdAt) || "Без даты"}
-                  </span>
-                  <Button type="button" size="sm" onClick={() => setLocation(`/maps/${map.id}`)}>
-                    Открыть
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <TooltipProvider delayDuration={200}>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleMaps.map((map) => (
+              <MapCard
+                key={map.id}
+                map={map}
+                canManage={canManage}
+                onOpen={() => setLocation(`/maps/${map.id}`)}
+                onRename={() => setRenameMap(map)}
+                onDelete={() => setDeleteTarget(map)}
+              />
+            ))}
+          </div>
+        </TooltipProvider>
       )}
 
       <CreateMapDialog
@@ -464,6 +751,63 @@ function formatDateTime(value?: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Бейдж версии зоны — по клику разворачивает инлайн-историю смен статуса (кто/когда/из→в). */
+function ZoneHistory({ mapId, zone, users }: { mapId: string; zone: MapZone; users: ZoneUser[] }) {
+  const [open, setOpen] = useState(false);
+  const { data: history = [], isLoading } = useQuery<ZoneStatusHistoryEntry[]>({
+    queryKey: ["/api/maps", mapId, "zones", zone.id, "status-history"],
+    queryFn: () => getZoneStatusHistory(mapId, zone.id),
+    enabled: open,
+  });
+  const authorName = (id?: string | null) => {
+    if (!id) return "Система";
+    const user = users.find((candidate) => candidate.id === id);
+    return user?.name || user?.username || id;
+  };
+  return (
+    <>
+      <button type="button" onClick={() => setOpen((value) => !value)} title="История статусов">
+        <Badge variant="outline" className={cn("cursor-pointer rounded-md hover:bg-muted", open && "bg-muted")}>
+          v{zone.version}
+        </Badge>
+      </button>
+      {open && (
+        <div className="mt-1 w-full basis-full rounded-md border p-2">
+          <div className="mb-2 text-sm font-medium">История статусов</div>
+          {isLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Загрузка…
+            </div>
+          ) : history.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Изменений статуса ещё не было.</p>
+          ) : (
+            <ul className="max-h-64 space-y-2 overflow-y-auto">
+              {[...history].reverse().map((entry) => (
+                <li key={entry.id} className="rounded-md border bg-background p-2 text-sm">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="flex items-center gap-1">
+                      <span className={cn("h-2 w-2 rounded-full", MAP_STATUS_META[entry.fromStatus]?.className)} />
+                      {MAP_STATUS_META[entry.fromStatus]?.label || entry.fromStatus}
+                    </span>
+                    <span className="text-muted-foreground">→</span>
+                    <span className="flex items-center gap-1">
+                      <span className={cn("h-2 w-2 rounded-full", MAP_STATUS_META[entry.toStatus]?.className)} />
+                      {MAP_STATUS_META[entry.toStatus]?.label || entry.toStatus}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {authorName(entry.changedBy)} · {formatDateTime(entry.changedAt)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </>
+  );
 }
 
 /** Комментарии и фото зоны: доступны всем, кто видит зону; удаление ограничено правами. */
@@ -666,10 +1010,10 @@ function ZonePanel({
           <div className="mt-5 space-y-5">
             <div className="space-y-2">
               <Label>Статус</Label>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className={cn("h-3 w-3 rounded-full", MAP_STATUS_META[zone.status].className)} />
                 <span className="font-medium">{MAP_STATUS_META[zone.status].label}</span>
-                <Badge variant="outline" className="rounded-md">v{zone.version}</Badge>
+                <ZoneHistory mapId={map.id} zone={zone} users={users} />
               </div>
               <Select
                 value=""
@@ -755,6 +1099,194 @@ function ZonePanel({
   );
 }
 
+/** Левый сайдбар: переключение между площадками без возврата в список. */
+function MapsSidebar({ maps, currentId, onSelect }: { maps: SiteMap[]; currentId: string; onSelect: (id: string) => void }) {
+  return (
+    <Card className="hidden rounded-lg xl:flex xl:h-[calc(100vh-11rem)] xl:flex-col">
+      <CardHeader className="shrink-0 pb-3">
+        <h2 className="font-semibold">Доступные карты</h2>
+      </CardHeader>
+      {/* Карт может быть много — список скроллится внутри себя, а не тянет страницу. */}
+      <CardContent className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+        {maps.map((map) => (
+          <button
+            key={map.id}
+            type="button"
+            onClick={() => onSelect(map.id)}
+            className={cn(
+              "w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent/50",
+              map.id === currentId && "border-primary bg-primary/5",
+            )}
+          >
+            <span className="block truncate font-medium" title={map.name}>
+              {map.name}
+            </span>
+            <span
+              className={cn(
+                "mt-0.5 block truncate text-xs",
+                zoneStatusCount(map, "problem") > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground",
+              )}
+            >
+              {mapSummaryLine(map)}
+            </span>
+          </button>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Компактный селектор площадок — замена сайдбару там, где три колонки не помещаются. */
+function MapsPicker({ maps, currentId, onSelect }: { maps: SiteMap[]; currentId: string; onSelect: (id: string) => void }) {
+  return (
+    <Select value={currentId} onValueChange={onSelect}>
+      <SelectTrigger className="w-full xl:hidden">
+        <SelectValue placeholder="Выберите площадку" />
+      </SelectTrigger>
+      <SelectContent>
+        {maps.map((map) => (
+          <SelectItem key={map.id} value={map.id}>
+            {map.name} · {mapSummaryLine(map)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/**
+ * Правая панель: статусы всех зон видны сразу, без раскрытия каждой. Ниже — карточка
+ * выбранной зоны с ответственным. Полные детали (фото, комментарии, история) по-прежнему
+ * открываются в панели зоны по клику.
+ */
+function ZonesPanel({
+  zones,
+  selectedZoneId,
+  users,
+  canManage,
+  pending,
+  onSelect,
+  onOpenDetails,
+  onUnassign,
+}: {
+  zones: MapZone[];
+  selectedZoneId: string | null;
+  users: ZoneUser[];
+  canManage: boolean;
+  pending?: boolean;
+  onSelect: (zone: MapZone) => void;
+  onOpenDetails: (zone: MapZone) => void;
+  onUnassign: (zone: MapZone) => void;
+}) {
+  const ordered = useMemo(() => sortZonesForPanel(zones), [zones]);
+  const selected = zones.find((zone) => zone.id === selectedZoneId) || null;
+  const assignee = selected?.assigneeId ? users.find((user) => user.id === selected.assigneeId) : null;
+  const assigneeName = selected ? assigneeLabel(users, selected.assigneeId) : "";
+
+  return (
+    <div className="flex flex-col gap-3 xl:h-[calc(100vh-11rem)]">
+      <Card className="flex min-h-0 flex-1 flex-col rounded-lg">
+        <CardHeader className="shrink-0 pb-3">
+          <h2 className="font-semibold">Зоны карты</h2>
+        </CardHeader>
+        <CardContent className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+          {ordered.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Зон пока нет. Нарисуйте первую — статусы появятся здесь.
+            </p>
+          ) : (
+            ordered.map((zone) => {
+              const meta = MAP_STATUS_META[zone.status];
+              const isProblem = zone.status === "problem";
+              return (
+                <button
+                  key={zone.id}
+                  type="button"
+                  onClick={() => onSelect(zone)}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-2 rounded-lg border p-2.5 text-left transition-colors hover:bg-accent/50",
+                    isProblem && "border-red-500/40 bg-red-500/5",
+                    zone.id === selectedZoneId && "border-primary bg-primary/5",
+                  )}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", meta.className)} />
+                    <span className="truncate text-sm font-medium" title={zone.name}>
+                      {zone.name}
+                    </span>
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 text-xs",
+                      isProblem ? "font-medium text-red-600 dark:text-red-400" : "text-muted-foreground",
+                    )}
+                  >
+                    {meta.label}
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </CardContent>
+      </Card>
+
+      {selected && (
+        <Card className="shrink-0 rounded-lg">
+          <CardHeader className="pb-2">
+            <h3 className="truncate text-lg font-bold" title={selected.name}>
+              {selected.name}
+            </h3>
+            <div>
+              <Badge
+                variant="outline"
+                className={cn(
+                  "rounded-md",
+                  selected.status === "problem" && "border-red-500/50 bg-red-500/10 font-medium text-red-600 dark:text-red-400",
+                )}
+              >
+                {MAP_STATUS_META[selected.status].label}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2.5">
+            <p className="text-xs text-muted-foreground">Ответственный</p>
+            {selected.assigneeId ? (
+              <div
+                className={cn(
+                  "flex items-center gap-2.5 rounded-lg border p-2.5",
+                  selected.status === "problem" && "border-red-500/40 bg-red-500/5",
+                )}
+              >
+                <Avatar className="h-9 w-9 shrink-0">
+                  <AvatarFallback className="text-xs font-medium">{assigneeInitials(assigneeName)}</AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium" title={assigneeName}>
+                    {assigneeName}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">{assignee?.role || "Сотрудник"}</p>
+                </div>
+              </div>
+            ) : (
+              <p className="rounded-lg border border-dashed p-2.5 text-sm text-muted-foreground">Не назначен</p>
+            )}
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => onOpenDetails(selected)}>
+                {canManage ? "Изменить" : "Подробнее"}
+              </Button>
+              {canManage && selected.assigneeId && (
+                <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={() => onUnassign(selected)}>
+                  Снять
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function MapDetailPage({ mapId }: { mapId: string }) {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
@@ -762,11 +1294,23 @@ function MapDetailPage({ mapId }: { mapId: string }) {
   const currentUser = getCurrentUser();
   const canManage = canEditMaps(currentUser);
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
-  const [planFile, setPlanFile] = useState<File | null>(null);
+  // Полные детали зоны (статус, ответственный, фото, комментарии, история) — в выезжающей панели.
+  // Клик по зоне только выделяет её; панель открывается явно — правым кликом → «Подробнее»
+  // либо кнопкой в правой панели.
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [planEditMode, setPlanEditMode] = useState(false);
+  const [drawing, setDrawing] = useState(false);
+  const canvasRef = useRef<MapCanvasHandle>(null);
+  const planInputRef = useRef<HTMLInputElement>(null);
   // Нарисованный полигон ждёт имени в диалоге, затем создаётся зона.
   const [pendingPoints, setPendingPoints] = useState<ZonePoint[] | null>(null);
   const [newZoneName, setNewZoneName] = useState("");
+
+  // Список площадок для левого сайдбара — тот же кэш, что и на странице списка.
+  const { data: allMaps = [] } = useQuery<SiteMap[]>({
+    queryKey: ["/api/maps"],
+    queryFn: listMaps,
+  });
 
   // Пользователи для выпадающего «Ответственный» (только менеджерам).
   const { data: users = [] } = useQuery<ZoneUser[]>({
@@ -788,6 +1332,16 @@ function MapDetailPage({ mapId }: { mapId: string }) {
 
   const selectedZone = (map?.zones || []).find((zone) => zone.id === selectedZoneId) || null;
 
+  /**
+   * Имена ответственных. `/api/users` доступен только менеджерам, поэтому для остальных
+   * ролей берём имена из сводки списка карт — иначе в панели вместо имени виден UUID.
+   */
+  const zoneUsers = useMemo<ZoneUser[]>(() => {
+    if (canManage && users.length > 0) return users;
+    const summary = allMaps.find((candidate) => candidate.id === mapId);
+    return (summary?.assignees || []).map((assignee) => ({ id: assignee.id, name: assignee.name || undefined }));
+  }, [canManage, users, allMaps, mapId]);
+
   const invalidateMap = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/maps"] });
     queryClient.invalidateQueries({ queryKey: ["/api/maps", mapId] });
@@ -797,7 +1351,6 @@ function MapDetailPage({ mapId }: { mapId: string }) {
     mutationFn: (file: File) => uploadMapPlan(mapId, file),
     onSuccess: () => {
       invalidateMap();
-      setPlanFile(null);
       toast({ title: "План загружен" });
     },
     onError: (e: any) => {
@@ -976,85 +1529,142 @@ function MapDetailPage({ mapId }: { mapId: string }) {
     );
   }
 
+  const zones = map.zones || [];
+  const problems = countZonesByStatus(zones, "problem");
+  const inProgress = countZonesByStatus(zones, "in_progress");
+
   return (
     <div className="space-y-3 p-1 sm:p-2">
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 space-y-1">
           <Button type="button" variant="ghost" size="sm" className="gap-1.5 px-0" onClick={() => setLocation("/maps")}>
             <ArrowLeft className="h-4 w-4" />
             Назад к площадкам
           </Button>
-          <h1 className="truncate text-xl font-bold sm:text-2xl">{map.name}</h1>
-          <MapLegend map={map} />
-        </div>
-        {canManage && (
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Input
-                type="file"
-                accept="image/png,image/jpeg"
-                onChange={(event) => setPlanFile(event.target.files?.[0] || null)}
-                className="max-w-xs"
-              />
-              <Button type="button" variant="outline" disabled={!planFile || uploadPlanMutation.isPending} onClick={() => planFile && uploadPlanMutation.mutate(planFile)} className="gap-1.5">
-                {uploadPlanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                Загрузить план
-              </Button>
-            </div>
-            {map.imageUrl && (
-              <div className="flex items-center justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9 text-destructive hover:text-destructive"
-                  disabled={removePlanMutation.isPending}
-                  onClick={() => removePlanMutation.mutate()}
-                  title="Удалить план"
-                >
-                  {removePlanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
-                </Button>
-                <Button
-                  type="button"
-                  variant={planEditMode ? "default" : "outline"}
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => setPlanEditMode((value) => !value)}
-                  title={planEditMode ? "Завершить редактирование плана" : "Редактировать план: двигать и тянуть за углы"}
-                >
-                  <Scaling className="h-4 w-4" />
-                  {planEditMode ? "Готово" : "Редактировать"}
-                </Button>
-              </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="truncate text-xl font-bold sm:text-2xl">{map.name}</h1>
+            {problems > 0 && (
+              <Badge variant="outline" className="rounded-md border-red-500/50 bg-red-500/10 font-medium text-red-600 dark:text-red-400">
+                {problems} {plural(problems, "проблема", "проблемы", "проблем")}
+              </Badge>
             )}
+            {inProgress > 0 && (
+              <Badge variant="outline" className="rounded-md border-amber-500/50 bg-amber-500/10 font-medium text-amber-600 dark:text-amber-400">
+                {inProgress} в работе
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        {canManage && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {/* Скрытый input: загрузка плана — пункт меню, а не поле, торчащее в шапке. */}
+            <input
+              ref={planInputRef}
+              type="file"
+              accept="image/png,image/jpeg"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) uploadPlanMutation.mutate(file);
+                // Сбрасываем значение, иначе повторный выбор того же файла не даст события.
+                if (planInputRef.current) planInputRef.current.value = "";
+              }}
+            />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" className="gap-1.5">
+                  {uploadPlanMutation.isPending || removePlanMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Upload className="h-4 w-4" />
+                  )}
+                  План
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => planInputRef.current?.click()} className="gap-2">
+                  <Upload className="h-4 w-4" />
+                  {map.imageUrl ? "Заменить план" : "Загрузить план"}
+                </DropdownMenuItem>
+                {map.imageUrl && (
+                  <DropdownMenuItem
+                    onSelect={() => removePlanMutation.mutate()}
+                    className="gap-2 text-destructive focus:text-destructive"
+                  >
+                    <X className="h-4 w-4" />
+                    Удалить план
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              type="button"
+              className="gap-1.5"
+              disabled={drawing || pending}
+              onClick={() => canvasRef.current?.startCreate()}
+            >
+              <Plus className="h-4 w-4" />
+              {drawing ? "Рисование…" : "Нарисовать зону"}
+            </Button>
           </div>
         )}
       </div>
 
-      <MapCanvas
-        map={map}
-        selectedZoneId={selectedZoneId}
-        canEditZones={canManage}
-        isMutating={pending}
-        onZoneSelect={(zone) => setSelectedZoneId(zone?.id || null)}
-        onZoneDrawn={openNameDialog}
-        onUpdateZonePoints={(zone, points) => updateZoneMutation.mutate({ zone, points })}
-        onZoneDelete={(zone) => deleteZoneMutation.mutate(zone)}
-        planEditMode={planEditMode}
-        onResizePlan={(rect) => resizePlanMutation.mutate(rect)}
-      />
+      <MapsPicker maps={allMaps} currentId={mapId} onSelect={(id) => setLocation(`/maps/${id}`)} />
+
+      <div className="grid gap-3 xl:grid-cols-[16rem_minmax(0,1fr)_20rem]">
+        <MapsSidebar maps={allMaps} currentId={mapId} onSelect={(id) => setLocation(`/maps/${id}`)} />
+
+        <div className="min-w-0 space-y-2">
+          <MapCanvas
+            ref={canvasRef}
+            map={map}
+            selectedZoneId={selectedZoneId}
+            canEditZones={canManage}
+            isMutating={pending}
+            onZoneSelect={(zone) => setSelectedZoneId(zone?.id || null)}
+            onZoneDrawn={openNameDialog}
+            onUpdateZonePoints={(zone, points) => updateZoneMutation.mutate({ zone, points })}
+            onZoneDelete={(zone) => deleteZoneMutation.mutate(zone)}
+            onZoneDetails={(zone) => {
+              setSelectedZoneId(zone.id);
+              setDetailsOpen(true);
+            }}
+            onDrawModeChange={setDrawing}
+            planEditMode={planEditMode}
+            onPlanEditModeChange={setPlanEditMode}
+            onResizePlan={(rect) => resizePlanMutation.mutate(rect)}
+          />
+          <MapLegend map={map} />
+        </div>
+
+        <ZonesPanel
+          zones={zones}
+          selectedZoneId={selectedZoneId}
+          users={zoneUsers}
+          canManage={canManage}
+          pending={pending}
+          onSelect={(zone) => setSelectedZoneId(zone.id)}
+          onOpenDetails={(zone) => {
+            setSelectedZoneId(zone.id);
+            setDetailsOpen(true);
+          }}
+          onUnassign={(zone) => assignMutation.mutate({ zone, assigneeId: null })}
+        />
+      </div>
 
       <ZonePanel
         map={map}
         zone={selectedZone}
-        open={Boolean(selectedZone)}
+        open={detailsOpen && Boolean(selectedZone)}
         canManage={canManage}
-        users={users}
+        users={zoneUsers}
         currentUserId={currentUser?.id}
         pending={pending}
         commentPending={addCommentMutation.isPending || deleteCommentMutation.isPending}
         photoPending={addPhotosMutation.isPending || deletePhotoMutation.isPending}
-        onOpenChange={(open) => !open && setSelectedZoneId(null)}
+        onOpenChange={(open) => !open && setDetailsOpen(false)}
         onRename={(zone, name) => updateZoneMutation.mutate({ zone, name })}
         onDelete={(zone) => deleteZoneMutation.mutate(zone)}
         onStatusChange={(zone, status) => statusMutation.mutate({ zone, status })}

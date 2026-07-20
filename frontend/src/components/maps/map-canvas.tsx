@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Stage, Layer, Image as KonvaImage, Line, Circle, Text, Rect } from "react-konva";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   fitViewport,
@@ -16,7 +17,7 @@ import {
   type Viewport,
   type ZonePoint,
 } from "@/lib/maps-api";
-import { Check, Edit3, LocateFixed, Minus, MousePointer2, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, Edit3, LocateFixed, Minus, MousePointer2, PanelRight, Plus, RotateCcw, Scaling, Trash2, X } from "lucide-react";
 
 type DrawMode =
   | { type: "create" }
@@ -25,6 +26,45 @@ type DrawMode =
 
 /** Порог замыкания контура кликом по первой вершине — в пикселях экрана (делится на масштаб). */
 const ZONE_CLOSE_PX = 14;
+
+/** Строгое пересечение двух отрезков (без учёта касаний в общих вершинах). */
+function segmentsIntersect(a: ZonePoint, b: ZonePoint, c: ZonePoint, d: ZonePoint): boolean {
+  const orient = (p: ZonePoint, q: ZonePoint, r: ZonePoint) =>
+    (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+  const d1 = orient(c, d, a);
+  const d2 = orient(c, d, b);
+  const d3 = orient(a, b, c);
+  const d4 = orient(a, b, d);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** Есть ли самопересечение у замкнутого полигона (пересекаются несмежные рёбра). */
+function polygonSelfIntersects(points: ZonePoint[]): boolean {
+  const n = points.length;
+  if (n < 4) return false;
+  for (let i = 0; i < n; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    for (let j = i + 1; j < n; j++) {
+      const adjacent = j === i + 1 || (i === 0 && j === n - 1);
+      if (adjacent) continue;
+      if (segmentsIntersect(a, b, points[j], points[(j + 1) % n])) return true;
+    }
+  }
+  return false;
+}
+
+/** Пересечёт ли новое ребро (последняя точка → кандидат) уже нарисованную ломаную. */
+function chainCrosses(points: ZonePoint[], candidate: ZonePoint): boolean {
+  const n = points.length;
+  if (n < 2) return false;
+  const a = points[n - 1];
+  // Рёбра 0..n-3: ребро n-2 смежно новому (общая последняя вершина), его пропускаем.
+  for (let k = 0; k < n - 2; k++) {
+    if (segmentsIntersect(a, candidate, points[k], points[k + 1])) return true;
+  }
+  return false;
+}
 
 /** Порядок наложения зон: выделенная — выше «Проблемы», «Проблема» — выше обычных. */
 function zoneStackRank(zone: MapZone, selectedZoneId?: string | null): number {
@@ -44,8 +84,14 @@ interface MapCanvasProps {
   onUpdateZonePoints: (zone: MapZone, points: ZonePoint[]) => void;
   /** Удаление зоны (правый клик → «Удалить»). */
   onZoneDelete?: (zone: MapZone) => void;
+  /** Полные детали зоны (правый клик → «Подробнее»). */
+  onZoneDetails?: (zone: MapZone) => void;
+  /** Идёт ли рисование — страница гасит свою кнопку «Нарисовать зону», пока режим активен. */
+  onDrawModeChange?: (drawing: boolean) => void;
   /** Режим редактирования плана: перетаскивание и ресайз подложки за углы. */
   planEditMode?: boolean;
+  /** Переключение режима плана из тулбара; страница держит его у себя (нужен ей для шапки). */
+  onPlanEditModeChange?: (next: boolean) => void;
   /** Сохранение нового прямоугольника плана после перетаскивания/ресайза. */
   onResizePlan?: (rect: PlanRect) => void;
 }
@@ -53,7 +99,13 @@ interface MapCanvasProps {
 /** Минимальный размер плана при ресайзе (в пикселях сцены). */
 const PLAN_MIN_SIZE = 40;
 
-export function MapCanvas({
+/** Действия холста, вызываемые снаружи — из шапки рабочей области. */
+export type MapCanvasHandle = {
+  startCreate: () => void;
+  fitView: () => void;
+};
+
+function MapCanvasInner({
   map,
   selectedZoneId,
   canEditZones,
@@ -62,9 +114,13 @@ export function MapCanvas({
   onZoneDrawn,
   onUpdateZonePoints,
   onZoneDelete,
+  onZoneDetails,
+  onDrawModeChange,
   planEditMode = false,
+  onPlanEditModeChange,
   onResizePlan,
-}: MapCanvasProps) {
+}: MapCanvasProps, ref: React.Ref<MapCanvasHandle>) {
+  const { toast } = useToast();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<any>(null);
   const [size, setSize] = useState({ width: 900, height: 560 });
@@ -184,8 +240,17 @@ export function MapCanvas({
     setDraftPoints([]);
     setCursorPoint(null);
     setDrawMode({ type: "create" });
+    // Рисование и правка плана — взаимоисключающие режимы тулбара.
+    onPlanEditModeChange?.(false);
     onZoneSelect(null);
   };
+
+  useImperativeHandle(ref, () => ({ startCreate, fitView: resetView }));
+
+  // Страница гасит свою кнопку «Нарисовать зону», пока рисование уже идёт.
+  useEffect(() => {
+    onDrawModeChange?.(Boolean(drawMode));
+  }, [drawMode, onDrawModeChange]);
 
   const startRedraw = () => {
     if (!selectedZone) return;
@@ -202,6 +267,14 @@ export function MapCanvas({
 
   const finishDraw = (points: ZonePoint[]) => {
     if (!drawMode || points.length < 3) return;
+    if (polygonSelfIntersects(points)) {
+      toast({
+        title: "Зона пересекает саму себя",
+        description: "Контур не должен пересекаться. Уберите точку и обведите зону без пересечений.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (drawMode.type === "create") {
       onZoneDrawn(points);
     } else {
@@ -232,6 +305,15 @@ export function MapCanvas({
           return;
         }
       }
+      // Не даём поставить точку так, чтобы новое ребро пересекло уже нарисованное.
+      if (chainCrosses(draftPoints, point)) {
+        toast({
+          title: "Пересечение контура",
+          description: "Линия зоны пересекла бы саму себя — поставьте точку в другом месте.",
+          variant: "destructive",
+        });
+        return;
+      }
       setDraftPoints((prev) => [...prev, point]);
       return;
     }
@@ -260,7 +342,9 @@ export function MapCanvas({
   const openZoneMenu = (event: any, zone: MapZone) => {
     event.evt?.preventDefault?.();
     event.cancelBubble = true;
-    if (!canEditZones || !onZoneDelete || drawMode) return;
+    // Меню открывается и без прав на правку — «Подробнее» доступно всем, кто видит зону.
+    const canDelete = canEditZones && Boolean(onZoneDelete);
+    if ((!canDelete && !onZoneDetails) || drawMode || planEditMode) return;
     const rect = containerRef.current?.getBoundingClientRect();
     const clientX = event.evt?.clientX ?? 0;
     const clientY = event.evt?.clientY ?? 0;
@@ -497,16 +581,57 @@ export function MapCanvas({
         </Layer>
       </Stage>
 
+      {/* Режимы работы с холстом — одним рядом, а не вразнобой по углам страницы. */}
       <div className="absolute left-2 top-2 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1.5">
-        <Badge variant="secondary" className="rounded-md bg-background/90 backdrop-blur">
-          {planEditMode
-            ? "Редактирование плана: двигайте план и тяните за синие углы"
-            : drawMode
-              ? canCloseAtCursor
-                ? "Кликните по зелёной точке, чтобы замкнуть"
-                : "Рисование: кликайте по точкам, замкните по первой"
-              : "Перетаскивание и зум"}
-        </Badge>
+        <div className="flex items-center gap-1 rounded-md bg-background/90 p-1 shadow-sm backdrop-blur">
+          <Button
+            type="button"
+            size="sm"
+            variant={!drawMode && !planEditMode ? "default" : "ghost"}
+            className="h-7 gap-1.5 px-2"
+            onClick={() => {
+              cancelDraw();
+              onPlanEditModeChange?.(false);
+            }}
+          >
+            <MousePointer2 className="h-3.5 w-3.5" />
+            Выбрать
+          </Button>
+          {canEditZones && (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant={drawMode ? "default" : "ghost"}
+                className="h-7 gap-1.5 px-2"
+                disabled={isMutating}
+                onClick={startCreate}
+              >
+                <Edit3 className="h-3.5 w-3.5" />
+                Зона
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={planEditMode ? "default" : "ghost"}
+                className="h-7 gap-1.5 px-2"
+                disabled={!hasPlan}
+                title={hasPlan ? "Двигать и масштабировать подложку" : "Сначала загрузите план"}
+                onClick={() => {
+                  cancelDraw();
+                  onPlanEditModeChange?.(!planEditMode);
+                }}
+              >
+                <Scaling className="h-3.5 w-3.5" />
+                План
+              </Button>
+            </>
+          )}
+          <Button type="button" size="sm" variant="ghost" className="h-7 gap-1.5 px-2" onClick={resetView}>
+            <LocateFixed className="h-3.5 w-3.5" />
+            Вписать
+          </Button>
+        </div>
         {selectedZone && !drawMode && !planEditMode && (
           <Badge variant="outline" className="rounded-md bg-background/90 backdrop-blur">
             {selectedZone.name}: {MAP_STATUS_META[selectedZone.status]?.label}
@@ -531,53 +656,42 @@ export function MapCanvas({
           </TooltipTrigger>
           <TooltipContent side="left">Отдалить</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button type="button" size="icon" variant="secondary" className="h-9 w-9 bg-background/90" onClick={resetView}>
-              <LocateFixed className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="left">Вписать план</TooltipContent>
-        </Tooltip>
       </div>
 
-      {canEditZones && !planEditMode && (
-        <div className="absolute bottom-2 left-2 right-2 flex flex-wrap items-center gap-1.5">
-          {!drawMode ? (
-            <>
-              <Button type="button" size="sm" onClick={startCreate} disabled={isMutating} className="gap-1.5">
-                <Edit3 className="h-4 w-4" />
-                Новая зона
-              </Button>
-              <Button type="button" size="sm" variant="secondary" onClick={startRedraw} disabled={!selectedZone || isMutating} className="gap-1.5">
-                <RotateCcw className="h-4 w-4" />
-                Перерисовать
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button type="button" size="sm" onClick={() => finishDraw(draftPoints)} disabled={draftPoints.length < 3 || isMutating} className="gap-1.5">
-                <Check className="h-4 w-4" />
-                Готово
-              </Button>
-              <Button type="button" size="sm" variant="secondary" onClick={cancelDraw} className="gap-1.5">
-                <X className="h-4 w-4" />
-                Отмена
-              </Button>
-              <Button type="button" size="sm" variant="ghost" onClick={() => setDraftPoints((prev) => prev.slice(0, -1))} disabled={!draftPoints.length}>
-                Убрать точку
-              </Button>
-            </>
-          )}
-        </div>
-      )}
-
-      {!drawMode && !planEditMode && (
-        <div className={cn("pointer-events-none absolute bottom-3 right-3 hidden items-center gap-1.5 rounded-md bg-background/90 px-2 py-1 text-xs text-muted-foreground backdrop-blur sm:flex")}>
-          <MousePointer2 className="h-3.5 w-3.5" />
-          Клик по зоне — панель, правый клик — удалить
-        </div>
-      )}
+      <div className="absolute bottom-2 left-2 right-2 flex flex-wrap items-center gap-1.5">
+        {canEditZones && drawMode ? (
+          <>
+            <Button type="button" size="sm" onClick={() => finishDraw(draftPoints)} disabled={draftPoints.length < 3 || isMutating} className="gap-1.5">
+              <Check className="h-4 w-4" />
+              Готово
+            </Button>
+            <Button type="button" size="sm" variant="secondary" onClick={cancelDraw} className="gap-1.5">
+              <X className="h-4 w-4" />
+              Отмена
+            </Button>
+            <Button type="button" size="sm" variant="ghost" className="bg-background/90" onClick={() => setDraftPoints((prev) => prev.slice(0, -1))} disabled={!draftPoints.length}>
+              Убрать точку
+            </Button>
+          </>
+        ) : (
+          canEditZones &&
+          !planEditMode && (
+            <Button type="button" size="sm" variant="secondary" onClick={startRedraw} disabled={!selectedZone || isMutating} className="gap-1.5 bg-background/90">
+              <RotateCcw className="h-4 w-4" />
+              Перерисовать
+            </Button>
+          )
+        )}
+        <Badge variant="secondary" className="ml-auto rounded-md bg-background/90 backdrop-blur">
+          {planEditMode
+            ? "Двигайте план и тяните за синие углы"
+            : drawMode
+              ? canCloseAtCursor
+                ? "Кликните по зелёной точке, чтобы замкнуть"
+                : "Кликайте по точкам, замкните по первой"
+              : "Клик по зоне — выделить, правый клик — меню"}
+        </Badge>
+      </div>
 
       {zoneMenu && (
         <div
@@ -586,19 +700,36 @@ export function MapCanvas({
           onClick={(event) => event.stopPropagation()}
         >
           <div className="border-b px-3 py-1.5 text-xs font-medium text-muted-foreground truncate">{zoneMenu.zone.name}</div>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
-            onClick={() => {
-              onZoneDelete?.(zoneMenu.zone);
-              setZoneMenu(null);
-            }}
-          >
-            <Trash2 className="h-4 w-4" />
-            Удалить зону
-          </button>
+          {onZoneDetails && (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent"
+              onClick={() => {
+                onZoneDetails(zoneMenu.zone);
+                setZoneMenu(null);
+              }}
+            >
+              <PanelRight className="h-4 w-4" />
+              Подробнее
+            </button>
+          )}
+          {canEditZones && onZoneDelete && (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-destructive/10"
+              onClick={() => {
+                onZoneDelete(zoneMenu.zone);
+                setZoneMenu(null);
+              }}
+            >
+              <Trash2 className="h-4 w-4" />
+              Удалить зону
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
+
+export const MapCanvas = forwardRef(MapCanvasInner);

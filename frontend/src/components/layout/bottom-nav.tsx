@@ -75,6 +75,8 @@ export function BottomNav({ user, onOpenMenu }: BottomNavProps) {
 
   const canAccessTab = (tabKey: string): boolean => {
     if (!user) return false;
+    // Уведомления и настройки доступны всем всегда, независимо от прав.
+    if (tabKey === "notifications" || tabKey === "settings") return true;
     if (user.role === "admin") return true;
     const perms = (user.permissions as string[]) || [];
     const hasAny = perms.some((p: string) => p.startsWith("tab:"));

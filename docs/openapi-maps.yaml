@@ -479,6 +479,15 @@ components:
         y: { type: number }
       required: [x, y]
 
+    MapAssignee:
+      type: object
+      description: Ответственный за зону карты — с именем, чтобы список карт не ходил в /api/users.
+      properties:
+        id: { type: string }
+        name: { type: string, nullable: true }
+        avatar: { type: string, nullable: true }
+      required: [id]
+
     Map:
       type: object
       properties:
@@ -490,6 +499,27 @@ components:
         imageWidth: { type: integer, nullable: true }
         imageHeight: { type: integer, nullable: true }
         zonesCount: { type: integer }
+        statusCounts:
+          type: object
+          nullable: true
+          description: >
+            Разбивка зон карты по статусам; присутствуют все шесть ключей ZoneStatus,
+            в том числе с нулём. Отдаётся только в списке карт (GET /api/maps).
+          additionalProperties: { type: integer }
+        unassignedCount:
+          type: integer
+          nullable: true
+          description: Число зон без ответственного. Только в списке карт.
+        assignees:
+          type: array
+          nullable: true
+          description: Ответственные за зоны карты, без дублей. Только в списке карт.
+          items: { $ref: "#/components/schemas/MapAssignee" }
+        zoneNames:
+          type: array
+          nullable: true
+          description: Названия зон — для поиска по зоне в списке карт. Только в списке карт.
+          items: { type: string }
         createdBy: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }

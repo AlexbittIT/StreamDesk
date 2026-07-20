@@ -41,6 +41,16 @@ export type MapZone = {
   updatedAt?: string;
 };
 
+/** Ответственный за зону в сводке карты — приходит с именем, отдельный запрос не нужен. */
+export type MapAssignee = {
+  id: string;
+  name?: string | null;
+  avatar?: string | null;
+};
+
+/** Разбивка зон карты по статусам; сервер присылает все шесть ключей, в т.ч. нулевые. */
+export type ZoneStatusCounts = Partial<Record<ZoneStatus, number>>;
+
 export type SiteMap = {
   id: string;
   companyId: string;
@@ -55,6 +65,12 @@ export type SiteMap = {
   planWidth?: number | null;
   planHeight?: number | null;
   zonesCount: number;
+  /** Сводка по зонам — только в ответе списка карт (GET /api/maps). */
+  statusCounts?: ZoneStatusCounts | null;
+  unassignedCount?: number | null;
+  assignees?: MapAssignee[] | null;
+  /** Названия зон — чтобы искать по зоне в списке карт, не открывая карту. */
+  zoneNames?: string[] | null;
   createdBy?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -102,6 +118,135 @@ export function filterMapsByName(maps: SiteMap[], query: string): SiteMap[] {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return maps;
   return maps.filter((map) => map.name.toLowerCase().includes(normalized));
+}
+
+/** Число зон карты в указанном статусе (0, если сводки нет — например, до загрузки). */
+export function zoneStatusCount(map: SiteMap, status: ZoneStatus): number {
+  return map.statusCounts?.[status] || 0;
+}
+
+/** Зоны карты без ответственного. */
+export function unassignedCount(map: SiteMap): number {
+  return map.unassignedCount || 0;
+}
+
+/** Быстрые фильтры над списком карт (чипы под поиском). */
+export type MapsFilter = "all" | "problems" | "unassigned" | "no_plan";
+
+export const MAPS_FILTER_META: Record<MapsFilter, { label: string }> = {
+  all: { label: "Все" },
+  problems: { label: "С проблемами" },
+  unassigned: { label: "Без ответственного" },
+  no_plan: { label: "Без плана" },
+};
+
+export function matchesMapsFilter(map: SiteMap, filter: MapsFilter): boolean {
+  switch (filter) {
+    case "problems":
+      return zoneStatusCount(map, "problem") > 0;
+    case "unassigned":
+      return unassignedCount(map) > 0;
+    case "no_plan":
+      return !map.imageUrl;
+    default:
+      return true;
+  }
+}
+
+/**
+ * Поиск по названию площадки, названиям её зон и именам ответственных — по макету
+ * «Поиск по названию, зоне или ответственному». Зоны и ответственные берутся из сводки
+ * списка карт, поэтому дополнительных запросов не требуется.
+ */
+export function searchMaps(maps: SiteMap[], query: string): SiteMap[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return maps;
+  return maps.filter((map) => {
+    if (map.name.toLowerCase().includes(normalized)) return true;
+    if ((map.zoneNames || []).some((name) => name.toLowerCase().includes(normalized))) return true;
+    return (map.assignees || []).some((assignee) => (assignee.name || "").toLowerCase().includes(normalized));
+  });
+}
+
+export function filterMaps(maps: SiteMap[], query: string, filter: MapsFilter): SiteMap[] {
+  return searchMaps(maps, query).filter((map) => matchesMapsFilter(map, filter));
+}
+
+/**
+ * Показатели для плиток над списком. Считаются по всему набору карт, а не по видимой
+ * выборке: иначе после применения фильтра цифры начнут описывать сами себя.
+ */
+export type MapsOverview = {
+  maps: number;
+  inProgress: number;
+  problems: number;
+  unassigned: number;
+};
+
+export function summarizeMaps(maps: SiteMap[]): MapsOverview {
+  return maps.reduce<MapsOverview>(
+    (acc, map) => ({
+      maps: acc.maps + 1,
+      inProgress: acc.inProgress + zoneStatusCount(map, "in_progress"),
+      problems: acc.problems + zoneStatusCount(map, "problem"),
+      unassigned: acc.unassigned + unassignedCount(map),
+    }),
+    { maps: 0, inProgress: 0, problems: 0, unassigned: 0 },
+  );
+}
+
+/** Русское склонение по числу: plural(1,…) → одна форма, plural(2,…) → вторая, plural(5,…) → третья. */
+export function plural(count: number, one: string, few: string, many: string): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
+}
+
+export function zonesWord(count: number): string {
+  return plural(count, "зона", "зоны", "зон");
+}
+
+/**
+ * Строка под названием карты в сайдбаре: «4 зоны · 1 проблема». Показываем ровно одну
+ * дополнительную характеристику — самую тревожную из имеющихся, чтобы строка не расползалась.
+ */
+export function mapSummaryLine(map: SiteMap): string {
+  const zones = map.zonesCount || 0;
+  const head = `${zones} ${zonesWord(zones)}`;
+  if (!map.imageUrl) return `${head} · без плана`;
+  const problems = zoneStatusCount(map, "problem");
+  if (problems > 0) return `${head} · ${problems} ${plural(problems, "проблема", "проблемы", "проблем")}`;
+  const unassigned = unassignedCount(map);
+  if (unassigned > 0) return `${head} · ${unassigned} без отв.`;
+  return head;
+}
+
+/** Сколько зон карты в указанном статусе — для бейджей в шапке рабочей области. */
+export function countZonesByStatus(zones: MapZone[], status: ZoneStatus): number {
+  return zones.filter((zone) => zone.status === status).length;
+}
+
+/**
+ * Порядок зон в правой панели: проблемы наверх — при сорока зонах иначе проблему в списке
+ * не найти, а ради этого редизайн и затевался. Внутри группы — по алфавиту, стабильно.
+ */
+export function sortZonesForPanel(zones: MapZone[]): MapZone[] {
+  return [...zones].sort((a, b) => {
+    const rank = (zone: MapZone) => (zone.status === "problem" ? 0 : 1);
+    const byRank = rank(a) - rank(b);
+    if (byRank !== 0) return byRank;
+    return a.name.localeCompare(b.name, "ru");
+  });
+}
+
+/** Инициалы для аватара: «Александр Симонов» → «АС», «fk» → «FK». */
+export function assigneeInitials(name?: string | null): string {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  const letters = parts.length === 1 ? parts[0].slice(0, 2) : parts[0][0] + parts[1][0];
+  return letters.toUpperCase();
 }
 
 export function canEditMaps(user: any): boolean {
@@ -200,6 +345,20 @@ export async function deleteZone(mapId: string, zoneId: string): Promise<void> {
 
 export async function changeZoneStatus(mapId: string, zoneId: string, status: ZoneStatus, version: number): Promise<MapZone> {
   const response = await apiRequest("PATCH", `/api/maps/${mapId}/zones/${zoneId}/status`, { status, version });
+  return response.json();
+}
+
+export type ZoneStatusHistoryEntry = {
+  id: string;
+  zoneId: string;
+  fromStatus: ZoneStatus;
+  toStatus: ZoneStatus;
+  changedBy?: string | null;
+  changedAt: string;
+};
+
+export async function getZoneStatusHistory(mapId: string, zoneId: string): Promise<ZoneStatusHistoryEntry[]> {
+  const response = await apiRequest("GET", `/api/maps/${mapId}/zones/${zoneId}/status-history`);
   return response.json();
 }
 

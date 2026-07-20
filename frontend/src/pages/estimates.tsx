@@ -254,6 +254,17 @@ function formatMoney(value: number) {
   }).format(Number(value) || 0);
 }
 
+/** Правильное склонение слова «смена» по числу (в т.ч. для дробных значений). */
+function shiftsWord(count: number): string {
+  const abs = Math.abs(count);
+  if (!Number.isInteger(abs)) return "смены"; // 3.5 смены
+  const mod10 = abs % 10;
+  const mod100 = abs % 100;
+  if (mod10 === 1 && mod100 !== 11) return "смена";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return "смены";
+  return "смен";
+}
+
 function buildCatalog(equipment: Equipment[]): CatalogItem[] {
   const groups = new Map<string, Omit<CatalogItem, "id">>();
 
@@ -933,7 +944,9 @@ export default function EstimatesPage() {
       const formData = new FormData();
       formData.append("title", title);
       formData.append("text", tzText);
-      formData.append("requireAi", "true");
+      // requireAi=false: мягкий фолбэк — если ИИ недоступен (нет ключа, 402/503 и т.п.), смета
+      // всё равно собирается эвристикой, а причина недоступности возвращается в warnings.
+      formData.append("requireAi", "false");
       formData.append("startAt", startAt);
       formData.append("endAt", endAt);
       formData.append("manualShiftCount", manualShiftCount);
@@ -954,10 +967,23 @@ export default function EstimatesPage() {
     onSuccess: (data) => {
       setEstimate(data);
       saveEstimateVersion(data);
-      toast({
-        title: "Смета собрана",
-        description: `${data.items.length} позиций, итог ${formatMoney(data.totals.subtotal)}.`,
-      });
+      // ИИ не задействован (нет ключа/недоступен) — смета собрана эвристикой. Мягкий фолбэк по
+      // задумке сервиса: пользователь продолжает, но получает явное предупреждение с причиной.
+      if (data.source === "heuristic") {
+        const aiWarning =
+          (data.warnings || []).find((w) => w.startsWith("ИИ")) ||
+          "Смета собрана без ИИ. Задайте DEEPSEEK_API_KEY для более точного подбора.";
+        toast({
+          title: "ИИ не задействован",
+          description: aiWarning,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Смета собрана",
+          description: `${data.items.length} позиций, итог ${formatMoney(data.totals.subtotal)}.`,
+        });
+      }
     },
     onError: (error: any) => {
       toast({
@@ -1207,6 +1233,8 @@ export default function EstimatesPage() {
   };
 
   const addCatalogLine = (item: CatalogItem) => {
+    // Уже есть такая позиция? Тогда увеличиваем её количество, а не плодим новую строку.
+    const alreadyInEstimate = Boolean(estimate?.items.some((line) => line.catalogId === item.id));
     setEstimate((current) => {
       const base: EstimateResult = current || {
         title,
@@ -1218,10 +1246,34 @@ export default function EstimatesPage() {
         totals: recalculateTotals([]),
       };
       const shiftFactor = base.shiftCalculation?.chargeFactor ?? 1;
-      const items = [...base.items, buildLineFromCatalog(item, base.items.length, shiftFactor)];
+      const existing = base.items.find((line) => line.catalogId === item.id);
+      const items = existing
+        ? base.items.map((line) => {
+            if (line.catalogId !== item.id) return line;
+            const quantity = line.quantity + 1;
+            const lineShift = Number.isFinite(Number(line.shiftFactor)) ? Number(line.shiftFactor) : 1;
+            const baseTotal = Math.round(quantity * line.unitPrice * 100) / 100;
+            return {
+              ...line,
+              quantity,
+              baseTotal,
+              total: Math.round(baseTotal * lineShift * 100) / 100,
+              availability:
+                line.availableQty >= quantity
+                  ? ("in_stock" as const)
+                  : line.availableQty > 0
+                    ? ("partial" as const)
+                    : ("unavailable" as const),
+            };
+          })
+        : [...base.items, buildLineFromCatalog(item, base.items.length, shiftFactor)];
       return { ...base, title, items, totals: recalculateTotals(items) };
     });
     scheduleRecalc();
+    toast({
+      title: alreadyInEstimate ? "Количество увеличено" : "Позиция добавлена в смету",
+      description: item.name,
+    });
   };
 
   const canAnalyze = Boolean(tzText.trim() || file) && !analyzeMutation.isPending;
@@ -1642,7 +1694,7 @@ export default function EstimatesPage() {
                   <div key={segment.kind} className="rounded-md bg-slate-50 p-3 text-sm dark:bg-slate-800">
                     <div className="font-medium text-slate-900 dark:text-white">{segment.label}</div>
                     <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      {segment.hours} ч · {segment.shifts} см · x{segment.coefficient}
+                      {segment.hours} ч · {segment.shifts} {shiftsWord(segment.shifts)} · ×{segment.coefficient}
                     </div>
                   </div>
                 ))}
@@ -1651,17 +1703,19 @@ export default function EstimatesPage() {
           )}
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1040px] text-sm">
+            {/* table-fixed: ширины колонок заданы явно и не зависят от содержимого — при
+                смене цены значения «База»/«Сумма»/итогов меняются, а раскладка не «прыгает». */}
+            <table className="w-full min-w-[1040px] table-fixed text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-normal text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                 <tr>
                   <th className="px-4 py-3">Позиция</th>
-                  <th className="px-4 py-3">Кол-во</th>
-                  <th className="px-4 py-3">Цена</th>
-                  <th className="px-4 py-3">База</th>
-                  <th className="px-4 py-3">Коэфф.</th>
-                  <th className="px-4 py-3">Сумма</th>
-                  <th className="px-4 py-3">Комментарий</th>
-                  <th className="px-4 py-3 text-right"> </th>
+                  <th className="w-[92px] px-4 py-3">Кол-во</th>
+                  <th className="w-[150px] px-4 py-3">Цена</th>
+                  <th className="w-[128px] px-4 py-3">База</th>
+                  <th className="w-[84px] px-4 py-3">Коэфф.</th>
+                  <th className="w-[140px] px-4 py-3">Сумма</th>
+                  <th className="w-[26%] px-4 py-3">Комментарий</th>
+                  <th className="w-[64px] px-4 py-3 text-right"> </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -1675,15 +1729,15 @@ export default function EstimatesPage() {
                   estimateGroups.map((group) => (
                     <Fragment key={group.key}>
                       <tr className="bg-slate-100 dark:bg-slate-800/80">
-                        <td className="px-4 py-2 font-semibold text-slate-900 dark:text-white" colSpan={5}>{group.title}</td>
-                        <td className="px-4 py-2 font-semibold text-slate-900 dark:text-white">{formatMoney(group.total)}</td>
+                        <td className="truncate px-4 py-2 font-semibold text-slate-900 dark:text-white" colSpan={5}>{group.title}</td>
+                        <td className="px-4 py-2 tabular-nums whitespace-nowrap font-semibold text-slate-900 dark:text-white">{formatMoney(group.total)}</td>
                         <td colSpan={2} />
                       </tr>
                       {group.items.map((line) => (
                     <tr key={line.lineId} className="align-top">
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-slate-900 dark:text-white">{line.name}</span>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="break-words font-medium text-slate-900 dark:text-white">{line.name}</span>
                           {line.source && (
                             <Badge
                               variant={line.source === "ai" ? "default" : "secondary"}
@@ -1718,20 +1772,20 @@ export default function EstimatesPage() {
                           className={cn("h-9 w-32", !line.unitPrice && "border-amber-300")}
                         />
                       </td>
-                      <td className="px-4 py-3 text-slate-700 dark:text-slate-300">
+                      <td className="px-4 py-3 tabular-nums whitespace-nowrap text-slate-700 dark:text-slate-300">
                         {formatMoney(line.baseTotal ?? line.quantity * line.unitPrice)}
                       </td>
-                      <td className="px-4 py-3 text-slate-700 dark:text-slate-300">
-                        x{line.shiftFactor ?? 1}
+                      <td className="px-4 py-3 tabular-nums text-slate-700 dark:text-slate-300">
+                        ×{line.shiftFactor ?? 1}
                       </td>
-                      <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">
+                      <td className="px-4 py-3 tabular-nums whitespace-nowrap font-semibold text-slate-900 dark:text-white">
                         {formatMoney(line.total ?? line.quantity * line.unitPrice)}
                       </td>
                       <td className="px-4 py-3">
                         <Input
                           value={line.reason}
                           onChange={(event) => updateLine(line.lineId, { reason: event.target.value })}
-                          className="h-9 min-w-64"
+                          className="h-9 w-full"
                         />
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -1748,7 +1802,7 @@ export default function EstimatesPage() {
               <tfoot className="border-t border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-800">
                 <tr>
                   <td className="px-4 py-3 font-semibold" colSpan={5}>Итого</td>
-                  <td className="px-4 py-3 font-semibold">{formatMoney(estimate.totals.subtotal)}</td>
+                  <td className="px-4 py-3 tabular-nums whitespace-nowrap font-semibold">{formatMoney(estimate.totals.subtotal)}</td>
                   <td colSpan={2} />
                 </tr>
               </tfoot>

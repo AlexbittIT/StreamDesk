@@ -174,6 +174,8 @@ export default function Sidebar({ user, isOpen, onClose, onLogout }: SidebarProp
 
   const canAccessTab = (tabKey: string): boolean => {
     if (!user) return false;
+    // Уведомления и настройки доступны всем всегда, независимо от прав.
+    if (tabKey === "notifications" || tabKey === "settings") return true;
     const hasAnyTab = permissions.some((permission: string) => permission.startsWith("tab:"));
     if (hasAnyTab) return permissions.includes(tabPermission(tabKey));
     if (user.role === "admin") return true;

@@ -1,4 +1,4 @@
-const CACHE_NAME = "streamdesk-shell-v20260506";
+const CACHE_NAME = "streamdesk-shell-v20260714";
 const APP_SHELL = ["/", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
